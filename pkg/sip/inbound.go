@@ -36,6 +36,7 @@ import (
 	"github.com/livekit/media-sdk/dtmf"
 	"github.com/livekit/media-sdk/rtp"
 	"github.com/livekit/media-sdk/sdp"
+	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
 	"github.com/livekit/media-sdk/tones"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
@@ -638,6 +639,7 @@ type inboundCall struct {
 	closeReason atomic.Pointer[ReasonHeader]
 	call        *rpc.SIPCall
 	media       *MediaPort
+	medias      *MediaOrchestrator
 	dtmf        chan dtmf.Event // buffered
 	lkRoom      RoomInterface   // LiveKit room; only active after correct pin is entered
 	callDur     func() time.Duration
@@ -731,10 +733,14 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	c.cc.StartRinging()
 	// Send initial request. In the best case scenario, we will immediately get a room name to join.
 	// Otherwise, we could even learn that this number is not allowed and reject the call, or ask for pin if required.
+	pin := ""
+	if h := req.GetHeader("X-PIN"); h != nil {
+		pin = h.Value()
+	}
 	disp := c.s.handler.DispatchCall(ctx, &CallInfo{
 		TrunkID: trunkID,
 		Call:    c.call,
-		Pin:     "",
+		Pin:     pin,
 		NoPin:   false,
 	})
 	if disp.ProjectID != "" {
@@ -906,6 +912,13 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	if err := c.joinRoom(ctx, disp.Room, status); err != nil {
 		return errors.Wrap(err, "failed joining room")
 	}
+
+	if err := c.medias.Start(); err != nil {
+		c.log().Errorw("Cannot start media orchestrator", err)
+		c.close(true, callDropped, "media-start-failed")
+		return errors.Wrap(err, "starting media orchestrator failed")
+	}
+
 	// Publish our own track.
 	if err := c.publishTrack(); err != nil {
 		c.log().Errorw("Cannot publish track", err)
@@ -978,8 +991,9 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 		c.log().Errorw("Cannot parse encryption", err)
 		return nil, err
 	}
+	_ = e // currently not used for inbound calls
 
-	mp, err := NewMediaPort(tid, c.log(), c.mon, &MediaOptions{
+	opts := &MediaOptions{
 		IP:                  c.s.sconf.MediaIP,
 		Ports:               conf.RTPPort,
 		MediaTimeoutInitial: c.s.conf.MediaTimeoutInitial,
@@ -987,7 +1001,16 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 		EnableJitterBuffer:  c.jitterBuf,
 		Stats:               &c.stats.Port,
 		NoInputResample:     !RoomResample,
-	}, RoomSampleRate)
+	}
+
+	orchestrator, err := NewMediaOrchestrator(c.log(), c.cc, c.lkRoom.(*Room), opts)
+	if err != nil {
+		c.log().Errorw("Cannot create media orchestrator", err)
+		return nil, err
+	}
+	c.medias = orchestrator
+
+	mp, err := NewMediaPort(tid, c.log(), c.mon, opts, RoomSampleRate)
 	if err != nil {
 		return nil, err
 	}
@@ -996,11 +1019,48 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	c.media.DisableOut()         // disabled until we send 200
 	c.media.SetDTMFAudio(conf.AudioDTMF)
 
-	answer, mconf, err := mp.SetOffer(offerData, e)
+	offer, err := sdpv2.NewSDP(offerData)
 	if err != nil {
+		c.log().Errorw("Cannot parse SDP offer", err)
+		return nil, err
+	}
+
+	answer, err := c.medias.AnswerSDP(offer)
+	if err != nil {
+		c.log().Errorw("Cannot create SDP answer", err)
+		return nil, err
+	}
+
+	if offer.Audio == nil {
+		c.log().Errorw("No audio in SDP offer", err)
+		return nil, sdp.ErrNoCommonMedia
+	}
+
+	if err := offer.Audio.SelectCodec(); err != nil {
+		c.log().Errorw("Cannot select audio codec from offer", err)
+		return nil, sdp.ErrNoCommonMedia
+	}
+
+	answer, err = answer.Builder().SetAudio(func(b *sdpv2.SDPMediaBuilder) (*sdpv2.SDPMedia, error) {
+		return b.
+			AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
+				return offer.Audio.Codec, nil
+			}, true).
+			SetRTPPort(uint16(c.media.Port())).
+			Build()
+	}).Build()
+	if err != nil {
+		c.log().Errorw("Cannot configure audio in SDP answer", err)
 		return nil, SDPError{Err: err}
 	}
-	answerData, err = answer.SDP.Marshal()
+
+	mc, err := answer.V1MediaConfig(netip.AddrPortFrom(offer.Addr, offer.Audio.Port))
+	if err != nil {
+		return nil, err
+	}
+
+	mconf := &MediaConf{MediaConfig: mc}
+	answerData, err = answer.Marshal()
 	if err != nil {
 		return nil, err
 	}
