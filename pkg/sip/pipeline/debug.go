@@ -18,18 +18,18 @@ func sanitizeDot(dot string) string {
 	return runningTimeRegex.ReplaceAllString(dot, "running-time=XXX")
 }
 
-func (gp *GstPipeline) debug() (string, string, gst.State, error) {
-	gp.mu.Lock()
-	defer gp.mu.Unlock()
+func (p *BasePipeline) debug() (string, string, gst.State, error) {
+	p.Mu.Lock()
+	defer p.Mu.Unlock()
 
-	state := gp.Pipeline.GetCurrentState()
+	state := p.Pipeline.GetCurrentState()
 	if state == gst.StateNull {
 		return "", "", state, ErrPipielineNotRunning
 	}
 
-	dotData := gp.Pipeline.DebugBinToDotData(gst.DebugGraphShowMediaType)
+	dotData := p.Pipeline.DebugBinToDotData(gst.DebugGraphShowCapsDetails)
 
-	data, err := PipelineBranchesAsStrings(gp.Pipeline)
+	data, err := PipelineBranchesAsStrings(p.Pipeline)
 	if err != nil {
 		return "", "", state, fmt.Errorf("failed to get pipeline branches: %w", err)
 	}
@@ -38,8 +38,8 @@ func (gp *GstPipeline) debug() (string, string, gst.State, error) {
 	return sanitizeDot(dotData), debugOutput, state, nil
 }
 
-func (gp *GstPipeline) Monitor() {
-	name := gp.Pipeline.GetName()
+func (p *BasePipeline) Monitor() {
+	name := p.Pipeline.GetName()
 
 	logFile, err := os.Create(fmt.Sprintf("%s_pipeline_debug.log", name))
 	if err != nil {
@@ -60,8 +60,8 @@ func (gp *GstPipeline) Monitor() {
 		prevDot := ""
 		prevState := gst.StateNull
 
-		for !gp.closed.IsBroken() {
-			dotData, pipelineStr, state, err := gp.debug()
+		for !p.closed.IsBroken() {
+			dotData, pipelineStr, state, err := p.debug()
 			if err != nil {
 				if err == ErrPipielineNotRunning {
 					pipelineStr = "Pipeline not running"
@@ -74,7 +74,6 @@ func (gp *GstPipeline) Monitor() {
 				liveFile.Truncate(0)
 				liveFile.Seek(0, 0)
 				liveFile.WriteString(dotData)
-				//				fmt.Printf("Wrote live pipeline dot data (%d bytes)\n", len(dotData))
 			}
 
 			if pipelineStr != prevStr || dotData != prevDot || prevState != state {
@@ -184,4 +183,85 @@ func walkElement(e *gst.Element, prefix string, visited map[*gst.Element]bool) [
 		out = append(out, walkElement(next, prefix, branchVisited)...)
 	}
 	return out
+}
+
+func NewDebugView(name string) (*gst.Bin, error) {
+	bin := gst.NewBin(name)
+
+	tee, err := gst.NewElement("tee")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tee: %w", err)
+	}
+
+	queuePass, err := gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-buffers": uint(1),
+		"leaky":            int(2), // downstream
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pass queue: %w", err)
+	}
+
+	queueView, err := gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-buffers": uint(1),
+		"leaky":            int(2), // downstream
+		"silent":           true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create view queue: %w", err)
+	}
+
+	convert, err := gst.NewElement("videoconvert")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create videoconvert: %w", err)
+	}
+
+	sink, err := gst.NewElementWithProperties("glimagesink", map[string]interface{}{
+		"sync":  false,
+		"async": false, // prevent pipeline hang when unlinked
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create video sink: %w", err)
+	}
+
+	if err := bin.AddMany(tee, queuePass, queueView, convert, sink); err != nil {
+		return nil, fmt.Errorf("failed to add elements to bin: %w", err)
+	}
+
+	if err := gst.ElementLinkMany(queueView, convert, sink); err != nil {
+		return nil, fmt.Errorf("failed to link preview branch: %w", err)
+	}
+
+	teePadPass := tee.GetRequestPad("src_%u")
+	if teePadPass == nil {
+		return nil, fmt.Errorf("failed to request passthrough pad from tee")
+	}
+
+	queuePassSink := queuePass.GetStaticPad("sink")
+	if linkRes := teePadPass.Link(queuePassSink); linkRes != gst.PadLinkOK {
+		return nil, fmt.Errorf("failed to link tee to passthrough queue: %s", linkRes)
+	}
+
+	teePadView := tee.GetRequestPad("src_%u")
+	if teePadView == nil {
+		return nil, fmt.Errorf("failed to request preview pad from tee")
+	}
+
+	queueViewSink := queueView.GetStaticPad("sink")
+	if linkRes := teePadView.Link(queueViewSink); linkRes != gst.PadLinkOK {
+		return nil, fmt.Errorf("failed to link tee to preview queue: %s", linkRes)
+	}
+
+	teeSink := tee.GetStaticPad("sink")
+	ghostSink := gst.NewGhostPad("sink", teeSink)
+	if !bin.AddPad(ghostSink.Pad) {
+		return nil, fmt.Errorf("failed to add ghost sink pad")
+	}
+
+	queuePassSrc := queuePass.GetStaticPad("src")
+	ghostSrc := gst.NewGhostPad("src", queuePassSrc)
+	if !bin.AddPad(ghostSrc.Pad) {
+		return nil, fmt.Errorf("failed to add ghost src pad")
+	}
+
+	return bin, nil
 }

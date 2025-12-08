@@ -3,6 +3,7 @@ package sip
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"sync"
@@ -35,7 +36,7 @@ const (
 	VideoStatusStarted
 )
 
-func NewVideoManager(log logger.Logger, room *Room, opts *MediaOptions) (*VideoManager, error) {
+func NewVideoManager(log logger.Logger, room *Room, opts *MediaOptions, factory PipelineFactory) (*VideoManager, error) {
 	// Allocate RTP/RTCP port pair according to RFC 3550 (RTCP on RTP+1)
 	rtpConn, rtcpConn, err := mrtp.ListenUDPPortPair(opts.Ports.Start, opts.Ports.End, opts.IP)
 	if err != nil {
@@ -43,33 +44,39 @@ func NewVideoManager(log logger.Logger, room *Room, opts *MediaOptions) (*VideoM
 	}
 
 	v := &VideoManager{
-		VideoIO:  NewVideoIO(),
-		log:      log,
-		room:     room,
-		opts:     opts,
-		rtpConn:  newUDPConn(log.WithComponent("video-rtp"), rtpConn),
-		rtcpConn: newUDPConn(log.WithComponent("video-rtcp"), rtcpConn),
-		status:   VideoStatusStopped,
+		VideoIO:         NewVideoIO(),
+		log:             log,
+		room:            room,
+		opts:            opts,
+		rtpConn:         newUDPConn(log.WithComponent("video-rtp"), rtpConn),
+		rtcpConn:        newUDPConn(log.WithComponent("video-rtcp"), rtcpConn),
+		status:          VideoStatusStopped,
+		pipelineFactory: factory,
 	}
 
-	v.log.Infow("video manager created")
+	v.log.Debugw("video manager created")
 
 	return v, nil
 }
 
+type PipelineFactory interface {
+	NewPipeline(media *sdpv2.SDPMedia) (pipeline.GspPipeline, error)
+}
+
 type VideoManager struct {
 	*VideoIO
-	mu       sync.Mutex
-	log      logger.Logger
-	opts     *MediaOptions
-	room     *Room
-	rtpConn  *udpConn
-	rtcpConn *udpConn
-	pipeline *pipeline.GstPipeline
-	codec    *sdpv2.Codec
-	recv     bool
-	send     bool
-	status   VideoStatus
+	mu              sync.Mutex
+	log             logger.Logger
+	opts            *MediaOptions
+	room            *Room
+	rtpConn         *udpConn
+	rtcpConn        *udpConn
+	pipeline        pipeline.GspPipeline
+	pipelineFactory PipelineFactory
+	codec           *sdpv2.Codec
+	recv            bool
+	send            bool
+	status          VideoStatus
 }
 
 type VideoIO struct {
@@ -80,6 +87,46 @@ type VideoIO struct {
 
 	webrtcRtpOut  *SwitchWriter
 	webrtcRtcpOut *SwitchWriter
+}
+
+func (v *VideoManager) Copy(dst io.WriteCloser, src io.ReadCloser) {
+	n, err := io.Copy(dst, src)
+	v.log.Debugw("copy done", "bytes", n, "err", err)
+	src.Close()
+	dst.Close()
+}
+
+func (v *VideoManager) CopyWithDebug(dst io.WriteCloser, src io.ReadCloser, label string) {
+	buf := make([]byte, 1500)
+	var totalBytes, totalPackets int64
+
+	for {
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			written, writeErr := dst.Write(buf[:n])
+			totalBytes += int64(written)
+			totalPackets++
+
+			if totalPackets%1000 == 0 {
+				v.log.Debugw("copy stats", "label", label, "packets", totalPackets, "bytes", totalBytes)
+			}
+
+			if writeErr != nil {
+				v.log.Warnw("write error", writeErr, "label", label)
+				break
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				v.log.Warnw("read error", readErr, "label", label)
+			}
+			break
+		}
+	}
+
+	v.log.Debugw("copy done", "label", label, "bytes", totalBytes, "packets", totalPackets)
+	src.Close()
+	dst.Close()
 }
 
 func NewVideoIO() *VideoIO {
@@ -104,6 +151,13 @@ func (v *VideoIO) Close() error {
 	)
 }
 
+// Reset clears the closed flag on SwitchReaders so they can be reused
+// after being stopped. This is needed for screenshare restart.
+func (v *VideoIO) Reset() {
+	v.sipRtpIn.Reset()
+	v.sipRtcpIn.Reset()
+}
+
 func (v *VideoManager) RtpPort() int {
 	return v.rtpConn.LocalAddr().(*net.UDPAddr).Port
 }
@@ -112,82 +166,8 @@ func (v *VideoManager) RtcpPort() int {
 	return v.rtcpConn.LocalAddr().(*net.UDPAddr).Port
 }
 
-func (v *VideoManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc uint32) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
-	if v.status != VideoStatusStarted {
-		v.log.Warnw("video manager not started, cannot add WebRTC track input", nil, "status", v.status)
-		return
-	}
-
-	v.log.Infow("WebRTC video track subscribed - connecting WebRTC→SIP pipeline",
-		"hasRtpIn", ti.RtpIn != nil,
-		"hasRtcpIn", ti.RtcpIn != nil)
-
-	s, err := v.pipeline.AddWebRTCSourceToSelector(sid, ssrc)
-	if err != nil {
-		v.log.Errorw("failed to add WebRTC source to selector", err)
-		return
-	}
-
-	webrtcRtpIn, err := NewGstWriter(s.WebrtcRtpAppSrc)
-	if err != nil {
-		v.log.Errorw("failed to create WebRTC RTP writer", err)
-		return
-	}
-	go func() {
-		v.Copy(webrtcRtpIn, ti.RtpIn)
-		if err := v.pipeline.RemoveWebRTCSourceFromSelector(sid); err != nil {
-			v.log.Errorw("failed to remove WebRTC source from selector", err)
-		}
-	}()
-
-	// TODO: fix RTCP pipeline then enable this
-	// webrtcRtcpIn, err := NewGstWriter(s.WebrtcRtcpAppSrc)
-	// if err != nil {
-	// 	v.log.Errorw("failed to create WebRTC RTCP reader", err)
-	// 	return
-	// }
-	// go Copy(webrtcRtcpIn, ti.RtcpIn)
-}
-
-func (v *VideoManager) SwitchActiveWebrtcTrack(sid string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
-	// ssrc, ok := v.ssrcs[sid]
-	// if !ok {
-	// 	return fmt.Errorf("no SSRC found for sid %s", sid)
-	// }
-	// v.log.Debugw("switching active WebRTC video track", "sid", sid, "ssrc", ssrc)
-
-	// pli := &rtcp.PictureLossIndication{
-	// 	MediaSSRC:  ssrc, // The track we want a keyframe for
-	// 	SenderSSRC: 0,    // Your local SSRC (0 is usually acceptable if unknown)
-	// }
-
-	// buf, err := pli.Marshal()
-	// if err != nil {
-	// 	return fmt.Errorf("failed to marshal PLI: %w", err)
-	// }
-
-	// _, err = v.webrtcRtcpOut.Write(buf)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to send PLI RTCP packet: %w", err)
-	// }
-
-	if err := v.pipeline.SwitchWebRTCSelectorSource(sid); err != nil {
-		return fmt.Errorf("failed to switch WebRTC selector source: %w", err)
-	}
-
-	return nil
-}
-
 func (v *VideoManager) WebrtcTrackOutput(to *TrackOutput) {
-	v.log.Infow("WebRTC video track published - connecting SIP→WebRTC pipeline",
-		"hasRtpOut", to.RtpOut != nil,
-		"hasRtcpOut", to.RtcpOut != nil)
+	v.log.Debugw("WebRTC track output connected")
 
 	if w := v.webrtcRtpOut.Swap(to.RtpOut); w != nil {
 		_ = w.Close()
@@ -280,11 +260,13 @@ func (v *VideoManager) setupOutput(remote netip.Addr, media *sdpv2.SDPMedia, sen
 	rtcpAddr := netip.AddrPortFrom(remote, media.RTCPPort)
 	v.rtcpConn.SetDst(rtcpAddr)
 
-	v.log.Infow("setting up video send to SIP", "remote", remote.String(), "port", media.Port, "rtcp_port", media.RTCPPort)
-	if w := v.sipRtpOut.Swap(v.rtpConn); w != nil {
+	v.log.Debugw("video send setup", "remote", remote.String(), "port", media.Port)
+	// Swap in the connection, but don't close the old one if it's the same connection.
+	// This happens during screenshare restart when we reuse the same UDP connection.
+	if w := v.sipRtpOut.Swap(v.rtpConn); w != nil && w != v.rtpConn {
 		_ = w.Close()
 	}
-	if w := v.sipRtcpOut.Swap(v.rtcpConn); w != nil {
+	if w := v.sipRtcpOut.Swap(v.rtcpConn); w != nil && w != v.rtcpConn {
 		_ = w.Close()
 	}
 	return nil
@@ -301,7 +283,7 @@ func (v *VideoManager) setupInput(remote netip.Addr, media *sdpv2.SDPMedia, recv
 		return nil
 	}
 
-	v.log.Infow("setting up video receive from SIP", "remote", remote.String(), "port", media.Port, "rtcp_port", media.RTCPPort)
+	v.log.Debugw("video recv setup", "remote", remote.String(), "port", media.Port)
 	if r := v.sipRtpIn.Swap(v.rtpConn); r != nil {
 		_ = r.Close()
 	}
@@ -321,26 +303,34 @@ func (v *VideoManager) Setup(remote netip.Addr, media *sdpv2.SDPMedia) error {
 
 	v.log.Debugw("setting up video manager", "media", media)
 
+	// Reset the VideoIO switch readers so they can be reused after being stopped.
+	// This is critical for screenshare restart: the Copy loops check the closed flag.
+	v.VideoIO.Reset()
+
 	if media.Codec == nil {
 		return fmt.Errorf("no codec selected for video media")
 	}
 	v.codec = media.Codec
 
-	if err := v.SetupGstPipeline(media); err != nil {
-		return fmt.Errorf("failed to setup GStreamer pipeline: %w", err)
+	p, err := v.pipelineFactory.NewPipeline(media)
+	if err != nil {
+		return fmt.Errorf("failed to create SIP WebRTC pipeline: %w", err)
 	}
+	v.pipeline = p
 
 	v.recv = media.Direction.IsRecv()
 	v.send = media.Direction.IsSend()
 
-	v.log.Infow("video setup", "send", v.send, "recv", v.recv, "remote", remote.String(), "rtp_port", v.RtpPort(), "rtcp_port", v.RtcpPort())
+	v.log.Debugw("video setup", "send", v.send, "recv", v.recv, "port", v.RtpPort())
 
-	if err := v.setupOutput(remote, media, v.recv); err != nil {
-		return fmt.Errorf("failed to setup video input: %w", err)
+	// setupOutput: send TO SIP device (when we send, i.e., v.send=true)
+	if err := v.setupOutput(remote, media, v.send); err != nil {
+		return fmt.Errorf("failed to setup video output to SIP: %w", err)
 	}
 
-	if err := v.setupInput(remote, media, v.send); err != nil {
-		return fmt.Errorf("failed to setup video output: %w", err)
+	// setupInput: receive FROM SIP device (when we receive, i.e., v.recv=true)
+	if err := v.setupInput(remote, media, v.recv); err != nil {
+		return fmt.Errorf("failed to setup video input from SIP: %w", err)
 	}
 
 	v.status = VideoStatusReady

@@ -50,10 +50,9 @@ func (s *SwitchWriter) Write(p []byte) (n int, err error) {
 }
 
 func (s *SwitchWriter) Close() error {
-	w := s.w.Load()
-	if w != nil {
-		return (*w).Close()
-	}
+	// Just clear the pointer, don't close the underlying writer.
+	// The underlying writer (e.g., UDP connection) may be reused for screenshare restart.
+	s.w.Store(nil)
 	return nil
 }
 
@@ -133,6 +132,15 @@ func (s *SwitchReader) Swap(r io.ReadCloser) io.ReadCloser {
 		return *old
 	}
 	return nil
+}
+
+// Reset clears the closed flag and underlying reader so the SwitchReader can be reused.
+// This is needed when the screenshare pipeline is restarted after being stopped.
+func (s *SwitchReader) Reset() {
+	s.closed.Store(false)
+	// Clear the old reader so Read() will block until a new one is swapped in.
+	// Without this, Read() would try to read from the old closed reader.
+	s.r.Store(nil)
 }
 
 func NewTrackAdapter(track *webrtc.TrackRemote) *TrackAdapter {

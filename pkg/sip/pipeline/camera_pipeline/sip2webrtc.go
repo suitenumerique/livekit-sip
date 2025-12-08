@@ -1,13 +1,13 @@
-package pipeline
+package camera_pipeline
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/go-gst/go-gst/gst/app"
 	"github.com/livekit/protocol/logger"
+	"github.com/livekit/sip/pkg/sip/pipeline"
 )
 
 type SipToWebrtc struct {
@@ -15,23 +15,22 @@ type SipToWebrtc struct {
 
 	RtpBin *gst.Element
 
-	SipRtpSrc *gst.Element
-	// rptbin
-	Depay         *gst.Element
-	Parse         *gst.Element
-	Decoder       *gst.Element
+	SipRtpSrc     *gst.Element
+	H264Depay     *gst.Element
+	H264Parse     *gst.Element
+	AvdecH264     *gst.Element
 	VideoConvert  *gst.Element
-	VideoScale    *gst.Element
-	ResFilter     *gst.Element
-	VideoConvert2 *gst.Element
 	VideoRate     *gst.Element
-	FpsFilter     *gst.Element
+	RateFilter    *gst.Element
+	VideoScale    *gst.Element
+	ScaleFilter   *gst.Element
+	Queue         *gst.Element
 	Vp8Enc        *gst.Element
 	RtpVp8Pay     *gst.Element
+	OutQueue      *gst.Element
 	WebrtcRtpSink *gst.Element
 
-	SipRtcpSrc *gst.Element
-	// rptbin
+	SipRtcpSrc  *gst.Element
 	SipRtcpSink *gst.Element
 
 	SipRtpAppSrc     *app.Source
@@ -40,11 +39,17 @@ type SipToWebrtc struct {
 	SipRtcpAppSink   *app.Sink
 }
 
-var _ GstChain = (*SipToWebrtc)(nil)
+var _ pipeline.GstChain = (*SipToWebrtc)(nil)
 
 func buildSipToWebRTCChain(log logger.Logger, sipPayloadType int) (*SipToWebrtc, error) {
 	rtpBin, err := gst.NewElementWithProperties("rtpbin", map[string]interface{}{
-		"name": "sip_rtp_bin",
+		"autoremove":         true,
+		"do-lost":            true,
+		"do-sync-event":      true,
+		"drop-on-latency":    true,
+		"latency":            uint64(0),
+		"rtcp-sync-interval": uint64(1000000000), // 1s
+		"rtp-profile":        int(3),             // RTP_PROFILE_AVPF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SIP rtpbin: %w", err)
@@ -54,8 +59,8 @@ func buildSipToWebRTCChain(log logger.Logger, sipPayloadType int) (*SipToWebrtc,
 		"name":         "sip_rtp_in",
 		"is-live":      true,
 		"do-timestamp": true,
-		"format":       int(3), // GST_FORMAT_TIME; using the same numeric value as your launch string
-		"max-bytes":    uint64(5_000_000),
+		"format":       int(gst.FormatTime),
+		"max-bytes":    uint64(2_000_000),
 		"block":        false,
 		"caps": gst.NewCapsFromString(fmt.Sprintf(
 			"application/x-rtp,media=video,encoding-name=H264,payload=%d,clock-rate=90000",
@@ -66,74 +71,71 @@ func buildSipToWebRTCChain(log logger.Logger, sipPayloadType int) (*SipToWebrtc,
 		return nil, fmt.Errorf("failed to create SIP appsrc: %w", err)
 	}
 
-	depay, err := gst.NewElementWithProperties("rtph264depay", map[string]interface{}{
+	h264depay, err := gst.NewElementWithProperties("rtph264depay", map[string]interface{}{
 		"request-keyframe": true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SIP rtp depayloader: %w", err)
 	}
 
-	parse, err := gst.NewElementWithProperties("h264parse", map[string]interface{}{
+	h264parse, err := gst.NewElementWithProperties("h264parse", map[string]interface{}{
 		"config-interval": int(1),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SIP h264 parser: %w", err)
 	}
 
-	dec, err := gst.NewElementWithProperties("avdec_h264", map[string]interface{}{
+	avdecH264, err := gst.NewElementWithProperties("avdec_h264", map[string]interface{}{
 		"max-threads": int(4),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SIP h264 decoder: %w", err)
 	}
 
-	vconv, err := gst.NewElement("videoconvert")
+	videoconvert, err := gst.NewElementWithProperties("videoconvert", map[string]interface{}{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SIP videoconvert: %w", err)
+		return nil, fmt.Errorf("failed to create webrtc videoconvert: %w", err)
 	}
 
-	vscale, err := gst.NewElementWithProperties("videoscale", map[string]interface{}{
-		"add-borders": true, // Add black bars for aspect ratio preservation
-	})
+	videorate, err := gst.NewElement("videorate")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SIP videoscale: %w", err)
+		return nil, fmt.Errorf("failed to create webrtc videorate: %w", err)
 	}
 
-	// Force 1280x720 resolution with PAR 1:1 - this forces letterboxing for non-16:9 content
-	resFilter, err := gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create SIP resolution capsfilter: %w", err)
-	}
-
-	// videoconvert after scaling to ensure proper format
-	vconv2, err := gst.NewElement("videoconvert")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create SIP videoconvert2: %w", err)
-	}
-
-	// Force 24fps output
-	vrate, err := gst.NewElementWithProperties("videorate", map[string]interface{}{
-		"drop-only": true, // Only drop frames, don't duplicate
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create SIP videorate: %w", err)
-	}
-
-	// Force 24fps in caps
-	fpsFilter, err := gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+	ratefilter, err := gst.NewElementWithProperties("capsfilter", map[string]interface{}{
 		"caps": gst.NewCapsFromString("video/x-raw,framerate=24/1"),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SIP fps capsfilter: %w", err)
+		return nil, fmt.Errorf("failed to create webrtc rate capsfilter: %w", err)
+	}
+
+	videoscale, err := gst.NewElementWithProperties("videoscale", map[string]interface{}{
+		"add-borders": true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webrtc videoscale: %w", err)
+	}
+
+	scalefilter, err := gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString("video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webrtc scale capsfilter: %w", err)
+	}
+
+	queue, err := gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-buffers": uint(3),
+		"leaky":            int(2), // downstream
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webrtc queue: %w", err)
 	}
 
 	vp8enc, err := gst.NewElementWithProperties("vp8enc", map[string]interface{}{
 		"deadline":            int(1),
-		"target-bitrate":      int(1_500_000),
+		"target-bitrate":      int(1_024_000),
 		"cpu-used":            int(4),
-		"keyframe-max-dist":   int(30),
+		"keyframe-max-dist":   int(24),
 		"lag-in-frames":       int(0),
 		"threads":             int(4),
 		"buffer-initial-size": int(100),
@@ -155,6 +157,13 @@ func buildSipToWebRTCChain(log logger.Logger, sipPayloadType int) (*SipToWebrtc,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SIP rtp vp8 payloader: %w", err)
+	}
+
+	outQueue, err := gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-time": uint64(100000000), // 100ms
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webrtc rtcp out queue: %w", err)
 	}
 
 	webrtcRtpSink, err := gst.NewElementWithProperties("appsink", map[string]interface{}{
@@ -197,21 +206,22 @@ func buildSipToWebRTCChain(log logger.Logger, sipPayloadType int) (*SipToWebrtc,
 		RtpBin: rtpBin,
 
 		SipRtpSrc:     sipRtpSrc,
-		Depay:         depay,
-		Parse:         parse,
-		Decoder:       dec,
-		VideoConvert:  vconv,
-		VideoScale:    vscale,
-		ResFilter:     resFilter,
-		VideoConvert2: vconv2,
-		VideoRate:     vrate,
-		FpsFilter:     fpsFilter,
+		H264Depay:     h264depay,
+		H264Parse:     h264parse,
+		AvdecH264:     avdecH264,
+		VideoConvert:  videoconvert,
+		VideoRate:     videorate,
+		RateFilter:    ratefilter,
+		VideoScale:    videoscale,
+		ScaleFilter:   scalefilter,
+		Queue:         queue,
 		Vp8Enc:        vp8enc,
 		RtpVp8Pay:     rtpVp8Pay,
+		OutQueue:      outQueue,
 		WebrtcRtpSink: webrtcRtpSink,
 
-		SipRtcpSink: sipRtcpSink,
 		SipRtcpSrc:  sipRtcpSrc,
+		SipRtcpSink: sipRtcpSink,
 
 		SipRtpAppSrc:     app.SrcFromElement(sipRtpSrc),
 		WebrtcRtpAppSink: app.SinkFromElement(webrtcRtpSink),
@@ -221,24 +231,23 @@ func buildSipToWebRTCChain(log logger.Logger, sipPayloadType int) (*SipToWebrtc,
 }
 
 // Add implements GstChain.
-func (stw *SipToWebrtc) Add(pipeline *gst.Pipeline) error {
-	if err := pipeline.AddMany(
+func (stw *SipToWebrtc) Add(p *gst.Pipeline) error {
+	if err := p.AddMany(
 		stw.RtpBin,
-
 		stw.SipRtpSrc,
-		stw.Depay,
-		stw.Parse,
-		stw.Decoder,
+		stw.H264Depay,
+		stw.H264Parse,
+		stw.AvdecH264,
 		stw.VideoConvert,
-		stw.VideoScale,
-		stw.ResFilter,
-		stw.VideoConvert2,
 		stw.VideoRate,
-		stw.FpsFilter,
+		stw.RateFilter,
+		stw.VideoScale,
+		stw.ScaleFilter,
+		stw.Queue,
 		stw.Vp8Enc,
 		stw.RtpVp8Pay,
+		stw.OutQueue,
 		stw.WebrtcRtpSink,
-
 		stw.SipRtcpSrc,
 		stw.SipRtcpSink,
 	); err != nil {
@@ -248,70 +257,64 @@ func (stw *SipToWebrtc) Add(pipeline *gst.Pipeline) error {
 }
 
 // Link implements GstChain.
-func (stw *SipToWebrtc) Link(pipeline *gst.Pipeline) error {
+func (stw *SipToWebrtc) Link(p *gst.Pipeline) error {
 	// link rtp path
-	if err := linkPad(
+	if err := pipeline.LinkPad(
 		stw.SipRtpSrc.GetStaticPad("src"),
 		stw.RtpBin.GetRequestPad("recv_rtp_sink_%u"),
 	); err != nil {
 		return fmt.Errorf("failed to link sip rtp src to rtpbin: %w", err)
 	}
 
-	var (
-		hnd glib.SignalHandle
-		err error
-	)
-	if hnd, err = stw.RtpBin.Connect("pad-added", func(rtpbin *gst.Element, pad *gst.Pad) {
-		stw.log.Debugw("RTPBIN PAD ADDED", "pad", pad.GetName())
+	if _, err := stw.RtpBin.Connect("pad-added", func(rtpbin *gst.Element, pad *gst.Pad) {
 		padName := pad.GetName()
 		if !strings.HasPrefix(padName, "recv_rtp_src_") {
 			return
 		}
 		var sessionID, ssrc, payloadType uint32
 		if _, err := fmt.Sscanf(padName, "recv_rtp_src_%d_%d_%d", &sessionID, &ssrc, &payloadType); err != nil {
-			stw.log.Warnw("Invalid RTP pad format", err, "pad", padName)
+			stw.log.Warnw("invalid RTP pad format", err, "pad", padName)
 			return
 		}
-		stw.log.Infow("RTP pad added", "pad", padName, "sessionID", sessionID, "ssrc", ssrc, "payloadType", payloadType)
-		if err := linkPad(
+		stw.log.Debugw("rtpbin pad added", "ssrc", ssrc, "pt", payloadType)
+		if err := pipeline.LinkPad(
 			pad,
-			stw.Depay.GetStaticPad("sink"),
+			stw.H264Depay.GetStaticPad("sink"),
 		); err != nil {
-			stw.log.Errorw("Failed to link rtpbin pad to depayloader", err)
+			stw.log.Errorw("failed to link rtpbin to depayloader", err)
 			return
 		}
-		stw.log.Infow("Linked RTP pad", "pad", padName)
-		stw.RtpBin.HandlerDisconnect(hnd)
 	}); err != nil {
 		return fmt.Errorf("failed to connect to rtpbin pad-added signal: %w", err)
 	}
 
 	if err := gst.ElementLinkMany(
-		stw.Depay,
-		stw.Parse,
-		stw.Decoder,
+		stw.H264Depay,
+		stw.H264Parse,
+		stw.AvdecH264,
 		stw.VideoConvert,
-		stw.VideoScale,
-		stw.ResFilter,
-		stw.VideoConvert2,
 		stw.VideoRate,
-		stw.FpsFilter,
+		stw.RateFilter,
+		stw.VideoScale,
+		stw.ScaleFilter,
+		stw.Queue,
 		stw.Vp8Enc,
 		stw.RtpVp8Pay,
+		stw.OutQueue,
 		stw.WebrtcRtpSink,
 	); err != nil {
 		return fmt.Errorf("failed to link sip to webrtc rtp path: %w", err)
 	}
 
 	// link rtcp path
-	if err := linkPad(
+	if err := pipeline.LinkPad(
 		stw.SipRtcpSrc.GetStaticPad("src"),
 		stw.RtpBin.GetRequestPad("recv_rtcp_sink_%u"),
 	); err != nil {
 		return fmt.Errorf("failed to link sip rtcp src to rtpbin: %w", err)
 	}
 
-	if err := linkPad(
+	if err := pipeline.LinkPad(
 		stw.RtpBin.GetRequestPad("send_rtcp_src_%u"),
 		stw.SipRtcpSink.GetStaticPad("sink"),
 	); err != nil {
@@ -325,23 +328,22 @@ func (stw *SipToWebrtc) Link(pipeline *gst.Pipeline) error {
 func (stw *SipToWebrtc) Close(pipeline *gst.Pipeline) error {
 	if err := pipeline.RemoveMany(
 		stw.RtpBin,
-
 		stw.SipRtpSrc,
-		stw.Depay,
-		stw.Parse,
-		stw.Decoder,
+		stw.H264Depay,
+		stw.H264Parse,
+		stw.AvdecH264,
 		stw.VideoConvert,
-		stw.VideoScale,
-		stw.ResFilter,
-		stw.VideoConvert2,
 		stw.VideoRate,
-		stw.FpsFilter,
+		stw.RateFilter,
+		stw.VideoScale,
+		stw.ScaleFilter,
+		stw.Queue,
 		stw.Vp8Enc,
 		stw.RtpVp8Pay,
+		stw.OutQueue,
 		stw.WebrtcRtpSink,
-
-		stw.SipRtcpSink,
 		stw.SipRtcpSrc,
+		stw.SipRtcpSink,
 	); err != nil {
 		return fmt.Errorf("failed to remove sip to webrtc chain from pipeline: %w", err)
 	}

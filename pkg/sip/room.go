@@ -171,9 +171,10 @@ type Room struct {
 	closed     core.Fuse
 	stats      *RoomStats
 
-	onCameraTrack func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant)
-	trackMu       sync.Mutex
-	cameraOut     *TrackOutput
+	onCameraTrack      func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant)
+	onScreenshareTrack func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant)
+	trackMu            sync.Mutex
+	cameraOut          *TrackOutput
 
 	onActiveSpeakerChanged func(p []lksdk.Participant)
 }
@@ -255,11 +256,9 @@ func (r *Room) participantJoin(rp *lksdk.RemoteParticipant) {
 	log.Debugw("participant joined")
 	switch rp.Kind() {
 	case lksdk.ParticipantSIP:
-		// Avoid a deadlock where two SIP participant join a room and won't publish their track.
-		// Each waits for the other's track to subscribe before publishing its own track.
-		// So we just assume SIP participants will eventually start speaking.
+		// Avoid deadlock: SIP participants wait for each other's track
 		r.subscribed.Break()
-		log.Infow("unblocking subscription - second sip participant is in the room")
+		log.Debugw("unblocking subscription - second sip participant")
 	}
 }
 
@@ -453,13 +452,12 @@ func (r *Room) SetDTMFOutput(w dtmf.Writer) {
 func (r *Room) sendDTMF(msg *livekit.SipDTMF) {
 	outDTMF := r.outDtmf.Load()
 	if outDTMF == nil {
-		r.log.Infow("ignoring dtmf", "digit", msg.Digit)
+		r.log.Debugw("ignoring dtmf", "digit", msg.Digit)
 		return
 	}
-	// TODO: Separate goroutine?
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r.log.Infow("forwarding dtmf to sip", "digit", msg.Digit)
+	r.log.Debugw("forwarding dtmf", "digit", msg.Digit)
 	_ = (*outDTMF).WriteDTMF(ctx, msg.Digit)
 }
 
@@ -537,14 +535,14 @@ func (r *Room) StartCamera() (*TrackOutput, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.log.Infow("published video track", "SID", pt.SID())
+	r.log.Debugw("published video track", "SID", pt.SID())
 	trackRtcp := &RtcpWriter{
 		pc: p.GetSubscriberPeerConnection(),
 	}
 	to.RtpOut = &CallbackWriteCloser{
 		Writer: track,
 		Callback: func() error {
-			r.log.Infow("unpublishing video track", "SID", pt.SID())
+			r.log.Debugw("unpublishing video track", "SID", pt.SID())
 			return p.UnpublishTrack(pt.SID())
 		},
 	}
@@ -556,7 +554,7 @@ func (r *Room) StartCamera() (*TrackOutput, error) {
 }
 
 func (r *Room) StopCamera() error {
-	r.log.Infow("stopping camera")
+	r.log.Debugw("stopping camera")
 	r.trackMu.Lock()
 	defer r.trackMu.Unlock()
 	if r.cameraOut == nil {
@@ -575,7 +573,7 @@ func (r *Room) participantAudioTrackSubscribed(track *webrtc.TrackRemote, pub *l
 		log.Warnw("ignoring track, room not ready", nil)
 		return
 	}
-	log.Infow("mixing track")
+	log.Debugw("mixing track")
 
 	go func() {
 		mTrack := r.NewTrack()
@@ -600,7 +598,7 @@ func (r *Room) participantAudioTrackSubscribed(track *webrtc.TrackRemote, pub *l
 		}
 		err = rtp.HandleLoop(in, h)
 		if err != nil && !errors.Is(err, io.EOF) {
-			log.Infow("room track rtp handler returned with failure", "error", err)
+			log.Debugw("room track rtp handler returned", "error", err)
 		}
 	}()
 }
@@ -614,14 +612,21 @@ func (r *Room) participantVideoTrackSubscribed(track *webrtc.TrackRemote, pub *l
 
 	switch pub.Source() {
 	case livekit.TrackSource_CAMERA:
-		log.Infow("connecting camera track")
+		log.Debugw("connecting camera track")
 		if r.onCameraTrack == nil {
-			log.Warnw("no camera track handler set, ignoring track", nil)
+			log.Warnw("no camera track handler", nil)
 			return
 		}
 		r.onCameraTrack(track, pub, rp)
+	case livekit.TrackSource_SCREEN_SHARE:
+		log.Debugw("connecting screenshare track")
+		if r.onScreenshareTrack == nil {
+			log.Warnw("no screenshare track handler", nil)
+			return
+		}
+		r.onScreenshareTrack(track, pub, rp)
 	default:
-		log.Infow("ignoring non-camera video track", "source", pub.Source())
+		log.Debugw("ignoring non-camera video track", "source", pub.Source())
 	}
 }
 
@@ -630,6 +635,13 @@ func (r *Room) OnCameraTrack(f func(track *webrtc.TrackRemote, pub *lksdk.Remote
 		r.log.Warnw("overriding existing camera track handler", nil)
 	}
 	r.onCameraTrack = f
+}
+
+func (r *Room) OnScreenshareTrack(f func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant)) {
+	if r.onScreenshareTrack != nil {
+		r.log.Warnw("overriding existing screenshare track handler", nil)
+	}
+	r.onScreenshareTrack = f
 }
 
 func (r *Room) OnActiveSpeakersChanged(f func(p []lksdk.Participant)) {

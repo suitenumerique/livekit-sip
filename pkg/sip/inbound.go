@@ -1010,6 +1010,63 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	}
 	c.medias = orchestrator
 
+	// Wire up re-INVITE callback for screenshare content negotiation (e.g., Polycom).
+	// This is called when WebRTC screenshare track arrives and screenshare not yet set up.
+	orchestrator.OnReInviteNeeded = func(ctx context.Context) (*sdpv2.SDP, error) {
+		c.log().Infow("Screenshare re-INVITE requested",
+			"screenshareRtpPort", orchestrator.screenshare.RtpPort(),
+			"screenshareRtcpPort", orchestrator.screenshare.RtcpPort(),
+			"bfcpMStreamID", orchestrator.BFCPMediaStreamID(),
+		)
+
+		// Use camera's negotiated codec as base
+		cameraCodec := orchestrator.camera.Codec()
+		if cameraCodec == nil {
+			return nil, errors.New("camera codec not negotiated")
+		}
+
+		// Create screenshare codec with PT 109 (H264 Baseline, no packetization-mode)
+		// PT 109 is more compatible with SIP devices like Poly that prefer simpler
+		// H264 encoding without FU-A/STAP-A packetization mode
+		offeredPT := uint8(109)
+		screenshareCodec := &sdpv2.Codec{
+			PayloadType: offeredPT,
+			Name:        "H264/90000",
+			Codec:       cameraCodec.Codec,
+			ClockRate:   90000,
+			FMTP: map[string]string{
+				"profile-level-id": "428020", // Baseline profile Level 3.2
+				"max-mbps":         "490000",
+				"max-fs":           "8192",
+				"sar-supported":    "13",
+				"sar":              "13",
+				// NO packetization-mode = single NAL unit mode (mode 0)
+			},
+		}
+		c.log().Infow("Screenshare re-INVITE: offering content m-line",
+			"offeredPayloadType", offeredPT,
+			"codec", screenshareCodec.Name,
+		)
+
+		// Create screenshare media descriptor with proper label for BFCP association
+		screenshareMedia := sdpv2.NewScreenshareMediaFromCodec(
+			screenshareCodec,
+			uint16(orchestrator.screenshare.RtpPort()),
+			uint16(orchestrator.screenshare.RtcpPort()),
+			orchestrator.BFCPMediaStreamID(), // Label 3 for BFCP floorid mstrm:3
+		)
+
+		// Build complete re-INVITE SDP with video (content:main, label:1),
+		// screenshare (content:slides, label:3), and BFCP m-lines
+		sdpBytes, err := orchestrator.BuildReInviteSDPBytes(screenshareMedia)
+		if err != nil {
+			c.log().Errorw("Failed to build re-INVITE SDP", err)
+			return nil, err
+		}
+
+		return c.cc.sendReInviteForScreenshareWithSDP(ctx, sdpBytes)
+	}
+
 	mp, err := NewMediaPort(tid, c.log(), c.mon, opts, RoomSampleRate)
 	if err != nil {
 		return nil, err
@@ -1024,6 +1081,9 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 		c.log().Errorw("Cannot parse SDP offer", err)
 		return nil, err
 	}
+
+	// Setup BFCP if present in offer (non-blocking)
+	c.medias.SetupBFCP(offer)
 
 	answer, err := c.medias.AnswerSDP(offer)
 	if err != nil {
@@ -1042,17 +1102,30 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	}
 
 	answer, err = answer.Builder().SetAudio(func(b *sdpv2.SDPMediaBuilder) (*sdpv2.SDPMedia, error) {
-		return b.
-			AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
-				return offer.Audio.Codec, nil
-			}, true).
-			SetRTPPort(uint16(c.media.Port())).
-			Build()
+		// Add the selected audio codec
+		b = b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
+			return offer.Audio.Codec, nil
+		}, true)
+
+		// Also add DTMF codec (telephone-event) if present in offer
+		for _, codec := range offer.Audio.Codecs {
+			if codec.Name == "telephone-event/8000" {
+				b = b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
+					return codec, nil
+				}, false)
+				break
+			}
+		}
+
+		return b.SetRTPPort(uint16(c.media.Port())).Build()
 	}).Build()
 	if err != nil {
 		c.log().Errorw("Cannot configure audio in SDP answer", err)
 		return nil, SDPError{Err: err}
 	}
+
+	// Store audio info for re-INVITE (critical for preserving audio when adding screenshare)
+	orchestrator.SetAudioForReInvite(offer.Audio.Codec, uint16(c.media.Port()))
 
 	mc, err := answer.V1MediaConfig(netip.AddrPortFrom(offer.Addr, offer.Audio.Port))
 	if err != nil {
@@ -1064,6 +1137,12 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	if err != nil {
 		return nil, err
 	}
+
+	// Append BFCP answer if available
+	if bfcpAnswer := c.medias.BFCPAnswerBytes(); bfcpAnswer != nil {
+		answerData = append(answerData, bfcpAnswer...)
+	}
+
 	c.mon.SDPSize(len(answerData), false)
 	c.log().Debugw("SDP answer", "sdp", string(answerData))
 
@@ -1840,12 +1919,11 @@ func (c *sipInbound) swapSrcDst(req *sip.Request) {
 	}
 	req.PrependHeader(c.generateViaHeader(req))
 
-	rrHdrs := req.GetHeaders("Record-Route")
-	for _, hdr := range rrHdrs {
+	// Get Record-Route headers from ORIGINAL INVITE (not the new request) and convert to Route headers.
+	// Record-Route headers from incoming INVITE indicate the path through proxies (e.g., Kamailio).
+	// These must be converted to Route headers for in-dialog requests per RFC 3261 Section 12.2.1.1.
+	for _, hdr := range c.invite.GetHeaders("Record-Route") {
 		req.PrependHeader(&sip.RouteHeader{Address: hdr.(*sip.RecordRouteHeader).Address})
-	}
-	// Remove all Record-Route headers
-	for req.RemoveHeader("Record-Route") {
 	}
 }
 
@@ -2013,3 +2091,111 @@ func (c *sipInbound) CloseWithStatus(code sip.StatusCode, status string) {
 		c.drop()
 	}
 }
+
+// sendReInviteForScreenshareWithSDP sends a SIP re-INVITE with pre-built SDP bytes.
+// This is the preferred method as it uses the properly formatted SDP from media-sdk
+// that includes content:main, content:slides, label attributes, and BFCP m-line
+// in the correct order for Poly compatibility.
+// Returns the full answer SDP from the remote device.
+func (c *sipInbound) sendReInviteForScreenshareWithSDP(ctx context.Context, sdpBytes []byte) (*sdpv2.SDP, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.inviteOk == nil || c.invite == nil {
+		return nil, errors.New("call not established")
+	}
+
+	c.log.Infow("Sending re-INVITE for screenshare",
+		"sdpLength", len(sdpBytes),
+		"sdp", string(sdpBytes),
+	)
+
+	// Create re-INVITE request
+	req := sip.NewRequest(sip.INVITE, c.invite.Recipient)
+	req.AppendHeader(sip.NewHeader("Call-ID", c.sipCallID))
+	c.setCSeq(req)
+	c.swapSrcDst(req)
+	req.AppendHeader(c.contact)
+	req.AppendHeader(&contentTypeHeaderSDP)
+	req.SetBody(sdpBytes)
+
+	// Send and wait for response
+	tx, err := c.Transaction(req)
+	if err != nil {
+		return nil, fmt.Errorf("transaction: %w", err)
+	}
+	defer tx.Terminate()
+
+	resp, err := c.waitReInviteResponse(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != sip.StatusOK {
+		c.log.Infow("Re-INVITE rejected by remote",
+			"statusCode", resp.StatusCode,
+			"reason", resp.Reason,
+		)
+		return nil, fmt.Errorf("re-INVITE rejected: %d %s", resp.StatusCode, resp.Reason)
+	}
+
+	// ACK the 200 OK
+	ack := sip.NewAckRequest(req, resp, nil)
+	_ = c.WriteRequest(ack)
+
+	// Parse answer SDP for content port
+	c.log.Infow("Received re-INVITE 200 OK from Poly",
+		"sdpLength", len(resp.Body()),
+		"sdp", string(resp.Body()),
+	)
+
+	answer, err := sdpv2.NewSDP(resp.Body())
+	if err != nil {
+		return nil, fmt.Errorf("parse answer SDP: %w", err)
+	}
+
+	if answer.Screenshare == nil {
+		c.log.Infow("No screenshare in answer SDP - Poly may have rejected content",
+			"hasVideo", answer.Video != nil,
+			"hasBFCP", answer.BFCP != nil,
+		)
+		return nil, errors.New("no screenshare in answer SDP")
+	}
+
+	if answer.Screenshare.Disabled || answer.Screenshare.Port == 0 {
+		c.log.Infow("Screenshare rejected in answer SDP (port 0)",
+			"screensharePort", answer.Screenshare.Port,
+			"screenshareDisabled", answer.Screenshare.Disabled,
+		)
+		return nil, errors.New("screenshare rejected by remote (port 0)")
+	}
+
+	// Update lastSDP with the new offer
+	c.lastSDP = sdpBytes
+
+	c.log.Infow("Re-INVITE for screenshare succeeded",
+		"contentPort", answer.Screenshare.Port,
+		"contentRTCPPort", answer.Screenshare.RTCPPort,
+	)
+
+	return answer, nil
+}
+
+// waitReInviteResponse waits for the final response to a re-INVITE.
+func (c *sipInbound) waitReInviteResponse(ctx context.Context, tx sip.ClientTransaction) (*sip.Response, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			tx.Cancel()
+			return nil, ctx.Err()
+		case <-tx.Done():
+			return nil, errors.New("re-INVITE transaction failed")
+		case resp := <-tx.Responses():
+			// Skip provisional responses (1xx)
+			if resp.StatusCode/100 != 1 {
+				return resp, nil
+			}
+		}
+	}
+}
+

@@ -164,9 +164,11 @@ func newUDPConn(log logger.Logger, conn UDPConn) *udpConn {
 
 type udpConn struct {
 	UDPConn
-	log logger.Logger
-	src atomic.Pointer[netip.AddrPort]
-	dst atomic.Pointer[netip.AddrPort]
+	log          logger.Logger
+	src          atomic.Pointer[netip.AddrPort]
+	dst          atomic.Pointer[netip.AddrPort]
+	writeCount   atomic.Uint64
+	writtenBytes atomic.Uint64
 }
 
 func (c *udpConn) GetSrc() (netip.AddrPort, bool) {
@@ -182,9 +184,9 @@ func (c *udpConn) SetDst(addr netip.AddrPort) {
 	if addr.IsValid() {
 		prev := c.dst.Swap(&addr)
 		if prev == nil || !prev.IsValid() {
-			c.log.Infow("setting media destination", "addr", addr.String())
+			c.log.Debugw("media dst set", "addr", addr.String())
 		} else if *prev != addr {
-			c.log.Infow("changing media destination", "addr", addr.String())
+			c.log.Debugw("media dst changed", "addr", addr.String())
 		}
 	}
 }
@@ -193,9 +195,9 @@ func (c *udpConn) Read(b []byte) (n int, err error) {
 	n, addr, err := c.ReadFromUDPAddrPort(b)
 	prev := c.src.Swap(&addr)
 	if prev == nil || !prev.IsValid() {
-		c.log.Infow("setting media source", "addr", addr.String())
+		c.log.Debugw("media src set", "addr", addr.String())
 	} else if *prev != addr {
-		c.log.Infow("changing media source", "addr", addr.String())
+		c.log.Debugw("media src changed", "addr", addr.String())
 	}
 	return n, err
 }
@@ -318,7 +320,7 @@ func (p *MediaPort) EnableOut() {
 }
 
 func (p *MediaPort) disableTimeout() {
-	p.log.Infow("media timeout disabled")
+	p.log.Debugw("media timeout disabled")
 	p.timeoutStart.Store(nil)
 }
 
@@ -340,11 +342,7 @@ func (p *MediaPort) enableTimeout(initial, general time.Duration) {
 	}
 	now := time.Now()
 	p.timeoutStart.Store(&now)
-	p.log.Infow("media timeout enabled",
-		"packets", p.packetCount.Load(),
-		"initial", initial,
-		"timeout", general,
-	)
+	p.log.Debugw("media timeout enabled", "initial", initial, "timeout", general)
 }
 
 func (p *MediaPort) EnableTimeout(enabled bool) {
@@ -360,7 +358,7 @@ func (p *MediaPort) SetTimeout(initial, general time.Duration) {
 }
 
 func (p *MediaPort) timeoutLoop(tid traceid.ID, timeoutCallback func()) {
-	defer p.log.Infow("media timeout loop stopped")
+	defer p.log.Debugw("media timeout loop stopped")
 	ticker := time.NewTicker(p.opts.MediaTimeout)
 	defer ticker.Stop()
 
@@ -379,7 +377,7 @@ func (p *MediaPort) timeoutLoop(tid traceid.ID, timeoutCallback func()) {
 			startPackets = p.packetCount.Load()
 			lastTime = time.Now()
 			lastLog = lastTime
-			p.log.Infow("media timeout reset", "packets", startPackets, "tick", tick)
+			p.log.Debugw("media timeout reset", "tick", tick)
 		case <-ticker.C:
 			log := p.log
 			curPackets := p.packetCount.Load()
@@ -400,22 +398,22 @@ func (p *MediaPort) timeoutLoop(tid traceid.ID, timeoutCallback func()) {
 					"sinceStart", time.Since(startTime),
 				)
 				if curPackets == startPackets {
-					log.Warnw("media timout is idle for a long time", nil)
+					log.Warnw("media timeout idle", nil)
 				} else {
-					log.Infow("media timeout stats")
+					log.Debugw("media timeout stats")
 				}
 			}
 			if curPackets != lastPackets {
 				lastPackets = curPackets
 				lastTime = time.Now()
 				if verbose {
-					log.Infow("got a new packet")
+					log.Debugw("got packet")
 				}
 				continue // wait for the next tick
 			}
 			if startPtr == nil {
 				if verbose {
-					log.Infow("timeout is disabled")
+					log.Debugw("timeout disabled")
 				}
 				continue // timeout disabled
 			}
@@ -445,18 +443,11 @@ func (p *MediaPort) timeoutLoop(tid traceid.ID, timeoutCallback func()) {
 			// Ticker is allowed to fire earlier than the full timeout interval. Skip if it's not a full timeout yet.
 			if since+timeout/10 < timeout {
 				if verbose {
-					log.Infow("too early to trigger", "since", since, "timeout", timeout)
+					log.Debugw("too early to trigger", "since", since, "timeout", timeout)
 				}
 				continue
 			}
-			p.log.Infow("triggering media timeout",
-				"packets", lastPackets,
-				"startPackets", startPackets,
-				"sinceStart", sinceStart,
-				"sinceLast", sinceLast,
-				"timeout", timeout,
-				"isInitial", isInitial,
-			)
+			p.log.Debugw("triggering media timeout", "sinceLast", sinceLast, "isInitial", isInitial)
 			timeoutCallback()
 			return
 		}
@@ -567,11 +558,7 @@ func (p *MediaPort) SetConfig(c *MediaConf) error {
 	if c.Crypto != nil {
 		crypto = c.Crypto.Profile.String()
 	}
-	p.log.Infow("using codecs",
-		"audio-codec", c.Audio.Codec.Info().SDPName, "audio-rtp", c.Audio.Type,
-		"dtmf-rtp", c.Audio.DTMFType,
-		"srtp", crypto,
-	)
+	p.log.Debugw("using codecs", "audio", c.Audio.Codec.Info().SDPName, "srtp", crypto)
 
 	p.port.SetDst(c.Remote)
 	var (
@@ -613,7 +600,7 @@ func (p *MediaPort) rtpLoop(tid traceid.ID, sess rtp.Session) {
 		p.stats.Streams.Add(1)
 		p.mediaReceived.Break()
 		log := p.log.WithValues("ssrc", ssrc)
-		log.Infow("accepting RTP stream")
+		log.Debugw("accepting RTP stream")
 		go p.rtpReadLoop(tid, log, r)
 	}
 }
