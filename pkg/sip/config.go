@@ -54,14 +54,17 @@ func GetServiceConfig(conf *config.Config) (*ServiceConfig, error) {
 		if s.MediaIP, err = getPublicIP(); err != nil {
 			return nil, err
 		}
+		s.MediaIPLocal = s.SignalingIPLocal
 	} else if conf.MediaNAT1To1IP != "" && conf.MediaNAT1To1IP != conf.NAT1To1IP {
 		ip, err := netip.ParseAddr(conf.MediaNAT1To1IP)
 		if err != nil {
 			return nil, err
 		}
 		s.MediaIP = ip
+		s.MediaIPLocal = s.SignalingIPLocal
 	} else {
 		s.MediaIP = s.SignalingIP
+		s.MediaIPLocal = s.SignalingIPLocal
 	}
 	return s, nil
 }

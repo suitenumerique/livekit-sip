@@ -37,10 +37,16 @@ const (
 )
 
 func NewVideoManager(log logger.Logger, room *Room, opts *MediaOptions, factory PipelineFactory) (*VideoManager, error) {
-	// Allocate RTP/RTCP port pair according to RFC 3550 (RTCP on RTP+1)
-	rtpConn, rtcpConn, err := mrtp.ListenUDPPortPair(opts.Ports.Start, opts.Ports.End, opts.IP)
+	// Select bind IP: IPLocal if set, otherwise IP
+	bindIP := opts.IPLocal
+	if !bindIP.IsValid() {
+		bindIP = opts.IP
+	}
+	// Allocate RTP/RTCP port pair (even port for RTP, odd port for RTCP)
+	rtpConn, rtcpConn, err := mrtp.ListenUDPPortPair(opts.Ports.Start, opts.Ports.End, bindIP)
 	if err != nil {
-		return nil, fmt.Errorf("failed to listen on UDP port pair for RTP/RTCP: %w", err)
+		return nil, fmt.Errorf("failed to listen on UDP port pair for RTP/RTCP: bindIP=%s, portRange=%d-%d, advertiseIP=%s: %w",
+			bindIP, opts.Ports.Start, opts.Ports.End, opts.IP, err)
 	}
 
 	v := &VideoManager{

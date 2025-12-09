@@ -995,6 +995,7 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 
 	opts := &MediaOptions{
 		IP:                  c.s.sconf.MediaIP,
+		IPLocal:             c.s.sconf.MediaIPLocal,
 		Ports:               conf.RTPPort,
 		MediaTimeoutInitial: c.s.conf.MediaTimeoutInitial,
 		MediaTimeout:        c.s.conf.MediaTimeout,
