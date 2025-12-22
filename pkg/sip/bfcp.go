@@ -28,7 +28,8 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 	b.server = server
 
 	if err := b.server.Listen(); err != nil {
-		log.Errorw("failed to start BFCP server", err)
+		log.Errorw("failed to start BFCP server, BFCP disabled", err)
+		return nil
 	}
 
 	addr := b.server.Addr()

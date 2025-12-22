@@ -195,10 +195,14 @@ func (o *MediaOrchestrator) dispatchLoop() {
 }
 
 func (o *MediaOrchestrator) close() error {
+	var bfcpErr error
+	if o.bfcp != nil {
+		bfcpErr = o.bfcp.Close()
+	}
 	err := errors.Join(
 		o.camera.Close(),
 		o.tracks.Close(),
-		o.bfcp.Close(),
+		bfcpErr,
 	)
 	o.cancel()
 
@@ -292,7 +296,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			Build()
 	}).Build()
 
-	if bfcp {
+	if bfcp && o.bfcp != nil {
 		if screenshare {
 			builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
 				return b.
