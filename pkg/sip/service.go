@@ -47,6 +47,7 @@ type ServiceConfig struct {
 	SignalingIP      netip.Addr
 	SignalingIPLocal netip.Addr
 	MediaIP          netip.Addr
+	MediaIPLocal     netip.Addr
 }
 
 type Service struct {

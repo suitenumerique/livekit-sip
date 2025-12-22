@@ -1,8 +1,6 @@
 module github.com/livekit/sip
 
-go 1.24.2
-
-toolchain go1.24.3
+go 1.24.4
 
 require (
 	github.com/at-wat/ebml-go v0.17.1
@@ -37,6 +35,7 @@ require (
 	github.com/go-gst/go-glib v1.4.0 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/nyaruka/phonenumbers v1.6.5 // indirect
+	github.com/vopenia-io/bfcp v0.0.0-20251208070418-52ef30fdbcd4 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.37.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect

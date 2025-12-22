@@ -17,7 +17,6 @@ package sip
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -171,11 +170,7 @@ type Room struct {
 	closed     core.Fuse
 	stats      *RoomStats
 
-	onCameraTrack func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant)
-	trackMu       sync.Mutex
-	cameraOut     *TrackOutput
-
-	onActiveSpeakerChanged func(p []lksdk.Participant)
+	callbackHandler atomic.Pointer[RoomCallbacks]
 }
 
 type ParticipantConfig struct {
@@ -193,6 +188,13 @@ type RoomConfig struct {
 	RoomPreset  string
 	RoomConfig  *livekit.RoomConfiguration
 	JitterBuf   bool
+}
+
+type RoomCallbacks interface {
+	WebrtcTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
+	WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
+	ActiveParticipantChanged(p []lksdk.Participant) error
+	LocalParticipantReady(p *lksdk.LocalParticipant) error
 }
 
 func NewRoom(log logger.Logger, st *RoomStats) *Room {
@@ -219,6 +221,12 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 			} else {
 				resolve.Resolve()
 			}
+			cb := r.callbackHandler.Load()
+			if cb != nil {
+				if err := (*cb).LocalParticipantReady(r.room.LocalParticipant); err != nil {
+					r.log.Errorw("local participant ready callback error", err)
+				}
+			}
 		case <-r.stopped.Watch():
 			resolve.Resolve()
 		case <-r.closed.Watch():
@@ -227,6 +235,14 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 	}()
 
 	return r
+}
+
+func (r *Room) SetCallbacks(cb RoomCallbacks) (oldCb RoomCallbacks) {
+	oldPtr := r.callbackHandler.Swap(&cb)
+	if oldPtr != nil {
+		return *oldPtr
+	}
+	return nil
 }
 
 func (r *Room) Closed() <-chan struct{} {
@@ -305,10 +321,11 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			r.participantLeft(rp)
 		},
 		OnActiveSpeakersChanged: func(p []lksdk.Participant) {
-			if r.onActiveSpeakerChanged != nil {
-				r.onActiveSpeakerChanged(p)
-			} else {
-				r.log.Debugw("active speakers changed, but no handler set", "count", len(p))
+			cb := r.callbackHandler.Load()
+			if cb != nil {
+				if err := (*cb).ActiveParticipantChanged(p); err != nil {
+					r.log.Errorw("active participant changed callback error", err)
+				}
 			}
 		},
 		ParticipantCallback: lksdk.ParticipantCallback{
@@ -322,14 +339,31 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 				r.log.Debugw("track subscribed", "kind", pub.Kind(), "participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
-				switch pub.Kind() {
-				case lksdk.TrackKindAudio:
+				if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
 					r.participantAudioTrackSubscribed(track, pub, rp, conf)
-				case lksdk.TrackKindVideo:
-					r.participantVideoTrackSubscribed(track, pub, rp, conf)
-				default:
-					log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
-					log.Warnw("unsupported track kind for subscription", fmt.Errorf("kind=%s", pub.Kind()))
+					return
+				}
+				cb := r.callbackHandler.Load()
+				if cb != nil {
+					if err := (*cb).WebrtcTrackSubscribed(track, pub, rp); err != nil {
+						r.log.Errorw("track subscribed callback error", err)
+					}
+				} else {
+					r.log.Warnw("no track subscribed callback set", nil)
+				}
+			},
+			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+				r.log.Debugw("track unsubscribed", "kind", pub.Kind(), "participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
+				if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
+					return // nothing to do
+				}
+				cb := r.callbackHandler.Load()
+				if cb != nil {
+					if err := (*cb).WebrtcTrackUnsubscribed(track, pub, rp); err != nil {
+						r.log.Errorw("track unsubscribed callback error", err)
+					}
+				} else {
+					r.log.Warnw("no track unsubscribed callback set", nil)
 				}
 			},
 			OnDataPacket: func(data lksdk.DataPacket, params lksdk.DataReceiveParams) {
@@ -515,60 +549,6 @@ func (r *Room) NewParticipantTrack(sampleRate int) (msdk.WriteCloser[msdk.PCM16S
 	return newMediaWriterCount(pw, &r.stats.PublishedFrames, &r.stats.PublishedSamples), nil
 }
 
-func (r *Room) StartCamera() (*TrackOutput, error) {
-	r.trackMu.Lock()
-	defer r.trackMu.Unlock()
-	if r.cameraOut != nil {
-		return r.cameraOut, nil
-	}
-
-	to := &TrackOutput{}
-
-	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
-		MimeType: webrtc.MimeTypeVP8,
-	}, "video", "pion")
-	if err != nil {
-		return nil, err
-	}
-	p := r.room.LocalParticipant
-	pt, err := p.PublishTrack(track, &lksdk.TrackPublicationOptions{
-		Name: p.Identity(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	r.log.Infow("published video track", "SID", pt.SID())
-	trackRtcp := &RtcpWriter{
-		pc: p.GetSubscriberPeerConnection(),
-	}
-	to.RtpOut = &CallbackWriteCloser{
-		Writer: track,
-		Callback: func() error {
-			r.log.Infow("unpublishing video track", "SID", pt.SID())
-			return p.UnpublishTrack(pt.SID())
-		},
-	}
-	to.RtcpOut = &NopWriteCloser{Writer: trackRtcp}
-
-	r.cameraOut = to
-
-	return to, nil
-}
-
-func (r *Room) StopCamera() error {
-	r.log.Infow("stopping camera")
-	r.trackMu.Lock()
-	defer r.trackMu.Unlock()
-	if r.cameraOut == nil {
-		return nil
-	}
-
-	cameraOut := r.cameraOut
-	r.cameraOut = nil
-
-	return errors.Join(cameraOut.RtpOut.Close(), cameraOut.RtcpOut.Close())
-}
-
 func (r *Room) participantAudioTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant, conf *config.Config) {
 	log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", track.ID(), "trackName", pub.Name())
 	if !r.ready.IsBroken() {
@@ -603,40 +583,6 @@ func (r *Room) participantAudioTrackSubscribed(track *webrtc.TrackRemote, pub *l
 			log.Infow("room track rtp handler returned with failure", "error", err)
 		}
 	}()
-}
-
-func (r *Room) participantVideoTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant, conf *config.Config) {
-	log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", track.ID(), "trackName", pub.Name())
-	if !r.ready.IsBroken() {
-		log.Warnw("ignoring track, room not ready", nil)
-		return
-	}
-
-	switch pub.Source() {
-	case livekit.TrackSource_CAMERA:
-		log.Infow("connecting camera track")
-		if r.onCameraTrack == nil {
-			log.Warnw("no camera track handler set, ignoring track", nil)
-			return
-		}
-		r.onCameraTrack(track, pub, rp)
-	default:
-		log.Infow("ignoring non-camera video track", "source", pub.Source())
-	}
-}
-
-func (r *Room) OnCameraTrack(f func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant)) {
-	if r.onCameraTrack != nil {
-		r.log.Warnw("overriding existing camera track handler", nil)
-	}
-	r.onCameraTrack = f
-}
-
-func (r *Room) OnActiveSpeakersChanged(f func(p []lksdk.Participant)) {
-	if r.onActiveSpeakerChanged != nil {
-		r.log.Warnw("overriding existing active speaker changed handler", nil)
-	}
-	r.onActiveSpeakerChanged = f
 }
 
 func (r *Room) SendData(data lksdk.DataPacket, opts ...lksdk.DataPublishOption) error {

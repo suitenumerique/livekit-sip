@@ -3,8 +3,8 @@ package sip
 import (
 	"errors"
 	"io"
-	"sync"
 	"sync/atomic"
+	"time"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/rtcp"
@@ -25,138 +25,61 @@ type CallbackWriteCloser struct {
 }
 
 func (c *CallbackWriteCloser) Close() error {
+	var err error
 	if c.Callback != nil {
-		err := c.Callback()
+		err = c.Callback()
 		c.Callback = nil
-		return err
 	}
-	return nil
-}
 
-func NewSwitchWriter() *SwitchWriter {
-	return &SwitchWriter{}
-}
-
-type SwitchWriter struct {
-	w atomic.Pointer[io.WriteCloser]
-}
-
-func (s *SwitchWriter) Write(p []byte) (n int, err error) {
-	w := s.w.Load()
-	if w == nil {
-		return 0, nil
+	if closer, ok := c.Writer.(io.Closer); ok {
+		err = errors.Join(err, closer.Close())
 	}
-	return (*w).Write(p)
+
+	return err
 }
 
-func (s *SwitchWriter) Close() error {
-	w := s.w.Load()
-	if w != nil {
-		return (*w).Close()
+type CallbackReadCloser struct {
+	io.Reader
+	Callback func() error
+}
+
+func (c *CallbackReadCloser) Close() error {
+	var err error
+	if c.Callback != nil {
+		err = c.Callback()
+		c.Callback = nil
 	}
-	return nil
-}
 
-func (s *SwitchWriter) Swap(w io.WriteCloser) io.WriteCloser {
-	var old *io.WriteCloser
-	if w == nil {
-		old = s.w.Swap(nil)
-	} else {
-		old = s.w.Swap(&w)
+	if closer, ok := c.Reader.(io.Closer); ok {
+		err = errors.Join(err, closer.Close())
 	}
-	if old != nil {
-		return *old
+
+	return err
+}
+
+func NewTrackAdapter(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication) *TrackAdapter {
+	ta := &TrackAdapter{
+		TrackRemote: track,
+		pub:         pub,
 	}
-	return nil
-}
-
-func NewSwitchReader() *SwitchReader {
-	sr := &SwitchReader{}
-	sr.b = sync.NewCond(&sr.mu)
-	sr.closed.Store(false)
-	return sr
-}
-
-type SwitchReader struct {
-	r      atomic.Pointer[io.ReadCloser]
-	b      *sync.Cond
-	mu     sync.Mutex
-	closed atomic.Bool
-}
-
-func (s *SwitchReader) Read(p []byte) (n int, err error) {
-	r := s.r.Load()
-	if r == nil {
-		// If closed, return EOF immediately
-		if s.closed.Load() {
-			return 0, io.EOF
-		}
-		// Wait for a reader to be swapped in
-		s.mu.Lock()
-		s.b.Wait()
-		s.mu.Unlock()
-		// Check again if closed after waking up
-		if s.closed.Load() {
-			return 0, io.EOF
-		}
-		return s.Read(p)
-	}
-	return (*r).Read(p)
-}
-
-func (s *SwitchReader) Close() error {
-	// Mark as closed first
-	s.closed.Store(true)
-	// Wake up any blocked readers
-	s.mu.Lock()
-	s.b.Broadcast()
-	s.mu.Unlock()
-	// Close the underlying reader if exists
-	r := s.r.Load()
-	if r != nil {
-		return (*r).Close()
-	}
-	return nil
-}
-
-func (s *SwitchReader) Swap(r io.ReadCloser) io.ReadCloser {
-	var old *io.ReadCloser
-	if r == nil {
-		old = s.r.Swap(nil)
-	} else {
-		old = s.r.Swap(&r)
-		s.mu.Lock()
-		s.b.Broadcast()
-		s.mu.Unlock()
-	}
-	if old != nil {
-		return *old
-	}
-	return nil
-}
-
-func NewTrackAdapter(track *webrtc.TrackRemote) *TrackAdapter {
-	ta := &TrackAdapter{}
-	ta.Store(track)
 	return ta
 }
 
 type TrackAdapter struct {
-	atomic.Pointer[webrtc.TrackRemote]
+	*webrtc.TrackRemote
+	pub *lksdk.RemoteTrackPublication
 }
 
 func (t *TrackAdapter) Read(p []byte) (n int, err error) {
-	tr := t.Load()
-	if tr == nil {
-		return 0, io.EOF
-	}
-	n, _, err = (*tr).Read(p)
+	n, _, err = t.TrackRemote.Read(p)
 	return n, err
 }
 
 func (t *TrackAdapter) Close() error {
-	t.Store(nil)
-	return nil
+	var err error
+	err = t.TrackRemote.SetReadDeadline(time.Now())
+	err = errors.Join(err, t.pub.SetSubscribed(false))
+	return err
 }
 
 type RtcpWriter struct {
@@ -207,19 +130,36 @@ type RtcpReader struct {
 	pipeWriter *io.PipeWriter
 	pub        *lksdk.RemoteTrackPublication
 	rp         *lksdk.RemoteParticipant
+	deadline   atomic.Bool
 }
 
 func (r *RtcpReader) Read(p []byte) (n int, err error) {
-	return r.pipeReader.Read(p)
+	n, err = r.pipeReader.Read(p)
+	if r.deadline.Load() {
+		r.deadline.Store(false)
+	}
+	return n, err
+}
+
+func (r *RtcpReader) SetReadDeadline(t time.Time) error {
+	r.deadline.Store(true)
+	go func() {
+		time.Sleep(time.Until(t))
+		if r.deadline.Load() {
+			r.pipeWriter.Write([]byte{})
+		}
+	}()
+	return nil
 }
 
 func (r *RtcpReader) Close() error {
+	r.pub.OnRTCP(nil)
 	return errors.Join(r.pipeWriter.Close(), r.pipeReader.Close())
 }
 
 func NewTrackInput(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) *TrackInput {
 	ti := &TrackInput{
-		RtpIn:  NewTrackAdapter(track),
+		RtpIn:  NewTrackAdapter(track, pub),
 		RtcpIn: NewRtcpReader(pub, rp),
 	}
 	return ti

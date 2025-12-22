@@ -2,7 +2,8 @@ package pipeline
 
 import (
 	"fmt"
-	"sync"
+	"os"
+	"reflect"
 	"time"
 
 	"github.com/frostbyte73/core"
@@ -10,60 +11,66 @@ import (
 	"github.com/livekit/protocol/logger"
 )
 
-type GstPipelineChain = []*gst.Element
-
-type GstPipeline struct {
+type BasePipeline struct {
 	log      logger.Logger
-	mu       sync.Mutex
+	pipeline *gst.Pipeline
 	closed   core.Fuse
-	Pipeline *gst.Pipeline
+}
 
-	*SipToWebrtc
-	*SelectorToSip
+type GstPipeline interface {
+	Pipeline() *gst.Pipeline
+	Log() logger.Logger
+	SetState(state gst.State) error
+	SetStateWait(state gst.State) error
+	Close() error
+	Closed() bool
 }
 
 type GstChain interface {
-	Add(pipeline *gst.Pipeline) error
-	Link(pipeline *gst.Pipeline) error
-	Close(pipeline *gst.Pipeline) error
+	Create() error
+	Add() error
+	Link() error
+	Close() error
 }
 
-func (gp *GstPipeline) SetState(state gst.State) error {
-	gp.mu.Lock()
-	defer gp.mu.Unlock()
+func (p *BasePipeline) Log() logger.Logger {
+	return p.log
+}
 
-	if gp.Closed() {
+func (p *BasePipeline) Pipeline() *gst.Pipeline {
+	return p.pipeline
+}
+
+func (p *BasePipeline) SetState(state gst.State) error {
+	if p.Closed() {
 		return fmt.Errorf("cannot set state on closed pipeline")
 	}
 
 	if state == gst.StateNull {
-		return gp.close()
+		return p.Close()
 	}
 
-	if err := gp.Pipeline.SetState(state); err != nil {
+	if err := p.Pipeline().SetState(state); err != nil {
 		return fmt.Errorf("failed to set pipeline state: %w", err)
 	}
 
 	return nil
 }
 
-func (gp *GstPipeline) SetStateWait(state gst.State) error {
-	gp.mu.Lock()
-	defer gp.mu.Unlock()
-
-	if gp.Closed() {
+func (p *BasePipeline) SetStateWait(state gst.State) error {
+	if p.Closed() {
 		return fmt.Errorf("cannot set state on closed pipeline")
 	}
 
 	if state == gst.StateNull {
-		return gp.close()
+		return p.Close()
 	}
 
-	if err := gp.Pipeline.SetState(state); err != nil {
+	if err := p.Pipeline().SetState(state); err != nil {
 		return fmt.Errorf("failed to set pipeline state: %w", err)
 	}
 
-	cr, s := gp.Pipeline.GetState(state, gst.ClockTime(time.Second*30))
+	cr, s := p.Pipeline().GetState(state, gst.ClockTime(time.Second*30))
 	if cr != gst.StateChangeSuccess {
 		return fmt.Errorf("failed to change pipeline state, wanted %s got %s: %s", state.String(), s.String(), cr.String())
 	}
@@ -74,62 +81,87 @@ func (gp *GstPipeline) SetStateWait(state gst.State) error {
 	return nil
 }
 
-func (gp *GstPipeline) close() error {
-	if gp.Closed() {
+var pid = os.Getpid()
+
+func (p *BasePipeline) Close() error {
+	if p.Closed() {
+		p.log.Debugw("Pipeline already closed")
 		return nil
 	}
-	gp.closed.Break()
+	p.closed.Break()
+	p.log.Debugw("Closing pipeline")
 
-	return gp.Pipeline.SetState(gst.StateNull)
+	p.log.Debugw("Setting pipeline to null state", "pid", pid)
+	err := p.Pipeline().SetState(gst.StateNull)
+	p.log.Debugw("Pipeline set to null state", "err", err)
+	time.Sleep(100 * time.Millisecond) // give some time to settle
+	if err != nil {
+		p.log.Debugw("Failed to set pipeline to null state", "err", err)
+		return fmt.Errorf("failed to set pipeline to null state: %w", err)
+	}
+
+	p.log.Debugw("Pipeline closed")
+
+	return nil
 }
 
-func (gp *GstPipeline) Close() error {
-	gp.mu.Lock()
-	defer gp.mu.Unlock()
-
-	return gp.close()
+func (p *BasePipeline) Closed() bool {
+	return p.closed.IsBroken()
 }
 
-func (gp *GstPipeline) Closed() bool {
-	return gp.closed.IsBroken()
-}
-
-func NewGstPipeline(log logger.Logger, sipInPayload, sipOutPayload int) (*GstPipeline, error) {
+func New(log logger.Logger) (*BasePipeline, error) {
 	pipeline, err := gst.NewPipeline("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gst pipeline: %w", err)
 	}
 
-	gp := &GstPipeline{
+	gp := &BasePipeline{
 		log:      log,
-		Pipeline: pipeline,
-	}
-
-	gp.SipToWebrtc, err = CastErr[*SipToWebrtc](gp.addChain(buildSipToWebRTCChain(log.WithComponent("sip_to_webrtc"), sipInPayload)))
-	if err != nil {
-		return nil, err
-	}
-
-	gp.SelectorToSip, err = CastErr[*SelectorToSip](gp.addChain(buildSelectorToSipChain(log.WithComponent("selector_to_sip"), sipOutPayload)))
-	if err != nil {
-		return nil, err
+		pipeline: pipeline,
 	}
 
 	return gp, nil
 }
 
-func (gp *GstPipeline) addChain(chain GstChain, err error) (GstChain, error) {
-	if err != nil {
-		return nil, fmt.Errorf("failed to build chain: %w", err)
+func AddChain[C GstChain](p GstPipeline, chain C) (C, error) {
+	var zero C
+
+	p.Log().Debugw("Adding chain to pipeline")
+	if err := chain.Create(); err != nil {
+		return zero, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	if err := chain.Add(gp.Pipeline); err != nil {
-		return nil, fmt.Errorf("failed to add chain to pipeline: %w", err)
+	p.Log().Debugw("Adding chain elements to pipeline")
+	if err := chain.Add(); err != nil {
+		return zero, fmt.Errorf("failed to add chain to pipeline: %w", err)
 	}
 
-	if err := chain.Link(gp.Pipeline); err != nil {
-		return nil, fmt.Errorf("failed to link chain in pipeline: %w", err)
-	}
+	// p.Log().Debugw("Linking chain in pipeline")
+	// if err := chain.Link(); err != nil {
+	// 	return zero, fmt.Errorf("failed to link chain in pipeline: %w", err)
+	// }
 
+	p.Log().Debugw("Chain added to pipeline")
 	return chain, nil
+}
+
+func LinkChains(p GstPipeline, chains ...GstChain) error {
+	for i, chain := range chains {
+		p.Log().Debugw("Linking chain in pipeline", "chain_index", i)
+		if err := chain.Link(); err != nil {
+			typ := reflect.TypeOf(chain)
+			p.Log().Errorw("Failed to link chain in pipeline", err, "index", i, "chain_type", typ.String())
+			return fmt.Errorf("failed to link chain %s in pipeline: %w", typ.String(), err)
+		}
+	}
+	return nil
+}
+
+func SyncElements(elements ...*gst.Element) error {
+	for _, elem := range elements {
+		if !elem.SyncStateWithParent() {
+			return fmt.Errorf("failed to sync state for %s", elem.GetName())
+		}
+	}
+	return nil
 }
