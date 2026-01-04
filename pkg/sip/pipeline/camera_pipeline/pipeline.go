@@ -3,12 +3,14 @@ package camera_pipeline
 import (
 	"context"
 	"fmt"
-
-	"github.com/livekit/sip/pkg/sip/pipeline"
-	"github.com/livekit/sip/pkg/sip/pipeline/event"
+	"time"
 
 	"github.com/livekit/protocol/logger"
+	"github.com/livekit/sip/pkg/sip/pipeline"
 )
+
+const MaxKeyframeWaitTime = 2 * time.Second
+const PLIRetryInterval = 200 * time.Millisecond
 
 type CameraPipeline struct {
 	*pipeline.BasePipeline
@@ -17,21 +19,16 @@ type CameraPipeline struct {
 	*SipToWebrtc
 	*WebrtcToSip
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	loop   *event.EventLoop
+	pendingSwitchSSRC uint32
+	switchStartTime   time.Time
+	lastPLITime       time.Time
 }
 
 func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
 	log.Debugw("Creating camera pipeline")
-	ctx, cancel := context.WithCancel(ctx)
-	cp := &CameraPipeline{
-		ctx:    ctx,
-		cancel: cancel,
-		loop:   event.NewEventLoop(ctx, log),
-	}
+	cp := &CameraPipeline{}
 
-	p, err := pipeline.New(log.WithComponent("camera_pipeline"))
+	p, err := pipeline.New(ctx, log.WithComponent("camera_pipeline"), cp.cleanup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gst pipeline: %w", err)
 	}
@@ -41,14 +38,7 @@ func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
 	cp.BasePipeline = p
 
 	p.Log().Debugw("Starting event loop")
-	go cp.loop.Run()
 
-	// p.Log().Debugw("Adding RTP bins")
-	// cp.RtpBins, err = pipeline.AddChain(cp, NewRtpBins(log, cp))
-	// if err != nil {
-	// 	p.Log().Errorw("Failed to add RTP bins", err)
-	// 	return nil, err
-	// }
 	p.Log().Debugw("Adding SIP IO chain")
 	cp.SipIo, err = pipeline.AddChain(cp, NewSipInput(log, cp))
 	if err != nil {
@@ -93,40 +83,42 @@ func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
 	return cp, nil
 }
 
+func (cp *CameraPipeline) cleanup() error {
+	if cp.BasePipeline == nil {
+		return nil
+	}
+
+	cp.Log().Debugw("Closing camera pipeline chains")
+
+	cp.Log().Debugw("Closing SIP IO")
+	if err := cp.SipIo.Close(); err != nil {
+		return fmt.Errorf("failed to close SIP IO: %w", err)
+	}
+	cp.SipIo = nil
+	cp.Log().Debugw("Closing WebRTC IO")
+	if err := cp.WebrtcIo.Close(); err != nil {
+		return fmt.Errorf("failed to close WebRTC IO: %w", err)
+	}
+	cp.WebrtcIo = nil
+	cp.Log().Debugw("Closing SIP to WebRTC chain")
+	if err := cp.SipToWebrtc.Close(); err != nil {
+		return fmt.Errorf("failed to close SIP to WebRTC chain: %w", err)
+	}
+	cp.SipToWebrtc = nil
+	cp.Log().Debugw("Closing WebRTC to SIP chain")
+	if err := cp.WebrtcToSip.Close(); err != nil {
+		return fmt.Errorf("failed to close WebRTC to SIP chain: %w", err)
+	}
+	cp.WebrtcToSip = nil
+
+	cp.Log().Debugw("Camera pipeline chains closed")
+	return nil
+}
+
 func (cp *CameraPipeline) Close() error {
-	closed := cp.Closed()
-
-	cp.loop.Stop()
-
 	if err := cp.BasePipeline.Close(); err != nil {
 		return fmt.Errorf("failed to close camera pipeline: %w", err)
 	}
-
-	if !closed {
-		cp.Log().Debugw("Closing camera pipeline chains")
-
-		cp.Log().Debugw("Closing SIP IO")
-		if err := cp.SipIo.Close(); err != nil {
-			return fmt.Errorf("failed to close SIP IO: %w", err)
-		}
-		cp.SipIo = nil
-		cp.Log().Debugw("Closing WebRTC IO")
-		if err := cp.WebrtcIo.Close(); err != nil {
-			return fmt.Errorf("failed to close WebRTC IO: %w", err)
-		}
-		cp.WebrtcIo = nil
-		cp.Log().Debugw("Closing SIP to WebRTC chain")
-		if err := cp.SipToWebrtc.Close(); err != nil {
-			return fmt.Errorf("failed to close SIP to WebRTC chain: %w", err)
-		}
-		cp.SipToWebrtc = nil
-		cp.Log().Debugw("Closing WebRTC to SIP chain")
-		if err := cp.WebrtcToSip.Close(); err != nil {
-			return fmt.Errorf("failed to close WebRTC to SIP chain: %w", err)
-		}
-		cp.WebrtcToSip = nil
-	}
 	cp.Log().Infow("Camera pipeline closed")
-
 	return nil
 }

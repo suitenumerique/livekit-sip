@@ -164,7 +164,8 @@ func (s *SourceReader) GetProperty(self *glib.Object, id uint) *glib.Value {
 }
 
 func (s *SourceReader) SetCaps(self *base.GstBaseSrc, caps *gst.Caps) bool {
-	s.self.Log(CAT, gst.LevelDebug, fmt.Sprintf("caps not set to: %s, keepping existing: %s", caps.String(), s.settings.caps.String()))
+	s.self.Log(CAT, gst.LevelDebug, fmt.Sprintf("SetCaps called with: %s, keeping existing: %s", caps.String(), s.settings.caps.String()))
+	// Accept the caps negotiation but use our configured caps
 	return true
 }
 
@@ -181,6 +182,17 @@ func (s *SourceReader) GetCaps(self *base.GstBaseSrc, filter *gst.Caps) *gst.Cap
 
 func (s *SourceReader) Start(self *base.GstBaseSrc) bool {
 	s.self.Log(CAT, gst.LevelInfo, "started")
+
+	// Set caps on the source before data flows
+	// This fixes "sticky event misordering, got 'segment' before 'caps'" warning
+	// Use gst_base_src_set_caps which properly pushes caps downstream
+	if s.settings.caps != nil && !s.settings.caps.IsAny() {
+		s.self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Setting caps on source: %s", s.settings.caps.String()))
+		if !s.self.SetCaps(s.settings.caps) {
+			s.self.Log(CAT, gst.LevelWarning, "Failed to set caps on source")
+		}
+	}
+
 	return true
 }
 
@@ -260,5 +272,12 @@ func (s *SourceReader) Unlock(self *base.GstBaseSrc) bool {
 		s.self.Log(CAT, gst.LevelError, "Error closing io.Reader")
 		return false
 	}
+	return true
+}
+
+func (s *SourceReader) UnlockStop(self *base.GstBaseSrc) bool {
+	s.self.Log(CAT, gst.LevelInfo, "unlock stopped")
+	// Nothing to do here - we don't need to reset state since
+	// once closed, the reader stays closed
 	return true
 }

@@ -36,8 +36,8 @@ var _ pipeline.GstChain = (*SipIo)(nil)
 func (sio *SipIo) Create() error {
 	var err error
 	sio.SipRtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
-		"name": "sip_rtp_bin",
-		// "rtp-profile": int(3), // GST_RTP_PROFILE_AVPF
+		"name":        "sip_rtp_bin",
+		"rtp-profile": int(3), // GST_RTP_PROFILE_AVPF
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP rtpbin: %w", err)
@@ -55,6 +55,7 @@ func (sio *SipIo) Create() error {
 		"name":        "sip_rtp_out",
 		"max-bitrate": int(1_500_000),
 		"sync":        false,
+		"async":       false,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP rtp sinkwriter: %w", err)
@@ -96,7 +97,7 @@ func (sio *SipIo) Add() error {
 // Link implements [pipeline.GstChain].
 func (sio *SipIo) Link() error {
 	// link rtp in
-	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), sio.pipeline.loop, func(rtpbin *gst.Element, pad *gst.Pad) {
+	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), sio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
 		sio.log.Debugw("RTPBIN PAD ADDED", "pad", pad.GetName())
 		padName := pad.GetName()
 		if !strings.HasPrefix(padName, "recv_rtp_src_0_") {
@@ -128,7 +129,7 @@ func (sio *SipIo) Link() error {
 	}
 
 	// link rtp out
-	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), sio.pipeline.loop, func(rtpbin *gst.Element, pad *gst.Pad) {
+	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), sio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
 		sio.log.Debugw("WEBRTC RTPBIN PAD ADDED", "pad", pad.GetName())
 		padName := pad.GetName()
 		if padName != "send_rtp_src_0" {
@@ -147,7 +148,7 @@ func (sio *SipIo) Link() error {
 	}
 
 	if err := pipeline.LinkPad(
-		sio.pipeline.WebrtcToSip.RtpH264Pay.GetStaticPad("src"),
+		sio.pipeline.WebrtcToSip.CapsFilter.GetStaticPad("src"),
 		sio.SipRtpBin.GetRequestPad("send_rtp_sink_0"),
 	); err != nil {
 		return fmt.Errorf("failed to link rtp vp8 payloader to sip rtpbin: %w", err)
@@ -166,6 +167,49 @@ func (sio *SipIo) Link() error {
 		sio.SipRtcpOut.GetStaticPad("sink"),
 	); err != nil {
 		return fmt.Errorf("failed to link rtpbin rtcp src to sip rtcp sink: %w", err)
+	}
+
+	// configure rtpbin - session configuration is optional, don't fail if unavailable
+	sess, err := sio.SipRtpBin.Emit("get-internal-session", uint(0))
+	if err != nil || sess == nil {
+		sio.log.Warnw("could not get sip rtpbin internal session, RTCP feedback logging disabled", err, "sessNotNil", sess != nil)
+	} else {
+		sessElem := gst.ToElement(sess)
+		if sessElem == nil || sessElem.Instance() == nil {
+			sio.log.Warnw("could not cast sip rtpbin internal session to element, RTCP feedback logging disabled", nil)
+		} else {
+			if err := sessElem.SetProperty("rtcp-min-interval", uint64(0)); err != nil {
+				sio.log.Warnw("failed to set sip rtpbin rtcp min interval", err)
+			}
+			if err := sessElem.SetProperty("rtcp-fraction", 0.10); err != nil {
+				sio.log.Warnw("failed to set sip rtpbin rtcp fraction", err)
+			}
+
+			// Log RTCP feedback (PLI/FIR) requests from SIP device
+			if _, err := sessElem.Connect("on-feedback-rtcp", event.RegisterCallback(context.TODO(), sio.pipeline.Loop(), func(session *gst.Element, fbType uint, fbSubType uint, senderSsrc uint, mediaSsrc uint) {
+				fbTypeName := "unknown"
+				if fbType == 205 {
+					fbTypeName = "RTPFB"
+				} else if fbType == 206 {
+					switch fbSubType {
+					case 1:
+						fbTypeName = "PLI"
+					case 4:
+						fbTypeName = "FIR"
+					default:
+						fbTypeName = fmt.Sprintf("PSFB-%d", fbSubType)
+					}
+				}
+				sio.log.Infow("SIP device sent RTCP feedback",
+					"fbType", fbType,
+					"fbSubType", fbSubType,
+					"fbTypeName", fbTypeName,
+					"senderSsrc", senderSsrc,
+					"mediaSsrc", mediaSsrc)
+			})); err != nil {
+				sio.log.Warnw("failed to connect to rtpsession on-feedback-rtcp signal", err)
+			}
+		}
 	}
 
 	return nil

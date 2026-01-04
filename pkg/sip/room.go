@@ -195,6 +195,7 @@ type RoomCallbacks interface {
 	WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
 	ActiveParticipantChanged(p []lksdk.Participant) error
 	LocalParticipantReady(p *lksdk.LocalParticipant) error
+	Disconnect() error
 }
 
 func NewRoom(log logger.Logger, st *RoomStats) *Room {
@@ -377,6 +378,12 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			},
 		},
 		OnDisconnected: func() {
+			cb := r.callbackHandler.Load()
+			if cb != nil {
+				if err := (*cb).Disconnect(); err != nil {
+					r.log.Errorw("disconnect callback error", err)
+				}
+			}
 			r.stopped.Break()
 		},
 	}

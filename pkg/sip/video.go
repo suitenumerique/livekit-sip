@@ -72,12 +72,10 @@ func (vs VideoStatus) String() string {
 }
 
 func NewVideoManager(log logger.Logger, ctx context.Context, opts *MediaOptions, factory PipelineFactory) (*VideoManager, error) {
-	// Select bind IP: IPLocal if set, otherwise IP
 	bindIP := opts.IPLocal
 	if !bindIP.IsValid() {
 		bindIP = opts.IP
 	}
-	// Allocate RTP/RTCP port pair (even port for RTP, odd port for RTCP)
 	rtpConn, rtcpConn, err := mrtp.ListenUDPPortPair(opts.Ports.Start, opts.Ports.End, bindIP)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on UDP port pair for RTP/RTCP: bindIP=%s, portRange=%d-%d, advertiseIP=%s: %w",
@@ -127,12 +125,8 @@ func (v *VideoManager) Close() error {
 	if err := v.stop(); err != nil {
 		return fmt.Errorf("failed to stop video manager: %w", err)
 	}
-	if err := v.rtpConn.Close(); err != nil {
-		// return fmt.Errorf("failed to close RTP connection: %w", err)
-	}
-	if err := v.rtcpConn.Close(); err != nil {
-		// return fmt.Errorf("failed to close RTCP connection: %w", err)
-	}
+	v.rtpConn.Close()
+	v.rtcpConn.Close()
 	v.status = VideoStatusClosed
 	return nil
 }
@@ -156,7 +150,6 @@ func (v *VideoManager) Status() VideoStatus {
 }
 
 func (v *VideoManager) SupportedCodecs() []*sdpv2.Codec {
-	//TODO: make is dynamic.
 	c := sdpv1.CodecByName(h264.SDPName)
 	if c == nil {
 		return []*sdpv2.Codec{}
@@ -204,7 +197,7 @@ func (v *VideoManager) mediaOK(newMedia *sdpv2.SDPMedia) bool {
 	if v.Media.Direction != newMedia.Direction {
 		return false
 	}
-	if v.Media.Codec.PayloadType != newMedia.Codec.PayloadType {
+	if v.Media.Codec.Name != newMedia.Codec.Name {
 		return false
 	}
 	return true
@@ -234,6 +227,18 @@ func (v *VideoManager) Reconcile(remote netip.Addr, media *sdpv2.SDPMedia) (Reco
 
 	if v.mediaOK(media) {
 		v.log.Debugw("video media unchanged, no reconciliation needed", "oldMedia", v.Media, "newMedia", media)
+
+		// Check if PayloadType changed (same codec, different PT)
+		if v.status == VideoStatusStarted && v.Media != nil && v.Media.Codec != nil &&
+			v.Media.Codec.PayloadType != media.Codec.PayloadType {
+			v.log.Infow("PayloadType changed, reconfiguring SipIO",
+				"oldPT", v.Media.Codec.PayloadType,
+				"newPT", media.Codec.PayloadType)
+			if err := v.pipeline.SipIO(&safeUDPConn{udpConn: v.rtpConn}, &safeUDPConn{udpConn: v.rtcpConn}, media.Codec.PayloadType); err != nil {
+				v.log.Warnw("failed to update SipIO with new PayloadType", err)
+			}
+		}
+
 		v.Media = media
 		return ReconcileStatusUnchanged, nil
 	}
@@ -254,17 +259,8 @@ func (v *VideoManager) Reconcile(remote netip.Addr, media *sdpv2.SDPMedia) (Reco
 
 	v.log.Infow("video setup", "remote", remote.String(), "rtp_port", v.RtpPort(), "rtcp_port", v.RtcpPort(), "codec", media.Codec, "direction", media.Direction)
 
-	// if err := v.pipeline.Configure(media); err != nil {
-	// 	return rs, fmt.Errorf("failed to configure GStreamer pipeline: %w", err)
-	// }
-
 	v.rtpConn.SetDst(netip.AddrPortFrom(remote, media.Port))
 	v.rtcpConn.SetDst(netip.AddrPortFrom(remote, media.RTCPPort))
-
-	// if err := v.pipeline.SipIO(&safeUDPConn{udpConn: v.rtpConn}, &safeUDPConn{udpConn: v.rtcpConn}, media.Codec.PayloadType); err != nil {
-	// 	v.log.Errorw("failed to configure SIP IO", err)
-	// 	return rs, fmt.Errorf("failed to configure SIP IO: %w", err)
-	// }
 
 	v.Media = media
 	v.status = VideoStatusReady
@@ -367,9 +363,6 @@ func (s *safeUDPConn) Read(b []byte) (int, error) {
 }
 
 func (s *safeUDPConn) Close() error {
-	err := s.udpConn.Close()
-	if errors.Is(err, net.ErrClosed) {
-		return nil
-	}
-	return err
+	s.udpConn.SetReadDeadline(time.Now().Add(-1 * time.Second))
+	return nil
 }

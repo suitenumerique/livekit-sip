@@ -28,6 +28,7 @@ type WebrtcToSip struct {
 	Queue       *gst.Element
 	X264Enc     *gst.Element
 	RtpH264Pay  *gst.Element
+	CapsFilter  *gst.Element
 }
 
 var _ pipeline.GstChain = (*WebrtcToSip)(nil)
@@ -72,10 +73,11 @@ func (stw *WebrtcToSip) Create() error {
 	}
 
 	stw.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
-		"bitrate":      int(2000),
-		"key-int-max":  int(48), // Matches framerate for 1 keyframe/sec
-		"speed-preset": int(1),  // ultrafast
-		"tune":         int(4),  // zerolatency
+		"bitrate":      uint(2000),
+		"key-int-max":  uint(24), // Matches framerate for 1 keyframe/sec
+		"speed-preset": int(1),   // ultrafast
+		"tune":         uint(4),  // zerolatency (flags: 0x00000004)
+		"bframes":      uint(0),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc x264 encoder: %w", err)
@@ -90,6 +92,12 @@ func (stw *WebrtcToSip) Create() error {
 		return fmt.Errorf("failed to create webrtc rtp h264 payloader: %w", err)
 	}
 
+	stw.CapsFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString("application/x-rtp"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create webrtc to sip capsfilter: %w", err)
+	}
 	return nil
 }
 
@@ -103,6 +111,7 @@ func (stw *WebrtcToSip) Add() error {
 		stw.Queue,
 		stw.X264Enc,
 		stw.RtpH264Pay,
+		stw.CapsFilter,
 	); err != nil {
 		return fmt.Errorf("failed to add WebRTC to SIP elements to pipeline: %w", err)
 	}
@@ -119,9 +128,11 @@ func (stw *WebrtcToSip) Link() error {
 		stw.Queue,
 		stw.X264Enc,
 		stw.RtpH264Pay,
+		stw.CapsFilter,
 	); err != nil {
 		return fmt.Errorf("failed to link WebRTC to SIP elements: %w", err)
 	}
+
 	return nil
 }
 
@@ -135,6 +146,7 @@ func (stw *WebrtcToSip) Close() error {
 		stw.Queue,
 		stw.X264Enc,
 		stw.RtpH264Pay,
+		stw.CapsFilter,
 	); err != nil {
 		return fmt.Errorf("failed to remove WebRTC to SIP elements from pipeline: %w", err)
 	}

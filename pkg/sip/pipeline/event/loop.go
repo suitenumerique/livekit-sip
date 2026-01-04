@@ -30,7 +30,6 @@ type CallbackHandler struct {
 	ret  reflect.Value
 	inT  int
 	outT int
-	mu   *sync.Mutex
 }
 
 type EventLoop struct {
@@ -97,9 +96,9 @@ func (loop *EventLoop) Run() {
 			for i := 0; i < cb.inT; i++ {
 				args[i] = recv.Field(i)
 			}
-			loop.log.Debugw("EventLoop: invoking callback", "numArgs", cb.inT, "args", args)
+			// loop.log.Debugw("EventLoop: invoking callback", "numArgs", cb.inT, "args", args)
 			result := cb.cb.Call(args)
-			loop.log.Debugw("EventLoop: callback returned", "numResults", cb.outT, "results", result)
+			// loop.log.Debugw("EventLoop: callback returned", "numResults", cb.outT, "results", result)
 			retStructFields := make([]reflect.StructField, cb.outT)
 			for i := 0; i < cb.outT; i++ {
 				retStructFields[i] = reflect.StructField{
@@ -112,10 +111,9 @@ func (loop *EventLoop) Run() {
 			for i := 0; i < cb.outT; i++ {
 				retStruct.Field(i).Set(result[i])
 			}
-			loop.log.Debugw("EventLoop: sending return struct", "retStruct", retStruct)
+			// loop.log.Debugw("EventLoop: sending return struct", "retStruct", retStruct)
 			cb.ret.Send(retStruct)
-			loop.log.Debugw("EventLoop: return struct sent")
-			// cb.mu.Unlock()
+			// loop.log.Debugw("EventLoop: return struct sent")
 
 		} else {
 			// Done channel

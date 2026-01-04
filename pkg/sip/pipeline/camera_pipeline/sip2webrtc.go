@@ -31,6 +31,7 @@ type SipToWebrtc struct {
 	FpsFilter     *gst.Element
 	Vp8Enc        *gst.Element
 	Vp8Pay        *gst.Element
+	CapsFilter    *gst.Element
 }
 
 var _ pipeline.GstChain = (*SipToWebrtc)(nil)
@@ -130,6 +131,13 @@ func (stw *SipToWebrtc) Create() error {
 		return fmt.Errorf("failed to create SIP rtp vp8 payloader: %w", err)
 	}
 
+	stw.CapsFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString("application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,rtcp-fb-nack=1,rtcp-fb-nack-pli=1,rtcp-fb-ccm-fir=1,rtcp-fb-transport-cc=1,extmap-3=\"http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\""),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create SIP to WebRTC capsfilter: %w", err)
+	}
+
 	return nil
 }
 
@@ -146,6 +154,7 @@ func (stw *SipToWebrtc) Add() error {
 		stw.FpsFilter,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
+		stw.CapsFilter,
 	); err != nil {
 		return fmt.Errorf("failed to add SIP to WebRTC elements to pipeline: %w", err)
 	}
@@ -165,6 +174,7 @@ func (stw *SipToWebrtc) Link() error {
 		stw.FpsFilter,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
+		stw.CapsFilter,
 	); err != nil {
 		return fmt.Errorf("failed to link sip to webrtc: %w", err)
 	}
@@ -185,6 +195,7 @@ func (stw *SipToWebrtc) Close() error {
 		stw.FpsFilter,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
+		stw.CapsFilter,
 	); err != nil {
 		return fmt.Errorf("failed to remove SIP to WebRTC elements from pipeline: %w", err)
 	}

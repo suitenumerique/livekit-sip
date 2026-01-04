@@ -399,7 +399,13 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	if existing != nil && existing.cc.InviteCSeq() < cc.InviteCSeq() {
 		log.Infow("accepting reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength())
 		existing.log().Infow("reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
-		cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+
+		// Check if re-INVITE contains screenshare media that needs processing
+		if err := existing.handleReInvite(cc, req); err != nil {
+			log.Warnw("failed to handle re-INVITE screenshare", err)
+			// Fall back to accepting as keep-alive
+			cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+		}
 		return nil
 	}
 
@@ -717,6 +723,63 @@ func (c *inboundCall) mediaTimeout() error {
 	}
 	c.closeWithTimeout(false)
 	return nil // logged as a warning in close
+}
+
+// handleReInvite processes re-INVITE requests, particularly for screenshare.
+// It parses the SDP to check for screenshare media and reconciles if present.
+func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error {
+	rawSDP := req.Body()
+	if len(rawSDP) == 0 {
+		// No SDP body, accept as keep-alive
+		newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+		return nil
+	}
+
+	offer, err := sdpv2.NewSDP(rawSDP)
+	if err != nil {
+		c.log().Warnw("failed to parse re-INVITE SDP", err)
+		newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+		return nil
+	}
+
+	// Check if this re-INVITE contains screenshare media
+	if offer.Screenshare != nil && c.medias != nil {
+		c.log().Infow("re-INVITE contains screenshare media",
+			"port", offer.Screenshare.Port,
+			"rtcpPort", offer.Screenshare.RTCPPort,
+			"content", offer.Screenshare.Content)
+
+		// Call AnswerSDP to reconcile the screenshare media with proper ports
+		answer, err := c.medias.AnswerSDP(offer)
+		if err != nil {
+			c.log().Errorw("failed to answer re-INVITE SDP", err)
+			newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+			return err
+		}
+
+		// Start the media orchestrator to transition from Ready to Started.
+		// This is needed for second+ screenshare cycles where Reconcile creates
+		// a new pipeline (status=Ready) but Start() must be called to activate it.
+		if err := c.medias.Start(); err != nil {
+			c.log().Errorw("failed to start media after re-INVITE", err)
+			// Don't fail - continue with the answer
+		}
+
+		// Build new SDP answer with screenshare
+		answerBytes, err := answer.Marshal()
+		if err != nil {
+			c.log().Errorw("failed to build re-INVITE answer SDP", err)
+			newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+			return err
+		}
+
+		newCC.AcceptAsKeepAlive(answerBytes)
+		return nil
+	}
+
+	// No screenshare, accept as keep-alive with existing SDP
+	newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+	return nil
 }
 
 func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip.Request, trunkID string, conf *config.Config) error {

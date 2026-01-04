@@ -251,3 +251,10 @@ func (s *sinkWriter) Unlock(self *base.GstBaseSink) bool {
 	}
 	return true
 }
+
+func (s *sinkWriter) UnlockStop(self *base.GstBaseSink) bool {
+	s.self.Log(CAT, gst.LevelInfo, "unlock stopped")
+	// Nothing to do here - we don't need to reset state since
+	// once closed, the writer stays closed
+	return true
+}

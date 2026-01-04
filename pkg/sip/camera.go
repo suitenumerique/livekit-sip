@@ -63,13 +63,6 @@ func (cm *CameraManager) Start() error {
 		return err
 	}
 
-	// if rs == ReconcileStatusUpdated {
-	// 	if err := cm.RecoverTracks(); err != nil {
-	// 		cm.log.Errorw("failed to recover camera tracks", err)
-	// 		return rs, err
-	// 	}
-	// }
-
 	if err := cm.publishCameraTrack(); err != nil {
 		cm.log.Errorw("failed to publish camera track", err)
 		return err
@@ -82,7 +75,7 @@ func (cm *CameraManager) CreateVideoPipeline(opt *MediaOptions) (SipPipeline, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SIP WebRTC pipeline: %w", err)
 	}
-	// pipeline.Monitor()
+	//	pipeline.Monitor()
 
 	return pipeline, nil
 }
@@ -99,7 +92,7 @@ func (cm *CameraManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc uint3
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 
-	_, err := p.AddWebrtcTrack(ssrc, ti.RtpIn, ti.RtcpIn)
+	_, err := p.AddWebrtcTrack(ssrc, ti.RtpIn, ti.RtcpIn, ti.RequestKeyframe)
 	if err != nil {
 		cm.log.Errorw("failed to add WebRTC source to selector", err)
 		return fmt.Errorf("failed to add WebRTC source to selector: %w", err)
@@ -138,65 +131,27 @@ func (cm *CameraManager) webrtcTrackOutput(to *TrackOutput) error {
 		return fmt.Errorf("failed to write SIP RTP to WebRTC: %w", err)
 	}
 
-	// rtpMo, err := NewMediaOutput(cm.ctx, to.RtpOut, pipeline.SipToWebrtc.WebrtcRtpAppSink)
-	// if err != nil {
-	// 	cm.log.Errorw("failed to create WebRTC RTP media output", err)
-	// 	return fmt.Errorf("failed to create WebRTC RTP media output: %w", err)
-	// }
-	// if err := cm.io.AddOutputs(rtpMo); err != nil {
-	// 	cm.log.Errorw("failed to add WebRTC RTP media output", err)
-	// 	return fmt.Errorf("failed to add WebRTC RTP media output: %w", err)
-	// }
-
-	// rtcpMo, err := NewMediaOutput(cm.ctx, to.RtcpOut, pipeline.WebrtcToSip.WebrtcRtcpAppSink)
-	// if err != nil {
-	// 	cm.log.Errorw("failed to create WebRTC RTCP media output", err)
-	// 	return fmt.Errorf("failed to create WebRTC RTCP media output: %w", err)
-	// }
-	// if err := cm.io.AddOutputs(rtcpMo); err != nil {
-	// 	cm.log.Errorw("failed to add WebRTC RTCP media output", err)
-	// 	return fmt.Errorf("failed to add WebRTC RTCP media output: %w", err)
-	// }
-
 	return nil
 }
 
-func (cm *CameraManager) SwitchActiveWebrtcTrack(sid string) error {
+// SwitchActiveWebrtcTrack switches to the video track for the given participant.
+func (cm *CameraManager) SwitchActiveWebrtcTrack(sid string) (bool, error) {
 	ssrc, ok := cm.ssrcs[sid]
 	if !ok {
-		return fmt.Errorf("no SSRC found for sid %s", sid)
+		cm.log.Debugw("no video track for active speaker", "sid", sid, "registeredTracks", len(cm.ssrcs))
+		return false, nil
 	}
-	cm.log.Debugw("switching active WebRTC video track", "sid", sid, "ssrc", ssrc)
+	cm.log.Infow("[SWITCH_DEBUG] Switch requested from orchestrator", "sid", sid, "ssrc", ssrc)
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 
-	if err := p.DirtySwitchWebrtcInput(ssrc); err != nil {
-		return fmt.Errorf("failed to switch WebRTC selector source: %w", err)
+	if err := p.SwitchWebrtcInput(ssrc); err != nil {
+		return false, fmt.Errorf("failed to switch WebRTC selector source: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 func (cm *CameraManager) RecoverTracks() error {
 	return nil
-	// cm.mu.Lock()
-	// defer cm.mu.Unlock()
-
-	// if cm.status != VideoStatusStarted {
-	// 	return nil
-	// }
-
-	// time.Sleep(1 * time.Second) // wait a bit to ensure pipeline is ready
-
-	// cm.log.Infow("recovering camera tracks after video reconnection")
-	// tracks := cm.tm.CameraTracks.Tracks()
-	// for sid, track := range tracks {
-	// 	// if track.pub.IsSubscribed() {
-	// 	// 	continue
-	// 	// }
-	// 	cm.log.Infow("recovering camera track", "sid", sid, "isSubscribed", track.pub.IsSubscribed())
-	// 	track.pub.SetSubscribed(true)
-	// }
-
-	// return nil
 }

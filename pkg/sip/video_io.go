@@ -66,20 +66,27 @@ func NewTrackAdapter(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublicatio
 }
 
 type TrackAdapter struct {
+	eof atomic.Bool
 	*webrtc.TrackRemote
 	pub *lksdk.RemoteTrackPublication
 }
 
 func (t *TrackAdapter) Read(p []byte) (n int, err error) {
+	if t.eof.Load() {
+		return 0, io.EOF
+	}
 	n, _, err = t.TrackRemote.Read(p)
 	return n, err
 }
 
 func (t *TrackAdapter) Close() error {
-	var err error
-	err = t.TrackRemote.SetReadDeadline(time.Now())
-	err = errors.Join(err, t.pub.SetSubscribed(false))
-	return err
+	if t.eof.Swap(true) {
+		return nil
+	}
+	// Set an immediate deadline to unblock any blocking Read() call.
+	// This makes TrackRemote.Read() return with a timeout error immediately.
+	t.TrackRemote.SetReadDeadline(time.Now())
+	return nil
 }
 
 type RtcpWriter struct {
@@ -161,6 +168,11 @@ func NewTrackInput(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication,
 	ti := &TrackInput{
 		RtpIn:  NewTrackAdapter(track, pub),
 		RtcpIn: NewRtcpReader(pub, rp),
+		RequestKeyframe: func() error {
+			// Send RTCP PLI (Picture Loss Indication) to request keyframe from WebRTC sender
+			rp.WritePLI(track.SSRC())
+			return nil
+		},
 	}
 	return ti
 }
@@ -171,8 +183,9 @@ type WebrtcTrackInput struct {
 }
 
 type TrackInput struct {
-	RtpIn  io.ReadCloser
-	RtcpIn io.ReadCloser
+	RtpIn          io.ReadCloser
+	RtcpIn         io.ReadCloser
+	RequestKeyframe func() error // Callback to request keyframe via RTCP PLI
 }
 
 type TrackOutput struct {

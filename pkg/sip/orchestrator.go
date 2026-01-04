@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
@@ -69,12 +70,14 @@ type MediaOrchestrator struct {
 	inbound *sipInbound
 
 	dispatchCH chan dispatchOperation
+	dispatchOK atomic.Bool
 	wg         sync.WaitGroup
 
-	audioinfo AudioInfo
-	camera    *CameraManager
-	tracks    *TrackManager
-	bfcp      *BFCPManager
+	audioinfo   AudioInfo
+	camera      *CameraManager
+	screenshare *ScreenshareManager
+	tracks      *TrackManager
+	bfcp        *BFCPManager
 
 	sdp   *sdpv2.SDP
 	state MediaState
@@ -95,6 +98,9 @@ func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipIn
 
 	o.wg.Add(1)
 	go o.dispatchLoop()
+	for !o.dispatchOK.Load() {
+		runtime.Gosched() // wait for dispatch loop to start
+	}
 
 	if err := o.dispatch(func() error {
 		return o.init(room)
@@ -118,7 +124,46 @@ func (o *MediaOrchestrator) init(room *Room) error {
 	}
 	o.camera = camera
 
-	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts, o.inbound)
+	screenshare, err := NewScreenshareManager(o.log.WithComponent("screenshare"), o.ctx, o.opts)
+	if err != nil {
+		return fmt.Errorf("could not create screenshare manager: %w", err)
+	}
+	o.screenshare = screenshare
+
+	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts)
+
+	// Wire up BFCP callbacks to screenshare
+	if o.bfcp != nil {
+		o.bfcp.OnFloorGranted = func(floorID, userID uint16) {
+			// Track when floor is granted (either to us or Poly)
+			if userID == VirtualClientUserID {
+				o.screenshare.SetFloorHeld(true)
+			}
+		}
+		o.bfcp.OnFloorReleased = func(floorID, userID uint16) {
+			if userID == VirtualClientUserID {
+				o.screenshare.SetFloorHeld(false)
+			}
+		}
+	}
+
+	// Wire up screenshare lifecycle to BFCP floor control
+	o.screenshare.OnScreenshareStarted = func() {
+		if o.bfcp != nil {
+			o.log.Infow("screenshare started, requesting BFCP floor for virtual client")
+			if err := o.bfcp.RequestFloorForVirtualClient(); err != nil {
+				o.log.Warnw("failed to request BFCP floor for screenshare", err)
+			}
+		}
+	}
+	o.screenshare.OnScreenshareStopped = func() {
+		if o.bfcp != nil {
+			o.log.Infow("screenshare stopped, releasing BFCP floor for virtual client")
+			if err := o.bfcp.ReleaseFloorForVirtualClient(); err != nil {
+				o.log.Warnw("failed to release BFCP floor for screenshare", err)
+			}
+		}
+	}
 
 	o.state = MediaStateOK
 
@@ -137,6 +182,10 @@ func (o *MediaOrchestrator) okStates(allowed ...MediaState) error {
 const DispatchTimeout = 20 * time.Second
 
 func (o *MediaOrchestrator) dispatch(fn func() error) error {
+	if !o.dispatchOK.Load() {
+		return ErrWrongState
+	}
+
 	done := make(chan error)
 	op := dispatchOperation{
 		fn:   fn,
@@ -167,6 +216,8 @@ func (o *MediaOrchestrator) dispatch(fn func() error) error {
 }
 
 func (o *MediaOrchestrator) dispatchLoop() {
+	o.dispatchOK.Store(true)
+	defer o.dispatchOK.Store(false)
 	defer o.wg.Done()
 	defer o.log.Debugw("media orchestrator dispatch loop exited")
 
@@ -199,10 +250,15 @@ func (o *MediaOrchestrator) close() error {
 	if o.bfcp != nil {
 		bfcpErr = o.bfcp.Close()
 	}
+	var screenshareErr error
+	if o.screenshare != nil {
+		screenshareErr = o.screenshare.Close()
+	}
 	err := errors.Join(
 		o.camera.Close(),
 		o.tracks.Close(),
 		bfcpErr,
+		screenshareErr,
 	)
 	o.cancel()
 
@@ -251,6 +307,14 @@ func (o *MediaOrchestrator) answerSDP(offer *sdpv2.SDP) (*sdpv2.SDP, error) {
 			return nil, fmt.Errorf("could not select video codec: %w", err)
 		}
 		o.log.Debugw("selected video codec", "codec", offer.Video.Codec)
+	}
+
+	// Select screenshare codec if present
+	if offer.Screenshare != nil {
+		if err := offer.Screenshare.SelectCodec(); err != nil {
+			return nil, fmt.Errorf("could not select screenshare codec: %w", err)
+		}
+		o.log.Debugw("selected screenshare codec", "codec", offer.Screenshare.Codec)
 	}
 
 	o.sdp = offer
@@ -336,6 +400,29 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 		})
 	}
 
+	// Add screenshare m=video line with content:slides when BFCP is present
+	if screenshare && o.screenshare != nil && o.screenshare.Status() >= VideoStatusReady {
+		builder.SetScreenshare(func(b *sdpv2.SDPMediaBuilder) (*sdpv2.SDPMedia, error) {
+			codec := o.screenshare.Codec()
+			if codec == nil {
+				for _, c := range o.screenshare.SupportedCodecs() {
+					b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
+						return c, nil
+					}, false)
+				}
+			} else {
+				b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
+					return codec, nil
+				}, true)
+			}
+			b.SetRTPPort(uint16(o.screenshare.RtpPort()))
+			b.SetRTCPPort(uint16(o.screenshare.RtcpPort()))
+			b.SetDirection(sdpv2.DirectionSendOnly) // We send screenshare to SIP
+			b.SetLabel(ScreenshareMSTreamID)        // Match BFCP mstrm ID
+			return b.Build()
+		})
+	}
+
 	offer, err := builder.Build()
 	if err != nil {
 		return nil, fmt.Errorf("could create a new sdp: %w", err)
@@ -353,6 +440,23 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 		o.log.Errorw("could not reconcile video sdp", err)
 		return fmt.Errorf("could not reconcile video sdp: %w", err)
 	}
+
+	// Reconcile screenshare when BFCP is present
+	if sdp.BFCP != nil && o.screenshare != nil {
+		o.log.Debugw("reconciling screenshare")
+		// Use sdp.Screenshare if available (from re-INVITE), otherwise use sdp.Video for codec info
+		screenshareMedia := sdp.Screenshare
+		if screenshareMedia == nil {
+			// Initial INVITE: use video media for codec negotiation only
+			// The actual destination port won't be known until re-INVITE
+			screenshareMedia = sdp.Video
+		}
+		if _, err := o.screenshare.Reconcile(sdp.Addr, screenshareMedia); err != nil {
+			o.log.Errorw("could not reconcile screenshare sdp", err)
+			return fmt.Errorf("could not reconcile screenshare sdp: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -362,6 +466,15 @@ func (o *MediaOrchestrator) start() error {
 		if err := o.camera.Start(); err != nil {
 			o.log.Errorw("could not start camera", err)
 			return fmt.Errorf("could not start camera: %w", err)
+		}
+	}
+
+	// Start screenshare if ready (BFCP was negotiated)
+	if o.screenshare != nil && o.screenshare.Status() == VideoStatusReady {
+		o.log.Debugw("starting screenshare")
+		if err := o.screenshare.Start(); err != nil {
+			o.log.Errorw("could not start screenshare", err)
+			return fmt.Errorf("could not start screenshare: %w", err)
 		}
 	}
 
