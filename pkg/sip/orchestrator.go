@@ -371,6 +371,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 					SetSetup(sdpv2.BfcpSetupPassive).
 					SetConfID(o.bfcp.config.ConferenceID).
 					SetUserID(1).
+					SetFloorID(ContentFloorID).
 					SetMStreamID(ScreenshareMSTreamID).
 					Build()
 			})
