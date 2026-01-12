@@ -45,7 +45,7 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions) 
 		opts:   opts,
 	}
 
-	config := bfcp.DefaultServerConfig(opts.IP.String()+":0", 1)
+	config := bfcp.DefaultServerConfig("0.0.0.0:0", 1)
 	config.PortMin = opts.Ports.Start
 	config.PortMax = opts.Ports.End
 	config.AutoGrant = true // Auto-grant floor requests for 1:1 calls
