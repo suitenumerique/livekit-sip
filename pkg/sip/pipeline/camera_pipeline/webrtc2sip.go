@@ -69,7 +69,7 @@ func (stw *WebrtcToSip) Create() error {
 
 	stw.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{
 		"max-size-buffers": uint(3),
-		"leaky":            int(2), // downstream - drop oldest buffers when full
+		"leaky":            int(2), // downstream
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc queue: %w", err)
@@ -77,11 +77,11 @@ func (stw *WebrtcToSip) Create() error {
 
 	stw.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
 		"bitrate":          uint(2000),
-		"key-int-max":      uint(12),   // Keyframe every 0.5s at 24fps for faster scene recovery
-		"speed-preset":     int(1),     // ultrafast
-		"tune":             uint(4),    // zerolatency (flags: 0x00000004)
+		"key-int-max":      uint(12),
+		"speed-preset":     int(1), // ultrafast
+		"tune":             uint(4), // zerolatency
 		"bframes":          uint(0),
-		"vbv-buf-capacity": uint(2000), // VBV buffer to prevent underflow
+		"vbv-buf-capacity": uint(2000),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc x264 encoder: %w", err)

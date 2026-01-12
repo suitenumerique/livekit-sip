@@ -104,19 +104,20 @@ func (stw *SipToWebrtc) Create() error {
 	}
 
 	stw.Vp8Enc, err = gst.NewElementWithProperties("vp8enc", map[string]interface{}{
-		"deadline":            int(1),
-		"target-bitrate":      int(1_500_000),
-		"cpu-used":            int(4),
-		"keyframe-max-dist":   int(30),
+		"deadline":            int(1), // realtime
+		"target-bitrate":      int(2_000_000),
+		"cpu-used":            int(8),
+		"keyframe-max-dist":   int(12),
 		"lag-in-frames":       int(0),
 		"threads":             int(4),
 		"buffer-initial-size": int(100),
-		"buffer-optimal-size": int(120),
-		"buffer-size":         int(150),
+		"buffer-optimal-size": int(150),
+		"buffer-size":         int(200),
 		"min-quantizer":       int(4),
-		"max-quantizer":       int(40),
-		"cq-level":            int(13),
+		"max-quantizer":       int(32),
+		"cq-level":            int(10),
 		"error-resilient":     int(1),
+		"end-usage":           int(1), // CBR
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP vp8 encoder: %w", err)

@@ -92,9 +92,9 @@ func (cp *CameraPipeline) SipIO(rtp, rtcp net.Conn, pt uint8) error {
 	}
 
 	if err := cp.SipRtpIn.SetProperty("caps",
-		gst.NewCapsFromString(h264Caps+",rtcp-fb-nack-pli=1,rtcp-fb-nack=1,rtcp-fb-ccm-fir=1"),
+		gst.NewCapsFromString("application/x-rtp,media=video,encoding-name=H264,clock-rate=90000"),
 	); err != nil {
-		return fmt.Errorf("failed to set sip rtp in caps (pt: %d): %w", pt, err)
+		return fmt.Errorf("failed to set sip rtp in caps: %w", err)
 	}
 
 	if err := cp.SipRtpIn.SetProperty("handle", uint64(rtpHandle)); err != nil {

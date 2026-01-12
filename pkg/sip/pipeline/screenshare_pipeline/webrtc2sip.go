@@ -90,11 +90,11 @@ func (wts *WebrtcToSip) Create() error {
 
 	wts.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
 		"bitrate":          int(2048), // kbps
-		"key-int-max":      int(12),   // Keyframe every 0.5s at 24fps for faster scene recovery
-		"speed-preset":     int(1),    // ultrafast
-		"tune":             int(4),    // zerolatency
-		"vbv-buf-capacity": int(2000), // VBV buffer to prevent underflow
-		"bframes":          int(0),    // No B-frames for lower latency
+		"key-int-max":      int(12),
+		"speed-preset":     int(1), // ultrafast
+		"tune":             int(4), // zerolatency
+		"vbv-buf-capacity": int(2000),
+		"bframes":          int(0),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create x264 encoder: %w", err)

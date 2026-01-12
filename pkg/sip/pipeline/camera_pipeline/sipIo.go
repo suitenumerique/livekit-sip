@@ -36,10 +36,10 @@ var _ pipeline.GstChain = (*SipIo)(nil)
 func (sio *SipIo) Create() error {
 	var err error
 	sio.SipRtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
-		"name":        "sip_rtp_bin",
-		"rtp-profile": int(3),    // GST_RTP_PROFILE_AVPF
-		"latency":     uint(300), // Increase jitter buffer latency for better packet loss handling
-		// Note: do-retransmission NOT enabled - SIP devices typically don't support NACK
+		"name":            "sip_rtp_bin",
+		"rtp-profile":     int(3), // GST_RTP_PROFILE_AVPF
+		"latency":         uint(300),
+		"drop-on-latency": true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP rtpbin: %w", err)

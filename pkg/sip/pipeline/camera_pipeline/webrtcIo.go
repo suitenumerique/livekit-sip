@@ -49,10 +49,10 @@ var webrtcCaps = map[uint]string{
 func (wio *WebrtcIo) Create() error {
 	var err error
 	wio.WebrtcRtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
-		"name":        "webrtc_rtp_bin",
-		"rtp-profile": int(3),    // GST_RTP_PROFILE_AVPF
-		"latency":     uint(300), // Increase jitter buffer latency for better packet loss handling
-		// Note: do-retransmission disabled - rely on keyframes for recovery
+		"name":            "webrtc_rtp_bin",
+		"rtp-profile":     int(3), // GST_RTP_PROFILE_AVPF
+		"latency":         uint(300),
+		"drop-on-latency": true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create WebRTC rtpbin: %w", err)
