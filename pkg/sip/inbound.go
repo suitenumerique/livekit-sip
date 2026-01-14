@@ -742,6 +742,9 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 		return nil
 	}
 
+	// Structured SDP re-INVITE offer logging (enabled via SIP_SDP_DEBUG=true)
+	logSDPReInviteOffer(c.log(), offer)
+
 	// Check if this re-INVITE contains screenshare media
 	if offer.Screenshare != nil && c.medias != nil {
 		c.log().Infow("re-INVITE contains screenshare media",
@@ -756,6 +759,9 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 			newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
 			return err
 		}
+
+		// Structured SDP re-INVITE answer logging (enabled via SIP_SDP_DEBUG=true)
+		logSDPReInviteAnswer(c.log(), answer)
 
 		// Start the media orchestrator to transition from Ready to Started.
 		// This is needed for second+ screenshare cycles where Reconcile creates
@@ -1090,6 +1096,9 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 		c.log().Errorw("Cannot parse SDP offer", err)
 		return nil, err
 	}
+
+	// Structured SDP offer logging (enabled via SIP_SDP_DEBUG=true)
+	logSDPOffer(c.log(), offer)
 
 	if offer.Audio == nil {
 		c.log().Errorw("No audio in SDP offer", err)

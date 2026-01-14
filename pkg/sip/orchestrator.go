@@ -329,6 +329,10 @@ func (o *MediaOrchestrator) answerSDP(offer *sdpv2.SDP) (*sdpv2.SDP, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not create answer sdp: %w", err)
 	}
+
+	// Structured SDP answer logging (enabled via SIP_SDP_DEBUG=true)
+	logSDPAnswer(o.log, answer)
+
 	o.log.Debugw("created answer sdp", "answer", answer)
 
 	o.state = MediaStateReady
