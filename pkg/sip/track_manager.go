@@ -3,10 +3,12 @@ package sip
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/frostbyte73/core"
 	"github.com/livekit/protocol/logger"
 	lksdk "github.com/livekit/server-sdk-go/v2"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -110,8 +112,9 @@ type TrackManager struct {
 	log   logger.Logger
 	p     *lksdk.LocalParticipant
 
-	camera       *TrackOutput
-	CameraTracks trackKindManager
+	camera           *TrackOutput
+	cameraRtcpClosed atomic.Bool
+	CameraTracks     trackKindManager
 }
 
 func (tm *TrackManager) Participant() *lksdk.LocalParticipant {
@@ -161,6 +164,7 @@ func (tm *TrackManager) Camera() (*TrackOutput, error) {
 		Writer: track,
 		Callback: func() error {
 			tm.log.Infow("unpublishing video track", "SID", pt.SID())
+			tm.cameraRtcpClosed.Store(true)
 			pt.CloseTrack()
 			tm.camera = nil
 			return nil
@@ -168,9 +172,68 @@ func (tm *TrackManager) Camera() (*TrackOutput, error) {
 	}
 	to.RtcpOut = &NopWriteCloser{Writer: trackRtcp}
 
+	// Start goroutine to read RTCP feedback (PLI/FIR) from LiveKit viewers
+	tm.cameraRtcpClosed.Store(false)
+	go tm.readCameraRTCP(track, to)
+
 	tm.camera = to
 
 	return to, nil
+}
+
+// readCameraRTCP reads RTCP packets from the RTPSender to detect PLI/FIR requests from LiveKit viewers
+func (tm *TrackManager) readCameraRTCP(track *webrtc.TrackLocalStaticRTP, to *TrackOutput) {
+	pc := tm.p.GetPublisherPeerConnection()
+	if pc == nil {
+		tm.log.Warnw("no publisher peer connection for RTCP reading", nil)
+		return
+	}
+
+	// Find the RTPSender for our track
+	var sender *webrtc.RTPSender
+	for _, s := range pc.GetSenders() {
+		if s.Track() == track {
+			sender = s
+			break
+		}
+	}
+	if sender == nil {
+		tm.log.Warnw("could not find RTPSender for camera track", nil)
+		return
+	}
+
+	tm.log.Infow("starting RTCP feedback reader for camera track")
+
+	for {
+		if tm.cameraRtcpClosed.Load() {
+			tm.log.Infow("camera RTCP reader stopped (track closed)")
+			return
+		}
+
+		pkts, _, err := sender.ReadRTCP()
+		if err != nil {
+			if tm.cameraRtcpClosed.Load() {
+				return
+			}
+			tm.log.Warnw("error reading RTCP from camera sender", err)
+			return
+		}
+
+		for _, pkt := range pkts {
+			switch pkt.(type) {
+			case *rtcp.PictureLossIndication:
+				tm.log.Infow("LiveKit viewer requested keyframe (PLI)")
+				if to.OnKeyframeRequest != nil {
+					to.OnKeyframeRequest()
+				}
+			case *rtcp.FullIntraRequest:
+				tm.log.Infow("LiveKit viewer requested keyframe (FIR)")
+				if to.OnKeyframeRequest != nil {
+					to.OnKeyframeRequest()
+				}
+			}
+		}
+	}
 }
 
 func (tm *TrackManager) Close() error {

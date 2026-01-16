@@ -189,6 +189,7 @@ type TrackInput struct {
 }
 
 type TrackOutput struct {
-	RtpOut  io.WriteCloser
-	RtcpOut io.WriteCloser
+	RtpOut           io.WriteCloser
+	RtcpOut          io.WriteCloser
+	OnKeyframeRequest func() // Callback when LiveKit viewers request a keyframe (PLI/FIR)
 }

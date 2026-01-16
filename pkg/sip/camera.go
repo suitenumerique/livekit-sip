@@ -126,6 +126,11 @@ func (cm *CameraManager) webrtcTrackOutput(to *TrackOutput) error {
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 
+	// Set up callback to forward PLI/FIR from LiveKit viewers to SIP device
+	to.OnKeyframeRequest = func() {
+		p.RequestSipKeyframe()
+	}
+
 	if err := p.WebrtcOutput(to.RtpOut, to.RtcpOut); err != nil {
 		cm.log.Errorw("failed to write SIP RTP to WebRTC", err)
 		return fmt.Errorf("failed to write SIP RTP to WebRTC: %w", err)

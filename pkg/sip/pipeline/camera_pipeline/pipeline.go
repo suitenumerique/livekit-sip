@@ -7,6 +7,7 @@ import (
 
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/sip/pkg/sip/pipeline"
+	"github.com/livekit/sip/pkg/sip/pipeline/event"
 )
 
 const MaxKeyframeWaitTime = 2 * time.Second
@@ -19,14 +20,17 @@ type CameraPipeline struct {
 	*SipToWebrtc
 	*WebrtcToSip
 
-	pendingSwitchSSRC uint32
-	switchStartTime   time.Time
-	lastPLITime       time.Time
+	pendingSwitchSSRC   uint32
+	switchStartTime     time.Time
+	lastPLITime         time.Time
+	sipKeyframeRequests chan struct{} // Channel for requesting SIP keyframes from goroutines
 }
 
 func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
 	log.Debugw("Creating camera pipeline")
-	cp := &CameraPipeline{}
+	cp := &CameraPipeline{
+		sipKeyframeRequests: make(chan struct{}, 1), // Buffered to avoid blocking, single slot for coalescing
+	}
 
 	p, err := pipeline.New(ctx, log.WithComponent("camera_pipeline"), cp.cleanup)
 	if err != nil {
@@ -36,6 +40,9 @@ func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
 	p.Pipeline().GetBus().SetFlushing(true)
 
 	cp.BasePipeline = p
+
+	// Start goroutine to handle SIP keyframe requests on the event loop
+	go cp.sipKeyframeRequestHandler(ctx)
 
 	p.Log().Debugw("Starting event loop")
 
@@ -121,4 +128,21 @@ func (cp *CameraPipeline) Close() error {
 	}
 	cp.Log().Infow("Camera pipeline closed")
 	return nil
+}
+
+// sipKeyframeRequestHandler processes SIP keyframe requests on the event loop thread
+func (cp *CameraPipeline) sipKeyframeRequestHandler(ctx context.Context) {
+	// Register a callback that will execute on the event loop
+	handler := event.RegisterCallback(ctx, cp.Loop(), func() {
+		cp.doRequestSipKeyframe()
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-cp.sipKeyframeRequests:
+			handler()
+		}
+	}
 }

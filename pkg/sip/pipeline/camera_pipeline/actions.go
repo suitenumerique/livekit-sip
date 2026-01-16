@@ -417,6 +417,36 @@ func (cp *CameraPipeline) RequestTrackKeyframe(wt *WebrtcTrack) error {
 	return nil
 }
 
+// RequestSipKeyframe sends a GstForceKeyUnit event upstream to request a keyframe from the SIP device.
+// This triggers the rtph264depay element to send RTCP PLI to the SIP device.
+// Safe to call from any goroutine - schedules on the GStreamer event loop.
+func (cp *CameraPipeline) RequestSipKeyframe() {
+	// Non-blocking send to channel - coalesces multiple rapid requests
+	select {
+	case cp.sipKeyframeRequests <- struct{}{}:
+	default:
+		// Channel full, request already pending
+	}
+}
+
+// doRequestSipKeyframe performs the actual GStreamer operation (must be called from event loop)
+func (cp *CameraPipeline) doRequestSipKeyframe() {
+	cp.Log().Infow("Requesting keyframe from SIP device (LiveKit viewer PLI)")
+
+	fkuStruct := gst.NewStructure("GstForceKeyUnit")
+	runtime.SetFinalizer(fkuStruct, nil)
+	fkuStruct.SetValue("all-headers", true)
+
+	// Send upstream event to rtph264depay element directly
+	// rtph264depay with request-keyframe=true will forward this as RTCP PLI to the RTP source
+	fkuEvent := gst.NewCustomEvent(gst.EventTypeCustomUpstream, fkuStruct)
+
+	// Use SendEvent on the element - this sends the event upstream through the element
+	if !cp.SipToWebrtc.H264Depay.SendEvent(fkuEvent) {
+		cp.Log().Warnw("Failed to send upstream GstForceKeyUnit event for SIP keyframe", nil)
+	}
+}
+
 // ForceKeyframeOnEncoder sends GstForceKeyUnit event to x264enc.
 func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 	cp.Log().Infow("[SWITCH_DEBUG] Forcing keyframe on x264enc encoder")
