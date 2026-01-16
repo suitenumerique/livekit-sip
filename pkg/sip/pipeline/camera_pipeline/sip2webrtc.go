@@ -29,6 +29,7 @@ type SipToWebrtc struct {
 	VideoConvert2 *gst.Element
 	VideoRate     *gst.Element
 	FpsFilter     *gst.Element
+	Queue         *gst.Element
 	Vp8Enc        *gst.Element
 	Vp8Pay        *gst.Element
 	CapsFilter    *gst.Element
@@ -87,9 +88,10 @@ func (stw *SipToWebrtc) Create() error {
 		return fmt.Errorf("failed to create SIP videoconvert2: %w", err)
 	}
 
-	// Force 24fps output
+	// Force 24fps output - allow frame duplication to maintain consistent timing
 	stw.VideoRate, err = gst.NewElementWithProperties("videorate", map[string]interface{}{
-		"drop-only": true, // Only drop frames, don't duplicate
+		"drop-only":     false, // Allow frame duplication to maintain 24fps
+		"skip-to-first": true,  // Don't output until first frame arrives
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP videorate: %w", err)
@@ -103,6 +105,16 @@ func (stw *SipToWebrtc) Create() error {
 		return fmt.Errorf("failed to create SIP fps capsfilter: %w", err)
 	}
 
+	// Buffer queue to decouple decoder timing from encoder - prevents timestamp drift over time
+	stw.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-buffers": uint(5),           // 5 frames buffer
+		"max-size-time":    uint64(250000000), // 250ms max latency
+		"leaky":            int(2),            // downstream - drop oldest on overflow
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create SIP to WebRTC queue: %w", err)
+	}
+
 	stw.Vp8Enc, err = gst.NewElementWithProperties("vp8enc", map[string]interface{}{
 		"deadline":            int(1), // realtime
 		"target-bitrate":      int(2_000_000),
@@ -110,9 +122,10 @@ func (stw *SipToWebrtc) Create() error {
 		"keyframe-max-dist":   int(12),
 		"lag-in-frames":       int(0),
 		"threads":             int(4),
-		"buffer-initial-size": int(100),
-		"buffer-optimal-size": int(150),
-		"buffer-size":         int(200),
+		"token-partitions":    int(2),   // Enable 4 partitions for multi-threaded encoding
+		"buffer-initial-size": int(200), // Increased for long sessions
+		"buffer-optimal-size": int(300), // Increased for long sessions
+		"buffer-size":         int(500), // Increased for long sessions
 		"min-quantizer":       int(4),
 		"max-quantizer":       int(32),
 		"cq-level":            int(10),
@@ -153,6 +166,7 @@ func (stw *SipToWebrtc) Add() error {
 		stw.VideoConvert2,
 		stw.VideoRate,
 		stw.FpsFilter,
+		stw.Queue,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
 		stw.CapsFilter,
@@ -173,6 +187,7 @@ func (stw *SipToWebrtc) Link() error {
 		stw.VideoConvert2,
 		stw.VideoRate,
 		stw.FpsFilter,
+		stw.Queue,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
 		stw.CapsFilter,
@@ -194,6 +209,7 @@ func (stw *SipToWebrtc) Close() error {
 		stw.VideoConvert2,
 		stw.VideoRate,
 		stw.FpsFilter,
+		stw.Queue,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
 		stw.CapsFilter,
