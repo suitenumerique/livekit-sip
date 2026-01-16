@@ -155,7 +155,7 @@ func (tm *TrackManager) Camera() (*TrackOutput, error) {
 	}
 	tm.log.Infow("published camera track", "SID", pt.SID())
 	trackRtcp := &RtcpWriter{
-		pc: tm.p.GetSubscriberPeerConnection(),
+		pc: tm.p.GetPublisherPeerConnection(),
 	}
 	to.RtpOut = &CallbackWriteCloser{
 		Writer: track,
