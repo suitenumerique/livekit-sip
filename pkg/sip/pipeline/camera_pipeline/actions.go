@@ -79,7 +79,7 @@ func (cp *CameraPipeline) SipIO(rtp, rtcp net.Conn, pt uint8) error {
 
 	if _, err := cp.SipRtpBin.Connect("request-pt-map", event.RegisterCallback(context.TODO(), cp.Loop(), func(self *gst.Element, session uint, sipPt uint) *gst.Caps {
 		return gst.NewCapsFromString(fmt.Sprintf(
-			"application/x-rtp,media=video,encoding-name=H264,payload=%d,clock-rate=90000",
+			"application/x-rtp,media=video,encoding-name=H264,payload=%d,clock-rate=90000,rtcp-fb-nack-pli=1,rtcp-fb-ccm-fir=1",
 			sipPt))
 	})); err != nil {
 		return fmt.Errorf("failed to connect to rtpbin request-pt-map signal: %w", err)
@@ -92,7 +92,7 @@ func (cp *CameraPipeline) SipIO(rtp, rtcp net.Conn, pt uint8) error {
 	}
 
 	if err := cp.SipRtpIn.SetProperty("caps",
-		gst.NewCapsFromString("application/x-rtp,media=video,encoding-name=H264,clock-rate=90000"),
+		gst.NewCapsFromString("application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,rtcp-fb-nack-pli=1,rtcp-fb-ccm-fir=1"),
 	); err != nil {
 		return fmt.Errorf("failed to set sip rtp in caps: %w", err)
 	}
@@ -417,9 +417,8 @@ func (cp *CameraPipeline) RequestTrackKeyframe(wt *WebrtcTrack) error {
 	return nil
 }
 
-// RequestSipKeyframe sends a GstForceKeyUnit event upstream to request a keyframe from the SIP device.
-// This triggers the rtph264depay element to send RTCP PLI to the SIP device.
-// Safe to call from any goroutine - schedules on the GStreamer event loop.
+// RequestSipKeyframe requests a keyframe from the SIP device via RTCP PLI.
+// Safe to call from any goroutine.
 func (cp *CameraPipeline) RequestSipKeyframe() {
 	// Non-blocking send to channel - coalesces multiple rapid requests
 	select {
@@ -429,21 +428,31 @@ func (cp *CameraPipeline) RequestSipKeyframe() {
 	}
 }
 
-// doRequestSipKeyframe performs the actual GStreamer operation (must be called from event loop)
 func (cp *CameraPipeline) doRequestSipKeyframe() {
-	cp.Log().Infow("Requesting keyframe from SIP device (LiveKit viewer PLI)")
+	cp.Log().Infow("Requesting keyframe from SIP device")
+
+	sinkPad := cp.SipToWebrtc.H264Depay.GetStaticPad("sink")
+	if sinkPad == nil {
+		cp.Log().Warnw("H264Depay sink pad not found for PLI request", nil)
+		return
+	}
+
+	peerPad := sinkPad.GetPeer()
+	if peerPad == nil {
+		cp.Log().Warnw("H264Depay sink pad has no peer for PLI request", nil)
+		return
+	}
 
 	fkuStruct := gst.NewStructure("GstForceKeyUnit")
 	runtime.SetFinalizer(fkuStruct, nil)
 	fkuStruct.SetValue("all-headers", true)
 
-	// Send upstream event to rtph264depay element directly
-	// rtph264depay with request-keyframe=true will forward this as RTCP PLI to the RTP source
 	fkuEvent := gst.NewCustomEvent(gst.EventTypeCustomUpstream, fkuStruct)
 
-	// Use SendEvent on the element - this sends the event upstream through the element
-	if !cp.SipToWebrtc.H264Depay.SendEvent(fkuEvent) {
-		cp.Log().Warnw("Failed to send upstream GstForceKeyUnit event for SIP keyframe", nil)
+	if !peerPad.SendEvent(fkuEvent) {
+		cp.Log().Warnw("Failed to send GstForceKeyUnit event", nil)
+	} else {
+		cp.Log().Infow("Sent GstForceKeyUnit event to SIP rtpbin")
 	}
 }
 
