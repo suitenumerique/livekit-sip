@@ -142,7 +142,20 @@ func (tm *TrackManager) Camera() (*TrackOutput, error) {
 
 	to := &TrackOutput{}
 
+	tm.log.Infow("[VIDEO_DEBUG] Camera() called, getting participant")
 	p := tm.Participant()
+
+	pc := p.GetPublisherPeerConnection()
+	var pcState string
+	if pc != nil {
+		pcState = pc.ConnectionState().String()
+	} else {
+		pcState = "nil"
+	}
+	tm.log.Infow("[VIDEO_DEBUG] About to publish camera track",
+		"identity", p.Identity(),
+		"sid", p.SID(),
+		"publisherPeerConnectionState", pcState)
 
 	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeVP8,
@@ -150,10 +163,12 @@ func (tm *TrackManager) Camera() (*TrackOutput, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not create room camera track: %w", err)
 	}
+	tm.log.Infow("[VIDEO_DEBUG] Calling p.PublishTrack...")
 	pt, err := p.PublishTrack(track, &lksdk.TrackPublicationOptions{
 		Name: p.Identity(),
 	})
 	if err != nil {
+		tm.log.Errorw("[VIDEO_DEBUG] PublishTrack failed", err)
 		return nil, err
 	}
 	tm.log.Infow("published camera track", "SID", pt.SID())

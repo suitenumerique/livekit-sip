@@ -766,9 +766,12 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 		// Start the media orchestrator to transition from Ready to Started.
 		// This is needed for second+ screenshare cycles where Reconcile creates
 		// a new pipeline (status=Ready) but Start() must be called to activate it.
-		if err := c.medias.Start(); err != nil {
-			c.log().Errorw("failed to start media after re-INVITE", err)
-			// Don't fail - continue with the answer
+		// Only start if room is connected (not during PIN prompt phase).
+		if c.lkRoom.IsReady() {
+			if err := c.medias.Start(); err != nil {
+				c.log().Errorw("failed to start media after re-INVITE", err)
+				// Don't fail - continue with the answer
+			}
 		}
 
 		// Build new SDP answer with screenshare

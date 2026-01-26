@@ -147,6 +147,7 @@ type RoomInterface interface {
 	NewParticipantTrack(sampleRate int) (msdk.WriteCloser[msdk.PCM16Sample], error)
 	SendData(data lksdk.DataPacket, opts ...lksdk.DataPublishOption) error
 	NewTrack() *mixer.Input
+	IsReady() bool
 }
 
 type GetRoomFunc func(log logger.Logger, st *RoomStats) RoomInterface
@@ -171,6 +172,11 @@ type Room struct {
 	stats      *RoomStats
 
 	callbackHandler atomic.Pointer[RoomCallbacks]
+}
+
+// IsReady returns true if the room is connected and ready
+func (r *Room) IsReady() bool {
+	return r != nil && r.ready.IsBroken()
 }
 
 type ParticipantConfig struct {
@@ -223,10 +229,15 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 				resolve.Resolve()
 			}
 			cb := r.callbackHandler.Load()
+			r.log.Infow("[VIDEO_DEBUG] Room ready, calling LocalParticipantReady callback",
+				"hasCallback", cb != nil,
+				"hasRoom", r.room != nil)
 			if cb != nil {
 				if err := (*cb).LocalParticipantReady(r.room.LocalParticipant); err != nil {
 					r.log.Errorw("local participant ready callback error", err)
 				}
+			} else {
+				r.log.Warnw("[VIDEO_DEBUG] No callback set when room became ready", nil)
 			}
 		case <-r.stopped.Watch():
 			resolve.Resolve()

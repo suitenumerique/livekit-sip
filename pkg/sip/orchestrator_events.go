@@ -9,12 +9,18 @@ import (
 )
 
 func (o *MediaOrchestrator) LocalParticipantReady(p *lksdk.LocalParticipant) error {
+	o.log.Infow("[VIDEO_DEBUG] LocalParticipantReady called",
+		"state", o.state.String(),
+		"participant", p.Identity(),
+		"sid", p.SID())
 	if err := o.okStates(MediaStateReady); err != nil {
+		o.log.Errorw("[VIDEO_DEBUG] LocalParticipantReady state check failed", err, "state", o.state.String())
 		return err
 	}
 	if err := o.tracks.ParticipantReady(p); err != nil {
 		return fmt.Errorf("could not set participant ready: %w", err)
 	}
+	o.log.Infow("[VIDEO_DEBUG] LocalParticipantReady completed successfully")
 	return nil
 }
 

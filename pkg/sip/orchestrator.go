@@ -358,6 +358,10 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
 				return codec, nil
 			}, true)
+			// Always copy DTMF codec from offer if present
+			if o.sdp != nil {
+				b.CopyDTMFCodec(o.sdp.Audio)
+			}
 		}
 		return b.
 			SetRTPPort(uint16(o.audioinfo.Port())).
