@@ -373,6 +373,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
 				return b.
 					SetPort(o.bfcp.Port()).
+					SetConnectionAddr(o.opts.IP).
 					SetConnection(sdpv2.BfcpConnectionNew).
 					SetProto(sdpv2.BfcpProtoTCP).
 					SetFloorCtrl(sdpv2.BfcpFloorCtrlServer).
