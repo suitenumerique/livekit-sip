@@ -440,6 +440,84 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 	return offer, nil
 }
 
+// CreateOfferSDP generates an SDP offer for delayed offer scenarios (RFC 3261 - late media).
+// This is called when the remote sends INVITE without SDP, and we need to generate the offer.
+func (o *MediaOrchestrator) CreateOfferSDP() (offer *sdpv2.SDP, err error) {
+	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
+		return nil, err
+	}
+	if err := o.dispatch(func() error {
+		offer, err = o.createOfferSDP()
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return offer, nil
+}
+
+func (o *MediaOrchestrator) createOfferSDP() (*sdpv2.SDP, error) {
+	o.log.Debugw("creating offer sdp for delayed offer scenario")
+
+	// For delayed offer, we create an offer with audio only initially
+	// Video and BFCP can be negotiated via re-INVITE later
+	offer, err := o.offerSDP(false, false, false) // audio only for now
+	if err != nil {
+		return nil, fmt.Errorf("could not create offer sdp: %w", err)
+	}
+
+	// Structured SDP offer logging (enabled via SIP_SDP_DEBUG=true)
+	logSDPOffer(o.log, offer)
+
+	o.log.Debugw("created offer sdp for delayed offer", "offer", offer)
+
+	return offer, nil
+}
+
+// ApplyAnswerSDP applies an SDP answer received in ACK for delayed offer scenarios.
+// This completes the media setup after the remote sends their answer.
+func (o *MediaOrchestrator) ApplyAnswerSDP(answer *sdpv2.SDP) error {
+	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
+		return err
+	}
+	return o.dispatch(func() error {
+		return o.applyAnswerSDP(answer)
+	})
+}
+
+func (o *MediaOrchestrator) applyAnswerSDP(answer *sdpv2.SDP) error {
+	o.log.Debugw("applying answer sdp for delayed offer", "answer", answer)
+
+	if answer.Audio == nil {
+		return fmt.Errorf("no audio in answer")
+	}
+
+	if err := answer.Audio.SelectCodec(); err != nil {
+		return fmt.Errorf("could not select audio codec from answer: %w", err)
+	}
+	o.log.Debugw("selected audio codec from answer", "codec", answer.Audio.Codec)
+
+	o.audioinfo.SetMedia(answer.Audio)
+	o.sdp = answer
+
+	// Setup video if present in answer
+	if answer.Video != nil {
+		if err := answer.Video.SelectCodec(); err != nil {
+			return fmt.Errorf("could not select video codec from answer: %w", err)
+		}
+		o.log.Debugw("selected video codec from answer", "codec", answer.Video.Codec)
+	}
+
+	if err := o.setupSDP(answer); err != nil {
+		o.log.Errorw("could not setup sdp from answer", err)
+		return fmt.Errorf("could not setup sdp from answer: %w", err)
+	}
+
+	o.state = MediaStateReady
+	o.log.Debugw("delayed offer answer applied successfully")
+
+	return nil
+}
+
 func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 	o.log.Debugw("setting up sdp", "sdp", sdp)
 

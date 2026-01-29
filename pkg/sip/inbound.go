@@ -915,7 +915,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		if r := c.lkRoom.Room(); r != nil {
 			headers = AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
 		}
-		c.log().Infow("Accepting the call", "headers", headers)
+		c.log().Infow("Accepting the call", "headers", headers, "delayedOffer", c.cc.IsDelayedOffer())
 		err := c.cc.Accept(ctx, answerData, headers)
 		if errors.Is(err, errNoACK) {
 			c.log().Errorw("Call accepted, but no ACK received", err)
@@ -926,6 +926,29 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			c.close(true, callAcceptFailed, "accept-failed")
 			return false, err
 		}
+
+		// Handle delayed offer: wait for ACK with SDP answer and complete media setup
+		if c.cc.IsDelayedOffer() {
+			c.log().Infow("Waiting for SDP answer in ACK (delayed offer)")
+			answerCh := c.cc.GetDelayedAnswerCh()
+			select {
+			case sdpAnswerData := <-answerCh:
+				c.log().Infow("Received SDP answer in ACK", "contentLength", len(sdpAnswerData))
+				if err := c.completeDelayedOfferMedia(sdpAnswerData, disp.EnabledFeatures); err != nil {
+					c.log().Errorw("Failed to complete delayed offer media setup", err)
+					c.close(true, callDropped, "sdp-answer-failed")
+					return false, err
+				}
+				c.log().Infow("Delayed offer media setup completed successfully")
+			case <-time.After(inviteOkAckLateTimeout):
+				c.log().Errorw("Timeout waiting for ACK with SDP answer", nil)
+				c.close(true, callDropped, "ack-timeout")
+				return false, errors.New("timeout waiting for ACK with SDP answer")
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
+		}
+
 		if !c.s.conf.Experimental.InboundWaitACK {
 			ackReceived = c.cc.InviteACK()
 			// Start this timer right after the Accept.
@@ -1055,6 +1078,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 }
 
 func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit.SIPMediaEncryption, conf *config.Config, features []livekit.SIPFeature) (answerData []byte, _ error) {
+	// Check for delayed offer (no SDP in INVITE) - RFC 3261 late media
+	if len(offerData) == 0 {
+		c.log().Infow("Delayed offer detected - generating SDP offer")
+		return c.runMediaConnDelayedOffer(tid, enc, conf, features)
+	}
+
 	c.mon.SDPSize(len(offerData), true)
 	c.log().Debugw("SDP offer", "sdp", string(offerData))
 	e, err := sdpEncryption(enc)
@@ -1159,6 +1188,133 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 		info.AudioCodec = mconf.Audio.Codec.Info().SDPName
 	})
 	return answerData, nil
+}
+
+// runMediaConnDelayedOffer handles the delayed offer scenario (RFC 3261 - late media).
+// When the remote sends INVITE without SDP, we generate our own offer and send it in 200 OK.
+// The remote's answer will come in the ACK, which is handled separately.
+func (c *inboundCall) runMediaConnDelayedOffer(tid traceid.ID, enc livekit.SIPMediaEncryption, conf *config.Config, features []livekit.SIPFeature) ([]byte, error) {
+	e, err := sdpEncryption(enc)
+	if err != nil {
+		c.log().Errorw("Cannot parse encryption", err)
+		return nil, err
+	}
+
+	opts := &MediaOptions{
+		IP:                  c.s.sconf.MediaIP,
+		IPLocal:             c.s.sconf.MediaIPLocal,
+		Ports:               conf.RTPPort,
+		MediaTimeoutInitial: c.s.conf.MediaTimeoutInitial,
+		MediaTimeout:        c.s.conf.MediaTimeout,
+		EnableJitterBuffer:  c.jitterBuf,
+		Stats:               &c.stats.Port,
+		NoInputResample:     !RoomResample,
+	}
+
+	mp, err := NewMediaPort(tid, c.log(), c.mon, opts, RoomSampleRate)
+	if err != nil {
+		return nil, err
+	}
+	c.media = mp
+	c.media.EnableTimeout(false) // enabled once we accept the call
+	c.media.DisableOut()         // disabled until we send 200
+	c.media.SetDTMFAudio(conf.AudioDTMF)
+
+	audioinfo := NewAudioInfo(c.media)
+
+	orchestrator, err := NewMediaOrchestrator(c.log(), c.ctx, c.cc, c.lkRoom.(*Room), audioinfo, opts)
+	if err != nil {
+		c.log().Errorw("Cannot create media orchestrator", err)
+		return nil, err
+	}
+	c.medias = orchestrator
+	c.lkRoom.(*Room).SetCallbacks(orchestrator)
+
+	// Generate our SDP offer for delayed offer scenario
+	offer, err := orchestrator.CreateOfferSDP()
+	if err != nil {
+		c.log().Errorw("Cannot create SDP offer for delayed offer", err)
+		return nil, err
+	}
+
+	offerData, err := offer.Marshal()
+	if err != nil {
+		c.log().Errorw("Cannot marshal SDP offer", err)
+		return nil, err
+	}
+
+	// Store offer and encryption for when we receive ACK with answer
+	c.cc.SetDelayedOffer(offer, e)
+
+	c.mon.SDPSize(len(offerData), false) // false = outgoing offer
+	c.log().Debugw("SDP offer (delayed)", "sdp", string(offerData))
+
+	// Note: Media setup will be completed in handleInvite after receiving ACK with SDP answer
+	// The audio writer and DTMF setup will happen there
+
+	return offerData, nil
+}
+
+// completeDelayedOfferMedia completes the media setup after receiving the SDP answer in ACK.
+// This is called for delayed offer scenarios (RFC 3261 - late media).
+func (c *inboundCall) completeDelayedOfferMedia(answerData []byte, features []livekit.SIPFeature) error {
+	c.log().Debugw("Completing delayed offer media setup", "answerLength", len(answerData))
+
+	// Parse the SDP answer
+	answer, err := sdpv2.NewSDP(answerData)
+	if err != nil {
+		return errors.Wrap(err, "cannot parse SDP answer")
+	}
+
+	// Structured SDP answer logging (enabled via SIP_SDP_DEBUG=true)
+	logSDPAnswer(c.log(), answer)
+
+	// Apply the answer to complete media negotiation
+	if err := c.medias.ApplyAnswerSDP(answer); err != nil {
+		return errors.Wrap(err, "cannot apply SDP answer")
+	}
+
+	// Get the media configuration from the answer
+	if answer.Audio == nil {
+		return errors.New("no audio in SDP answer")
+	}
+
+	// Get our pending offer to extract local address info
+	pendingOffer, _ := c.cc.GetPendingOffer()
+	if pendingOffer == nil {
+		return errors.New("no pending offer found")
+	}
+
+	mc, err := answer.V1MediaConfig(netip.AddrPortFrom(answer.Addr, answer.Audio.Port))
+	if err != nil {
+		return errors.Wrap(err, "cannot create media config from answer")
+	}
+
+	mconf := &MediaConf{MediaConfig: mc}
+	mconf.Processor = c.s.handler.GetMediaProcessor(features)
+
+	if err = c.media.SetConfig(mconf); err != nil {
+		return errors.Wrap(err, "cannot set media config")
+	}
+
+	if mconf.Audio.DTMFType != 0 {
+		c.media.HandleDTMF(c.handleDTMF)
+	}
+
+	// Set up audio output
+	if w := c.lkRoom.SwapOutput(c.media.GetAudioWriter()); w != nil {
+		_ = w.Close()
+	}
+	if mconf.Audio.DTMFType != 0 {
+		c.lkRoom.SetDTMFOutput(c.media)
+	}
+
+	c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
+		info.AudioCodec = mconf.Audio.Codec.Info().SDPName
+	})
+
+	c.log().Infow("Delayed offer media setup completed", "audioCodec", mconf.Audio.Codec.Info().SDPName)
+	return nil
 }
 
 func (c *inboundCall) waitMedia(ctx context.Context) (bool, error) {
@@ -1616,6 +1772,12 @@ type sipInbound struct {
 	ringing         chan struct{}
 	acked           core.Fuse
 	setHeaders      setHeadersFunc
+
+	// Delayed offer support (RFC 3261 - late media)
+	delayedOffer    bool           // true if INVITE had no SDP
+	pendingOffer    *sdpv2.SDP     // our offer, waiting for answer in ACK
+	pendingEnc      sdp.Encryption // encryption setting (sdp.EncryptionNone/Allow/Require)
+	delayedAnswerCh chan []byte    // channel to receive ACK SDP answer body
 }
 
 func (c *sipInbound) ValidateInvite() error {
@@ -1716,6 +1878,38 @@ func (c *sipInbound) SIPCallID() string {
 
 func (c *sipInbound) InviteCSeq() uint32 {
 	return c.inviteCSeq
+}
+
+// SetDelayedOffer stores the SDP offer we generated for delayed offer scenarios.
+// The offer will be sent in 200 OK and we'll wait for the answer in ACK.
+func (c *sipInbound) SetDelayedOffer(offer *sdpv2.SDP, enc sdp.Encryption) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.delayedOffer = true
+	c.pendingOffer = offer
+	c.pendingEnc = enc
+	c.delayedAnswerCh = make(chan []byte, 1)
+}
+
+// IsDelayedOffer returns true if this call is using delayed offer mode.
+func (c *sipInbound) IsDelayedOffer() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.delayedOffer
+}
+
+// GetDelayedAnswerCh returns the channel to receive the SDP answer from ACK.
+func (c *sipInbound) GetDelayedAnswerCh() <-chan []byte {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.delayedAnswerCh
+}
+
+// GetPendingOffer returns the pending SDP offer and encryption for delayed offer scenarios.
+func (c *sipInbound) GetPendingOffer() (*sdpv2.SDP, sdp.Encryption) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.pendingOffer, c.pendingEnc
 }
 
 func (c *sipInbound) RemoteHeaders() Headers {
@@ -1890,6 +2084,26 @@ retries:
 
 func (c *sipInbound) AcceptAck(req *sip.Request, tx sip.ServerTransaction) {
 	c.acked.Break()
+
+	// Check if this is a delayed offer scenario - ACK should contain SDP answer
+	c.mu.RLock()
+	isDelayed := c.delayedOffer
+	ch := c.delayedAnswerCh
+	c.mu.RUnlock()
+
+	if isDelayed && ch != nil {
+		answerData := req.Body()
+		if len(answerData) > 0 {
+			c.log.Infow("Received SDP answer in ACK for delayed offer", "contentLength", len(answerData))
+			select {
+			case ch <- answerData:
+			default:
+				c.log.Warnw("Delayed answer channel full, dropping SDP answer", nil)
+			}
+		} else {
+			c.log.Warnw("Delayed offer: ACK received without SDP answer", nil)
+		}
+	}
 }
 
 func (c *sipInbound) AcceptBye(req *sip.Request, tx sip.ServerTransaction) {

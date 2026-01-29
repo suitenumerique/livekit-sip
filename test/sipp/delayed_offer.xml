@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- Delayed Offer Test Scenario
+     Simulates a CISCO device sending INVITE without SDP.
+     We send the SDP answer in the ACK after receiving 200 OK with offer.
+-->
+<scenario name="Delayed Offer INVITE">
+
+  <!-- Send INVITE without SDP body -->
+  <send retrans="500">
+    <![CDATA[
+      INVITE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: "CISCO Test" <sip:cisco@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:cisco@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: TANDBERG/4352 (X15.2.2-b2bua-1.0)
+      Supported: timer,replaces
+      Session-Expires: 1800;refresher=uac
+      Allow: INVITE, ACK, CANCEL, BYE, OPTIONS, INFO, NOTIFY, REFER
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Receive 100 Trying (optional) -->
+  <recv response="100" optional="true"/>
+
+  <!-- Receive 180 Ringing (optional) -->
+  <recv response="180" optional="true"/>
+
+  <!-- Receive 200 OK with SDP offer from server -->
+  <recv response="200" rrs="true">
+  </recv>
+
+  <!-- Send ACK with SDP answer -->
+  <send>
+    <![CDATA[
+      ACK [next_url] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: "CISCO Test" <sip:cisco@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Contact: <sip:cisco@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=cisco 12345 12345 IN IP4 [local_ip]
+      s=CISCO Test Call
+      c=IN IP4 [local_ip]
+      t=0 0
+      m=audio [auto_media_port] RTP/AVP 0 8 101
+      a=rtpmap:0 PCMU/8000
+      a=rtpmap:8 PCMA/8000
+      a=rtpmap:101 telephone-event/8000
+      a=fmtp:101 0-16
+      a=sendrecv
+      a=ptime:20
+    ]]>
+  </send>
+
+  <!-- Keep call active for a few seconds -->
+  <pause milliseconds="5000"/>
+
+  <!-- Send BYE to end call -->
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: "CISCO Test" <sip:cisco@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 2 BYE
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Receive 200 OK for BYE -->
+  <recv response="200"/>
+
+</scenario>
