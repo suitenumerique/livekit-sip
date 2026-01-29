@@ -314,6 +314,7 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	s.sipSrv.OnAck(s.onAck)
 	s.sipSrv.OnBye(s.onBye)
 	s.sipSrv.OnNotify(s.onNotify)
+	s.sipSrv.OnPrack(s.onPrack) // RFC 3262: Reliable provisional responses
 	s.sipSrv.OnNoRoute(s.OnNoRoute)
 	s.sipUnhandled = unhandled
 

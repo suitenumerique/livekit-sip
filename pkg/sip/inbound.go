@@ -23,6 +23,7 @@ import (
 	"math"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -541,6 +542,28 @@ func (s *Server) onAck(log *slog.Logger, req *sip.Request, tx sip.ServerTransact
 	}
 	c.log().Infow("ACK from remote")
 	c.cc.AcceptAck(req, tx)
+}
+
+// onPrack handles PRACK requests for reliable provisional responses (RFC 3262)
+func (s *Server) onPrack(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+	tag, err := getFromTag(req)
+	if err != nil {
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Missing From tag", nil))
+		return
+	}
+
+	s.cmu.RLock()
+	c := s.byRemoteTag[tag]
+	s.cmu.RUnlock()
+
+	if c != nil {
+		c.log().Infow("PRACK from remote")
+		c.cc.AcceptPrack(req, tx)
+		return
+	}
+
+	s.log.Infow("PRACK for non-existent call", "sipTag", tag)
+	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call does not exist", nil))
 }
 
 func (s *Server) onBye(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
@@ -1765,6 +1788,9 @@ func (s *Server) newInbound(log logger.Logger, contact URI, invite *sip.Request,
 	// Parse Session Timer headers (RFC 4028)
 	c.ParseSessionTimers(invite)
 
+	// Parse 100rel support (RFC 3262)
+	c.Parse100rel(invite)
+
 	return c
 }
 
@@ -1803,6 +1829,12 @@ type sipInbound struct {
 	sessionExpires   time.Duration // negotiated session interval (0 = disabled)
 	sessionRefresher string        // "uac" or "uas" - who is responsible for refresh
 	minSE            time.Duration // minimum session interval (default 90s per RFC 4028)
+
+	// PRACK/100rel support (RFC 3262)
+	supports100rel bool       // true if remote supports 100rel (from Supported header)
+	requires100rel bool       // true if remote requires 100rel (from Require header)
+	rseq           uint32     // current RSeq number for reliable provisional responses
+	prackReceived  core.Fuse  // signals that PRACK was received for pending reliable provisional
 }
 
 func (c *sipInbound) ValidateInvite() error {
@@ -2059,6 +2091,52 @@ func (c *sipInbound) sessionTimerHeaders() map[string]string {
 	return headers
 }
 
+// Parse100rel extracts 100rel support from the INVITE request.
+// RFC 3262: Reliability of Provisional Responses in SIP
+func (c *sipInbound) Parse100rel(req *sip.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check Supported header for 100rel
+	for _, h := range req.GetHeaders("Supported") {
+		value := strings.ToLower(h.Value())
+		if strings.Contains(value, "100rel") {
+			c.supports100rel = true
+			break
+		}
+	}
+
+	// Check Require header for 100rel (mandatory)
+	for _, h := range req.GetHeaders("Require") {
+		value := strings.ToLower(h.Value())
+		if strings.Contains(value, "100rel") {
+			c.requires100rel = true
+			c.supports100rel = true // If required, it's also supported
+			break
+		}
+	}
+
+	if c.supports100rel || c.requires100rel {
+		c.log.Debugw("100rel support detected",
+			"supports", c.supports100rel,
+			"requires", c.requires100rel)
+	}
+}
+
+// Supports100rel returns true if the remote supports reliable provisional responses.
+func (c *sipInbound) Supports100rel() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.supports100rel
+}
+
+// Requires100rel returns true if the remote requires reliable provisional responses.
+func (c *sipInbound) Requires100rel() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.requires100rel
+}
+
 func (c *sipInbound) RemoteHeaders() Headers {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -2075,7 +2153,32 @@ func (c *sipInbound) Processing() {
 }
 
 func (c *sipInbound) sendRinging() {
+	// Check if we should send reliable provisional (100rel/PRACK)
+	if c.supports100rel || c.requires100rel {
+		c.sendReliableRinging()
+		return
+	}
 	c.respond(sip.StatusRinging, "Ringing")
+}
+
+// sendReliableRinging sends a 180 Ringing with RSeq header for PRACK (RFC 3262)
+func (c *sipInbound) sendReliableRinging() {
+	if c.inviteTx == nil {
+		return
+	}
+
+	// Increment RSeq for each reliable provisional response
+	c.rseq++
+	rseq := c.rseq
+
+	r := sip.NewResponseFromRequest(c.invite, sip.StatusRinging, "Ringing", nil)
+	r.AppendHeader(sip.NewHeader("Require", "100rel"))
+	r.AppendHeader(sip.NewHeader("RSeq", strconv.FormatUint(uint64(rseq), 10)))
+
+	c.addExtraHeaders(r)
+	_ = c.inviteTx.Respond(r)
+
+	c.log.Debugw("Sent reliable 180 Ringing", "rseq", rseq)
 }
 
 func (c *sipInbound) attachTag() {
@@ -2293,6 +2396,28 @@ func (c *sipInbound) AcceptBye(req *sip.Request, tx sip.ServerTransaction) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.drop() // mark as closed
+}
+
+// AcceptPrack handles PRACK requests for reliable provisional responses (RFC 3262)
+func (c *sipInbound) AcceptPrack(req *sip.Request, tx sip.ServerTransaction) {
+	// Validate RAck header
+	rack := req.GetHeader("RAck")
+	if rack == nil {
+		c.log.Warnw("PRACK received without RAck header", nil)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Missing RAck header", nil))
+		return
+	}
+
+	// Parse RAck: response-num CSeq-num method
+	// e.g., "1 1 INVITE"
+	rackValue := rack.Value()
+	c.log.Debugw("PRACK received", "rack", rackValue)
+
+	// Respond 200 OK to PRACK
+	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
+
+	// Signal that PRACK was received for the pending reliable provisional
+	c.prackReceived.Break()
 }
 
 func (c *sipInbound) swapSrcDst(req *sip.Request) {
