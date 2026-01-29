@@ -68,6 +68,12 @@ const (
 	inviteOkAckLateTimeout     = inviteOkRetryIntervalMax
 
 	inviteCredentialValidity = 60 * time.Minute // Allow reuse of credentials for 1h
+
+	// Session Timer defaults (RFC 4028)
+	defaultMinSE           = 90 * time.Second  // Minimum session interval per RFC 4028
+	defaultSessionExpires  = 1800 * time.Second // Default session interval (30 minutes)
+	sessionRefresherUAC    = "uac"
+	sessionRefresherUAS    = "uas"
 )
 
 var errNoACK = errors.New("no ACK received for 200 OK")
@@ -725,20 +731,30 @@ func (c *inboundCall) mediaTimeout() error {
 	return nil // logged as a warning in close
 }
 
-// handleReInvite processes re-INVITE requests, particularly for screenshare.
+// handleReInvite processes re-INVITE requests, particularly for screenshare and session timer refresh.
 // It parses the SDP to check for screenshare media and reconciles if present.
+// It also handles session timer refresh (RFC 4028) by echoing back Session-Expires.
 func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error {
+	// Check for session timer refresh (RFC 4028)
+	// If the re-INVITE contains Session-Expires, this is a session refresh
+	if h := req.GetHeader("Session-Expires"); h != nil {
+		c.log().Infow("Session timer refresh re-INVITE received",
+			"sessionExpires", h.Value())
+		// Parse and update session timer settings from the refresh
+		newCC.ParseSessionTimers(req)
+	}
+
 	rawSDP := req.Body()
 	if len(rawSDP) == 0 {
-		// No SDP body, accept as keep-alive
-		newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+		// No SDP body, accept as keep-alive (possibly session timer refresh)
+		newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 		return nil
 	}
 
 	offer, err := sdpv2.NewSDP(rawSDP)
 	if err != nil {
 		c.log().Warnw("failed to parse re-INVITE SDP", err)
-		newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+		newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 		return nil
 	}
 
@@ -756,7 +772,7 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 		answer, err := c.medias.AnswerSDP(offer)
 		if err != nil {
 			c.log().Errorw("failed to answer re-INVITE SDP", err)
-			newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+			newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 			return err
 		}
 
@@ -778,16 +794,16 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 		answerBytes, err := answer.Marshal()
 		if err != nil {
 			c.log().Errorw("failed to build re-INVITE answer SDP", err)
-			newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+			newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 			return err
 		}
 
-		newCC.AcceptAsKeepAlive(answerBytes)
+		newCC.AcceptAsKeepAliveWithSessionTimer(answerBytes)
 		return nil
 	}
 
 	// No screenshare, accept as keep-alive with existing SDP
-	newCC.AcceptAsKeepAlive(c.cc.OwnSDP())
+	newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 	return nil
 }
 
@@ -1745,6 +1761,10 @@ func (s *Server) newInbound(log logger.Logger, contact URI, invite *sip.Request,
 	if callID := invite.CallID(); callID != nil {
 		c.sipCallID = callID.Value()
 	}
+
+	// Parse Session Timer headers (RFC 4028)
+	c.ParseSessionTimers(invite)
+
 	return c
 }
 
@@ -1778,6 +1798,11 @@ type sipInbound struct {
 	pendingOffer    *sdpv2.SDP     // our offer, waiting for answer in ACK
 	pendingEnc      sdp.Encryption // encryption setting (sdp.EncryptionNone/Allow/Require)
 	delayedAnswerCh chan []byte    // channel to receive ACK SDP answer body
+
+	// Session Timer support (RFC 4028)
+	sessionExpires   time.Duration // negotiated session interval (0 = disabled)
+	sessionRefresher string        // "uac" or "uas" - who is responsible for refresh
+	minSE            time.Duration // minimum session interval (default 90s per RFC 4028)
 }
 
 func (c *sipInbound) ValidateInvite() error {
@@ -1912,6 +1937,128 @@ func (c *sipInbound) GetPendingOffer() (*sdpv2.SDP, sdp.Encryption) {
 	return c.pendingOffer, c.pendingEnc
 }
 
+// ParseSessionTimers extracts Session-Expires and Min-SE headers from the INVITE request.
+// RFC 4028: Session Timers in SIP
+func (c *sipInbound) ParseSessionTimers(req *sip.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Default Min-SE per RFC 4028
+	c.minSE = defaultMinSE
+
+	// Parse Min-SE header if present
+	if h := req.GetHeader("Min-SE"); h != nil {
+		if secs, err := parseSessionExpiresValue(h.Value()); err == nil && secs > 0 {
+			c.minSE = time.Duration(secs) * time.Second
+		}
+	}
+
+	// Parse Session-Expires header
+	if h := req.GetHeader("Session-Expires"); h != nil {
+		secs, refresher := parseSessionExpires(h.Value())
+		c.log.Debugw("Parsed Session-Expires header",
+			"raw", h.Value(),
+			"seconds", secs,
+			"refresher", refresher)
+		if secs > 0 {
+			// Ensure session expires is at least Min-SE
+			sessionExpires := time.Duration(secs) * time.Second
+			if sessionExpires < c.minSE {
+				sessionExpires = c.minSE
+			}
+			c.sessionExpires = sessionExpires
+
+			// Set refresher - default to UAC if not specified
+			if refresher == sessionRefresherUAS || refresher == sessionRefresherUAC {
+				c.sessionRefresher = refresher
+			} else {
+				c.sessionRefresher = sessionRefresherUAC
+			}
+			c.log.Infow("Session Timer enabled",
+				"sessionExpires", c.sessionExpires,
+				"refresher", c.sessionRefresher)
+		}
+	}
+}
+
+// parseSessionExpires parses "Session-Expires: 1800;refresher=uac" format
+func parseSessionExpires(value string) (seconds int, refresher string) {
+	value = strings.TrimSpace(value)
+	parts := strings.Split(value, ";")
+
+	// Parse the seconds value
+	if len(parts) > 0 {
+		if secs, err := parseSessionExpiresValue(parts[0]); err == nil {
+			seconds = secs
+		}
+	}
+
+	// Parse the refresher parameter
+	for _, part := range parts[1:] {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(strings.ToLower(part), "refresher=") {
+			refresher = strings.ToLower(strings.TrimPrefix(part, "refresher="))
+			refresher = strings.TrimPrefix(refresher, "Refresher=")
+			break
+		}
+	}
+
+	return seconds, refresher
+}
+
+// parseSessionExpiresValue parses the numeric seconds value
+func parseSessionExpiresValue(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	// Remove any parameters after semicolon
+	if idx := strings.Index(value, ";"); idx != -1 {
+		value = value[:idx]
+	}
+	var secs int
+	_, err := fmt.Sscanf(value, "%d", &secs)
+	return secs, err
+}
+
+// GetSessionExpires returns the negotiated session expiration interval.
+func (c *sipInbound) GetSessionExpires() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionExpires
+}
+
+// GetSessionRefresher returns who is responsible for refreshing the session ("uac" or "uas").
+func (c *sipInbound) GetSessionRefresher() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionRefresher
+}
+
+// GetMinSE returns the minimum session interval.
+func (c *sipInbound) GetMinSE() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.minSE
+}
+
+// sessionTimerHeaders returns the Session-Expires and related headers for the 200 OK response.
+func (c *sipInbound) sessionTimerHeaders() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.sessionExpires == 0 {
+		return nil
+	}
+
+	headers := make(map[string]string)
+	secs := int(c.sessionExpires.Seconds())
+	headers["Session-Expires"] = fmt.Sprintf("%d;refresher=%s", secs, c.sessionRefresher)
+
+	// Include Require: timer if we're supporting session timers
+	// This tells the UAC that session timers are required
+	headers["Require"] = "timer"
+
+	return headers
+}
+
 func (c *sipInbound) RemoteHeaders() Headers {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -2008,6 +2155,32 @@ func (c *sipInbound) AcceptAsKeepAlive(sdp []byte) {
 	c.respondWithData(sip.StatusOK, "OK", "application/sdp", sdp)
 }
 
+// AcceptAsKeepAliveWithSessionTimer responds to a re-INVITE with Session-Expires header if applicable.
+// This is used for session timer refresh (RFC 4028).
+func (c *sipInbound) AcceptAsKeepAliveWithSessionTimer(sdp []byte) {
+	c.mu.RLock()
+	sessionExpires := c.sessionExpires
+	sessionRefresher := c.sessionRefresher
+	c.mu.RUnlock()
+
+	if c.inviteTx == nil {
+		return
+	}
+
+	r := sip.NewResponseFromRequest(c.invite, sip.StatusOK, "OK", sdp)
+	r.AppendHeader(&contentTypeHeaderSDP)
+
+	// Add Session Timer headers (RFC 4028) if session timers were negotiated
+	if sessionExpires > 0 {
+		secs := int(sessionExpires.Seconds())
+		r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", secs, sessionRefresher)))
+		r.AppendHeader(sip.NewHeader("Supported", "timer"))
+	}
+
+	c.addExtraHeaders(r)
+	_ = c.inviteTx.Respond(r)
+}
+
 func (c *sipInbound) OwnSDP() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -2031,6 +2204,15 @@ func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[str
 	c.addExtraHeaders(r)
 
 	r.AppendHeader(&contentTypeHeaderSDP)
+
+	// Add Session Timer headers (RFC 4028) if session timers were negotiated
+	if c.sessionExpires > 0 {
+		secs := int(c.sessionExpires.Seconds())
+		r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", secs, c.sessionRefresher)))
+		// Add Supported: timer to indicate we support session timers
+		r.AppendHeader(sip.NewHeader("Supported", "timer"))
+	}
+
 	for k, v := range headers {
 		r.AppendHeader(sip.NewHeader(k, v))
 	}

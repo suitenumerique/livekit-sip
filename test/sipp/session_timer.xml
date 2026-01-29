@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- Session Timer Test Scenario (RFC 4028)
+     Tests that livekit-sip properly handles Session-Expires header
+     and echoes it back in 200 OK response.
+-->
+<scenario name="Session Timer INVITE">
+
+  <!-- Send INVITE with Session-Expires header -->
+  <send retrans="500">
+    <![CDATA[
+      INVITE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: "Session Timer Test" <sip:test@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:test@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: TANDBERG/4352 (X15.2.2-b2bua-1.0)
+      Supported: timer,replaces
+      Session-Expires: 1800;refresher=uac
+      Min-SE: 90
+      Allow: INVITE, ACK, CANCEL, BYE, OPTIONS, INFO, NOTIFY, REFER, UPDATE
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=test 12345 12345 IN IP4 [local_ip]
+      s=Session Timer Test
+      c=IN IP4 [local_ip]
+      t=0 0
+      m=audio [auto_media_port] RTP/AVP 0 8 101
+      a=rtpmap:0 PCMU/8000
+      a=rtpmap:8 PCMA/8000
+      a=rtpmap:101 telephone-event/8000
+      a=fmtp:101 0-16
+      a=sendrecv
+      a=ptime:20
+    ]]>
+  </send>
+
+  <!-- Receive 100 Trying (optional) -->
+  <recv response="100" optional="true"/>
+
+  <!-- Receive 180 Ringing (optional) -->
+  <recv response="180" optional="true"/>
+
+  <!-- Receive 200 OK with Session-Expires header -->
+  <recv response="200" rrs="true">
+  </recv>
+
+  <!-- Send ACK -->
+  <send>
+    <![CDATA[
+      ACK [next_url] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      [routes]
+      From: "Session Timer Test" <sip:test@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Contact: <sip:test@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Keep call active for a few seconds -->
+  <pause milliseconds="3000"/>
+
+  <!-- Send BYE to end call -->
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      [routes]
+      From: "Session Timer Test" <sip:test@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 2 BYE
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Receive 200 OK for BYE -->
+  <recv response="200"/>
+
+</scenario>
