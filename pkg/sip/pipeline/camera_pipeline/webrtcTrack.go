@@ -160,13 +160,9 @@ func (wt *WebrtcTrack) keyframeProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.P
 	isKeyframe := !buffer.HasFlags(gst.BufferFlagDeltaUnit)
 
 	if isKeyframe {
-		if !wt.HasKeyframe {
-			wt.log.Infow("[SWITCH_DEBUG] First keyframe received on track", "ssrc", wt.SSRC)
-		}
 		wt.HasKeyframe = true
 
 		if pendingSSRC == wt.SSRC {
-			wt.log.Infow("[SWITCH_DEBUG] Keyframe detected, executing switch", "ssrc", wt.SSRC)
 			buffer.SetFlags(gst.BufferFlagDiscont)
 			wt.parent.pipeline.onTrackKeyframe(wt.SSRC)
 		}
@@ -178,7 +174,6 @@ func (wt *WebrtcTrack) keyframeProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.P
 	return gst.PadProbeOK
 }
 
-// queueOutputProbe drops P-frames exiting queue before keyframe is seen.
 func (wt *WebrtcTrack) queueOutputProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 	buffer := info.GetBuffer()
 	if buffer == nil {
@@ -192,14 +187,9 @@ func (wt *WebrtcTrack) queueOutputProbe(pad *gst.Pad, info *gst.PadProbeInfo) gs
 	isKeyframe := !buffer.HasFlags(gst.BufferFlagDeltaUnit)
 
 	if isKeyframe {
-		if !wt.SeenKeyframeInQueue {
-			wt.log.Infow("[SWITCH_DEBUG] First keyframe exiting queue after switch", "ssrc", wt.SSRC)
-		}
 		wt.SeenKeyframeInQueue = true
 
-		// Clear pending switch if keyframe was already buffered in queue
 		if wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC {
-			wt.log.Infow("[SWITCH_DEBUG] Clearing pending switch - keyframe in queue", "ssrc", wt.SSRC)
 			wt.parent.pipeline.pendingSwitchSSRC = 0
 		}
 
@@ -207,7 +197,6 @@ func (wt *WebrtcTrack) queueOutputProbe(pad *gst.Pad, info *gst.PadProbeInfo) gs
 	}
 
 	if !wt.SeenKeyframeInQueue {
-		wt.log.Debugw("[SWITCH_DEBUG] Dropping stale P-frame from queue", "ssrc", wt.SSRC)
 		return gst.PadProbeDrop
 	}
 

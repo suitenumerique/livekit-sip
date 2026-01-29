@@ -17,15 +17,24 @@ const VirtualClientUserID uint16 = 65534
 // ContentFloorID is the default floor ID for screenshare/content
 const ContentFloorID uint16 = 1
 
+// BFCPTransport specifies the BFCP transport protocol
+type BFCPTransport int
+
+const (
+	BFCPTransportTCP BFCPTransport = iota // TCP transport (RFC 4582) - used by Poly
+	BFCPTransportUDP                      // UDP transport (RFC 8855) - used by Cisco
+)
+
 type BFCPManager struct {
-	mu     sync.Mutex
-	log    logger.Logger
-	opts   *MediaOptions
-	ctx    context.Context
-	cancel context.CancelFunc
-	config *bfcp.ServerConfig
-	server *bfcp.Server
-	addr   netip.AddrPort
+	mu        sync.Mutex
+	log       logger.Logger
+	opts      *MediaOptions
+	ctx       context.Context
+	cancel    context.CancelFunc
+	config    *bfcp.ServerConfig
+	server    *bfcp.Server
+	addr      netip.AddrPort
+	transport BFCPTransport
 
 	// Track virtual client floor state (WebRTC side)
 	virtualFloorHeld bool
@@ -36,13 +45,14 @@ type BFCPManager struct {
 	OnFloorReleased func(floorID, userID uint16)
 }
 
-func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions) *BFCPManager {
+func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, transport BFCPTransport) *BFCPManager {
 	ctx, cancel := context.WithCancel(ctx)
 	b := &BFCPManager{
-		log:    log.WithComponent("BFCPManager"),
-		ctx:    ctx,
-		cancel: cancel,
-		opts:   opts,
+		log:       log.WithComponent("BFCPManager"),
+		ctx:       ctx,
+		cancel:    cancel,
+		opts:      opts,
+		transport: transport,
 	}
 
 	config := bfcp.DefaultServerConfig("0.0.0.0:0", 1)
@@ -50,6 +60,16 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions) 
 	config.PortMax = opts.Ports.End
 	config.AutoGrant = true // Auto-grant floor requests for 1:1 calls
 	config.Logger = log.WithComponent("bfcp-server")
+
+	// Set transport type based on SDP offer (UDP for Cisco, TCP for Poly)
+	if transport == BFCPTransportUDP {
+		config.Transport = bfcp.TransportUDP
+		log.Infow("BFCP using UDP transport (RFC 8855)")
+	} else {
+		config.Transport = bfcp.TransportTCP
+		log.Infow("BFCP using TCP transport (RFC 4582)")
+	}
+
 	b.config = config
 
 	server := bfcp.NewServer(config)
@@ -72,11 +92,16 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions) 
 		b.server.Serve()
 	}()
 
-	b.log.Infow("BFCP server started", "addr", b.addr.String())
+	b.log.Infow("BFCP server started", "addr", b.addr.String(), "transport", transport)
 
 	b.setup()
 
 	return b
+}
+
+// Transport returns the BFCP transport type (TCP or UDP)
+func (b *BFCPManager) Transport() BFCPTransport {
+	return b.transport
 }
 
 func (b *BFCPManager) Close() error {

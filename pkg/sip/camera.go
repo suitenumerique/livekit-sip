@@ -146,7 +146,6 @@ func (cm *CameraManager) SwitchActiveWebrtcTrack(sid string) (bool, error) {
 		cm.log.Debugw("no video track for active speaker", "sid", sid, "registeredTracks", len(cm.ssrcs))
 		return false, nil
 	}
-	cm.log.Infow("[SWITCH_DEBUG] Switch requested from orchestrator", "sid", sid, "ssrc", ssrc)
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 

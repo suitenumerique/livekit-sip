@@ -9,18 +9,12 @@ import (
 )
 
 func (o *MediaOrchestrator) LocalParticipantReady(p *lksdk.LocalParticipant) error {
-	o.log.Infow("[VIDEO_DEBUG] LocalParticipantReady called",
-		"state", o.state.String(),
-		"participant", p.Identity(),
-		"sid", p.SID())
 	if err := o.okStates(MediaStateReady); err != nil {
-		o.log.Errorw("[VIDEO_DEBUG] LocalParticipantReady state check failed", err, "state", o.state.String())
 		return err
 	}
 	if err := o.tracks.ParticipantReady(p); err != nil {
 		return fmt.Errorf("could not set participant ready: %w", err)
 	}
-	o.log.Infow("[VIDEO_DEBUG] LocalParticipantReady completed successfully")
 	return nil
 }
 
@@ -114,16 +108,11 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 		return nil
 	}
 
-	// Try each speaker until we find one with a video track
-	for i, speaker := range p {
+	for _, speaker := range p {
 		sid := speaker.SID()
-		if i == 0 {
-			o.log.Infow("[SWITCH_DEBUG] Active speaker changed", "sid", sid, "totalSpeakers", len(p))
-		}
-
 		switched, err := o.camera.SwitchActiveWebrtcTrack(sid)
 		if err != nil {
-			o.log.Warnw("[SWITCH_DEBUG] Could not switch active webrtc track", err, "sid", sid)
+			o.log.Warnw("could not switch active webrtc track", err, "sid", sid)
 			return nil
 		}
 		if switched {

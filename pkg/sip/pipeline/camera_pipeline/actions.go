@@ -182,15 +182,10 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 	}
 	isActive := activePadName == trackPadName && trackPadName != ""
 
-	cp.Log().Infow("[SWITCH_DEBUG] Removing track", "ssrc", ssrc,
-		"isActive", isActive, "activePad", activePadName, "trackPad", trackPadName)
-
 	if cp.pendingSwitchSSRC == ssrc {
-		cp.Log().Infow("[SWITCH_DEBUG] Clearing pending switch for removed track", "ssrc", ssrc)
 		cp.pendingSwitchSSRC = 0
 	}
 
-	// Find another track to switch to if removing the active one
 	var newTrack *WebrtcTrack
 	if isActive {
 		for s, t := range cp.WebrtcIo.Tracks {
@@ -201,15 +196,7 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 		}
 	}
 
-	if isActive && newTrack == nil {
-		cp.Log().Warnw("[SWITCH_DEBUG] Active track leaving but no alternate track found!",
-			nil, "ssrc", ssrc, "totalTracks", len(cp.WebrtcIo.Tracks))
-	}
 	if isActive && newTrack != nil {
-		cp.Log().Infow("[SWITCH_DEBUG] Active track leaving, switching to alternate",
-			"oldSsrc", ssrc, "newSsrc", newTrack.SSRC)
-
-		// Switch immediately but drop P-frames until keyframe arrives
 		newTrack.SeenKeyframeInQueue = false
 		cp.pendingSwitchSSRC = newTrack.SSRC
 		cp.switchStartTime = time.Now()
@@ -233,85 +220,60 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 	return nil
 }
 
-// SwitchWebrtcInput performs a keyframe-aware switch to a new track.
 func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
-	cp.Log().Infow("[SWITCH_DEBUG] === SWITCH REQUESTED ===", "targetSSRC", ssrc)
-
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok {
-		cp.Log().Errorw("[SWITCH_DEBUG] Track not found", nil, "ssrc", ssrc)
 		return fmt.Errorf("webrtc track with ssrc %d not found", ssrc)
 	}
 
 	if track.SelPad == nil {
-		cp.Log().Debugw("[SWITCH_DEBUG] Track not fully set up yet", "ssrc", ssrc)
 		return nil
 	}
 
 	if cp.isActiveTrack(ssrc) {
-		cp.Log().Infow("[SWITCH_DEBUG] Already on target track", "ssrc", ssrc)
 		return nil
 	}
 
 	if cp.pendingSwitchSSRC == ssrc {
-		cp.Log().Infow("[SWITCH_DEBUG] Switch already pending for this target", "ssrc", ssrc)
 		return nil
 	}
 
-	cp.Log().Infow("[SWITCH_DEBUG] Requesting keyframe, will switch on arrival",
-		"ssrc", ssrc, "hasEverReceivedKeyframe", track.HasKeyframe)
 	cp.pendingSwitchSSRC = ssrc
 	cp.switchStartTime = time.Now()
 	cp.lastPLITime = time.Now()
 
 	if err := cp.RequestTrackKeyframe(track); err != nil {
-		cp.Log().Warnw("[SWITCH_DEBUG] Failed to request keyframe", err, "ssrc", ssrc)
+		cp.Log().Warnw("failed to request keyframe", err, "ssrc", ssrc)
 	}
 
 	return nil
 }
 
-// onTrackKeyframe completes a pending switch when keyframe arrives from target track.
 func (cp *CameraPipeline) onTrackKeyframe(ssrc uint32) {
 	if cp.pendingSwitchSSRC == 0 || cp.pendingSwitchSSRC != ssrc {
 		return
 	}
 
-	cp.Log().Infow("[SWITCH_DEBUG] Keyframe arrived for pending switch",
-		"ssrc", ssrc,
-		"waitDuration", time.Since(cp.switchStartTime))
-
 	if err := cp.executeSwitch(ssrc); err != nil {
-		cp.Log().Errorw("[SWITCH_DEBUG] Switch execution failed", err, "ssrc", ssrc)
+		cp.Log().Errorw("switch execution failed", err, "ssrc", ssrc)
 	}
 }
 
-// checkPLIRetry retries PLI requests while waiting for keyframe.
 func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
 	if cp.pendingSwitchSSRC != ssrc {
 		return
 	}
 
-	elapsed := time.Since(cp.switchStartTime)
-
 	if time.Since(cp.lastPLITime) >= PLIRetryInterval {
 		if track, ok := cp.WebrtcIo.Tracks[ssrc]; ok {
-			cp.Log().Infow("[SWITCH_DEBUG] Retrying PLI request",
-				"ssrc", ssrc, "elapsed", elapsed)
 			cp.lastPLITime = time.Now()
 			if err := cp.RequestTrackKeyframe(track); err != nil {
-				cp.Log().Warnw("[SWITCH_DEBUG] Failed to retry PLI", err, "ssrc", ssrc)
+				cp.Log().Warnw("failed to retry PLI", err, "ssrc", ssrc)
 			}
 		}
 	}
-
-	if elapsed > MaxKeyframeWaitTime && int(elapsed/time.Second) != int((elapsed-PLIRetryInterval)/time.Second) {
-		cp.Log().Warnw("[SWITCH_DEBUG] Still waiting for keyframe", nil,
-			"ssrc", ssrc, "waitDuration", elapsed)
-	}
 }
 
-// executeSwitch performs the actual InputSelector switch and resets decoder/encoder state.
 func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok {
@@ -321,10 +283,6 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	if track.SelPad == nil {
 		return fmt.Errorf("track %d has no selector pad", ssrc)
 	}
-
-	oldPad := cp.getActivePadName()
-	cp.Log().Infow("[SWITCH_DEBUG] Executing switch",
-		"ssrc", ssrc, "oldPad", oldPad, "newPad", track.SelPad.GetName())
 
 	track.SeenKeyframeInQueue = false
 
@@ -336,7 +294,6 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	cp.ResetX264Encoder()
 	cp.pendingSwitchSSRC = 0
 
-	cp.Log().Infow("[SWITCH_DEBUG] === SWITCH COMPLETE ===", "ssrc", ssrc)
 	return nil
 }
 
@@ -401,19 +358,13 @@ func (cp *CameraPipeline) DirtySwitchWebrtcInput(ssrc uint32) error {
 	return nil
 }
 
-// RequestTrackKeyframe sends RTCP PLI to request keyframe from WebRTC sender.
 func (cp *CameraPipeline) RequestTrackKeyframe(wt *WebrtcTrack) error {
-	cp.Log().Infow("[SWITCH_DEBUG] Requesting keyframe via RTCP PLI", "ssrc", wt.SSRC)
-
 	if wt.RequestKeyframe != nil {
 		if err := wt.RequestKeyframe(); err != nil {
-			cp.Log().Warnw("[SWITCH_DEBUG] Failed to send PLI", err, "ssrc", wt.SSRC)
+			cp.Log().Warnw("failed to send PLI", err, "ssrc", wt.SSRC)
 			return err
 		}
-	} else {
-		cp.Log().Warnw("[SWITCH_DEBUG] No keyframe request callback available", nil, "ssrc", wt.SSRC)
 	}
-
 	return nil
 }
 
@@ -456,10 +407,7 @@ func (cp *CameraPipeline) doRequestSipKeyframe() {
 	}
 }
 
-// ForceKeyframeOnEncoder sends GstForceKeyUnit event to x264enc.
 func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
-	cp.Log().Infow("[SWITCH_DEBUG] Forcing keyframe on x264enc encoder")
-
 	fkuStruct := gst.NewStructure("GstForceKeyUnit")
 	runtime.SetFinalizer(fkuStruct, nil)
 	fkuStruct.SetValue("running-time", gst.ClockTimeNone)
@@ -473,44 +421,28 @@ func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 		return fmt.Errorf("x264enc sink pad not found")
 	}
 
-	if !sinkPad.SendEvent(fkuEvent) {
-		cp.Log().Warnw("[SWITCH_DEBUG] Failed to send GstForceKeyUnit event", nil)
-	}
-
+	sinkPad.SendEvent(fkuEvent)
 	return nil
 }
 
-// ResetVp8Decoder resets the VP8 decoder state for track switching.
 func (cp *CameraPipeline) ResetVp8Decoder() {
-	cp.Log().Infow("[SWITCH_DEBUG] Resetting VP8 decoder for track switch")
 }
 
-// ResetX264Encoder resets the x264 encoder state and forces an I-frame.
 func (cp *CameraPipeline) ResetX264Encoder() {
-	cp.Log().Infow("[SWITCH_DEBUG] Resetting x264 encoder for track switch")
-	if err := cp.ForceKeyframeOnEncoder(); err != nil {
-		cp.Log().Warnw("[SWITCH_DEBUG] Failed to force encoder keyframe", err)
-	}
+	cp.ForceKeyframeOnEncoder()
 }
 
-// FlushVp8Decoder sends flush events to VP8 decoder (may cause pipeline stalls).
 func (cp *CameraPipeline) FlushVp8Decoder() error {
-	cp.Log().Infow("[SWITCH_DEBUG] Flushing VP8 decoder")
-
 	sinkPad := cp.WebrtcToSip.Vp8Dec.GetStaticPad("sink")
 	if sinkPad == nil {
 		return fmt.Errorf("vp8dec sink pad not found")
 	}
 
 	flushStart := gst.NewFlushStartEvent()
-	if !sinkPad.SendEvent(flushStart) {
-		cp.Log().Warnw("[SWITCH_DEBUG] Failed to send flush-start event", nil)
-	}
+	sinkPad.SendEvent(flushStart)
 
 	flushStop := gst.NewFlushStopEvent(true)
-	if !sinkPad.SendEvent(flushStop) {
-		cp.Log().Warnw("[SWITCH_DEBUG] Failed to send flush-stop event", nil)
-	}
+	sinkPad.SendEvent(flushStop)
 
 	return nil
 }

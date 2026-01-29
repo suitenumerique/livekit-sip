@@ -229,15 +229,10 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 				resolve.Resolve()
 			}
 			cb := r.callbackHandler.Load()
-			r.log.Infow("[VIDEO_DEBUG] Room ready, calling LocalParticipantReady callback",
-				"hasCallback", cb != nil,
-				"hasRoom", r.room != nil)
 			if cb != nil {
 				if err := (*cb).LocalParticipantReady(r.room.LocalParticipant); err != nil {
 					r.log.Errorw("local participant ready callback error", err)
 				}
-			} else {
-				r.log.Warnw("[VIDEO_DEBUG] No callback set when room became ready", nil)
 			}
 		case <-r.stopped.Watch():
 			resolve.Resolve()

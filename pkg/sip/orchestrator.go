@@ -130,22 +130,8 @@ func (o *MediaOrchestrator) init(room *Room) error {
 	}
 	o.screenshare = screenshare
 
-	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts)
-
-	// Wire up BFCP callbacks to screenshare
-	if o.bfcp != nil {
-		o.bfcp.OnFloorGranted = func(floorID, userID uint16) {
-			// Track when floor is granted (either to us or Poly)
-			if userID == VirtualClientUserID {
-				o.screenshare.SetFloorHeld(true)
-			}
-		}
-		o.bfcp.OnFloorReleased = func(floorID, userID uint16) {
-			if userID == VirtualClientUserID {
-				o.screenshare.SetFloorHeld(false)
-			}
-		}
-	}
+	// BFCP manager is created lazily in setupBFCP() when we receive the SDP offer,
+	// so we can determine the correct transport (TCP for Poly, UDP for Cisco)
 
 	// Wire up screenshare lifecycle to BFCP floor control
 	o.screenshare.OnScreenshareStarted = func() {
@@ -345,6 +331,12 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 
 	builder.SetAddress(o.opts.IP)
 
+	// Copy MLineOrder from offer to preserve RFC 3264 compliant m-line ordering in answer
+	if o.sdp != nil && len(o.sdp.MLineOrder) > 0 {
+		builder.SetMLineOrder(o.sdp.MLineOrder)
+		builder.SetUnknownMedia(o.sdp.UnknownMedia)
+	}
+
 	// audio is required anyway
 	builder.SetAudio(func(b *sdpv2.SDPMediaBuilder) (*sdpv2.SDPMedia, error) {
 		codec := o.audioinfo.Codec()
@@ -371,11 +363,17 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 	if bfcp && o.bfcp != nil {
 		if screenshare {
 			builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
+				// Use the same protocol as the offer (UDP for Cisco, TCP for Poly)
+				proto := sdpv2.BfcpProtoTCP
+				if o.sdp != nil && o.sdp.BFCP != nil {
+					proto = o.sdp.BFCP.Proto
+				}
+
 				return b.
 					SetPort(o.bfcp.Port()).
 					SetConnectionAddr(o.opts.IP).
 					SetConnection(sdpv2.BfcpConnectionNew).
-					SetProto(sdpv2.BfcpProtoTCP).
+					SetProto(proto).
 					SetFloorCtrl(sdpv2.BfcpFloorCtrlServer).
 					SetSetup(sdpv2.BfcpSetupPassive).
 					SetConfID(o.bfcp.config.ConferenceID).
@@ -451,6 +449,11 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 		return fmt.Errorf("could not reconcile video sdp: %w", err)
 	}
 
+	// Setup BFCP manager if the offer includes BFCP
+	if sdp.BFCP != nil && o.bfcp == nil {
+		o.setupBFCP(sdp.BFCP)
+	}
+
 	// Reconcile screenshare when BFCP is present
 	if sdp.BFCP != nil && o.screenshare != nil {
 		o.log.Debugw("reconciling screenshare")
@@ -468,6 +471,35 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 	}
 
 	return nil
+}
+
+// setupBFCP creates the BFCP manager with the transport type from the SDP offer
+func (o *MediaOrchestrator) setupBFCP(bfcpOffer *sdpv2.SDPBfcp) {
+	// Determine transport type from the offer's protocol
+	transport := BFCPTransportTCP
+	if bfcpOffer.Proto == sdpv2.BfcpProtoUDP {
+		transport = BFCPTransportUDP
+		o.log.Infow("BFCP offer uses UDP transport (Cisco-style)")
+	} else {
+		o.log.Infow("BFCP offer uses TCP transport (Poly-style)")
+	}
+
+	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts, transport)
+
+	// Wire up BFCP callbacks to screenshare
+	if o.bfcp != nil {
+		o.bfcp.OnFloorGranted = func(floorID, userID uint16) {
+			// Track when floor is granted (either to us or the remote)
+			if userID == VirtualClientUserID {
+				o.screenshare.SetFloorHeld(true)
+			}
+		}
+		o.bfcp.OnFloorReleased = func(floorID, userID uint16) {
+			if userID == VirtualClientUserID {
+				o.screenshare.SetFloorHeld(false)
+			}
+		}
+	}
 }
 
 func (o *MediaOrchestrator) start() error {

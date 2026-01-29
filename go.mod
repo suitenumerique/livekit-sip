@@ -35,7 +35,7 @@ require (
 	github.com/go-gst/go-glib v1.4.0 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/nyaruka/phonenumbers v1.6.5 // indirect
-	github.com/vopenia-io/bfcp v0.0.0-20260106152849-944e9ca02450 // indirect
+	github.com/vopenia-io/bfcp v0.0.0-20260129151813-729c42f5d58a // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.37.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
