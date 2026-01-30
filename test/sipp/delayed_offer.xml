@@ -33,15 +33,21 @@
   <!-- Receive 180 Ringing (optional) -->
   <recv response="180" optional="true"/>
 
-  <!-- Receive 200 OK with SDP offer from server -->
+  <!-- Receive 200 OK with SDP offer from server - verify telephone-event is present -->
   <recv response="200" rrs="true">
+    <action>
+      <!-- Verify telephone-event codec is present in the SDP offer -->
+      <ereg regexp="a=rtpmap:[0-9]+ telephone-event/8000" search_in="body" check_it="true" assign_to="dtmf_check"/>
+      <log message="DTMF check: [$dtmf_check]"/>
+    </action>
   </recv>
 
-  <!-- Send ACK with SDP answer -->
+  <!-- Send ACK with SDP answer - use [routes] to follow Record-Route through proxy -->
   <send>
     <![CDATA[
       ACK [next_url] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      [routes]
       From: "CISCO Test" <sip:cisco@[local_ip]:[local_port]>;tag=[call_number]
       To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
       Call-ID: [call_id]
@@ -69,11 +75,12 @@
   <!-- Keep call active for a few seconds -->
   <pause milliseconds="5000"/>
 
-  <!-- Send BYE to end call -->
+  <!-- Send BYE to end call - use [routes] to follow Record-Route through proxy -->
   <send retrans="500">
     <![CDATA[
       BYE [next_url] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      [routes]
       From: "CISCO Test" <sip:cisco@[local_ip]:[local_port]>;tag=[call_number]
       To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
       Call-ID: [call_id]

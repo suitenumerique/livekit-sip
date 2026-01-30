@@ -346,13 +346,17 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 					return c, nil
 				}, false)
 			}
+			// Add DTMF codec for delayed offer scenarios (no existing SDP to copy from)
+			b.AddDTMFCodec()
 		} else {
 			b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
 				return codec, nil
 			}, true)
-			// Always copy DTMF codec from offer if present
+			// Copy DTMF codec from offer if present, otherwise add it
 			if o.sdp != nil {
 				b.CopyDTMFCodec(o.sdp.Audio)
+			} else {
+				b.AddDTMFCodec()
 			}
 		}
 		return b.
