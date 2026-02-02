@@ -1,14 +1,12 @@
 package sip
 
 import (
-	"os"
-
 	"github.com/livekit/protocol/logger"
 
 	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
 )
 
-var sipSDPDebug = os.Getenv("SIP_SDP_DEBUG") == "true"
+var sipSDPDebug = true
 
 func logSDPOffer(log logger.Logger, offer *sdpv2.SDP) {
 	if !sipSDPDebug {
