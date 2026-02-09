@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -369,8 +370,14 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
 				// Use the same protocol as the offer (UDP for Cisco, TCP for Poly)
 				proto := sdpv2.BfcpProtoTCP
+				// Use Reverse() for setup role:
+				// - passive → active (we connect to them, e.g., AVer)
+				// - actpass → passive (they connect to us, e.g., Poly/Cisco)
+				// - active → passive (they connect to us)
+				setup := sdpv2.BfcpSetupPassive
 				if o.sdp != nil && o.sdp.BFCP != nil {
 					proto = o.sdp.BFCP.Proto
+					setup = o.sdp.BFCP.Setup.Reverse()
 				}
 
 				return b.
@@ -379,7 +386,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 					SetConnection(sdpv2.BfcpConnectionNew).
 					SetProto(proto).
 					SetFloorCtrl(sdpv2.BfcpFloorCtrlServer).
-					SetSetup(sdpv2.BfcpSetupPassive).
+					SetSetup(setup).
 					SetConfID(o.bfcp.config.ConferenceID).
 					SetUserID(1).
 					SetFloorID(ContentFloorID).
@@ -533,7 +540,7 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 
 	// Setup BFCP manager if the offer includes BFCP
 	if sdp.BFCP != nil && o.bfcp == nil {
-		o.setupBFCP(sdp.BFCP)
+		o.setupBFCP(sdp.BFCP, sdp.Addr)
 	}
 
 	// Reconcile screenshare when BFCP is present
@@ -556,7 +563,7 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 }
 
 // setupBFCP creates the BFCP manager with the transport type from the SDP offer
-func (o *MediaOrchestrator) setupBFCP(bfcpOffer *sdpv2.SDPBfcp) {
+func (o *MediaOrchestrator) setupBFCP(bfcpOffer *sdpv2.SDPBfcp, sessionAddr netip.Addr) {
 	// Determine transport type from the offer's protocol
 	transport := BFCPTransportTCP
 	if bfcpOffer.Proto == sdpv2.BfcpProtoUDP {
@@ -566,7 +573,8 @@ func (o *MediaOrchestrator) setupBFCP(bfcpOffer *sdpv2.SDPBfcp) {
 		o.log.Infow("BFCP offer uses TCP transport (Poly-style)")
 	}
 
-	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts, transport)
+	// Pass the BFCP offer to determine active/passive mode
+	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts, transport, bfcpOffer, sessionAddr)
 
 	// Wire up BFCP callbacks to screenshare
 	if o.bfcp != nil {
@@ -599,6 +607,15 @@ func (o *MediaOrchestrator) start() error {
 		if err := o.screenshare.Start(); err != nil {
 			o.log.Errorw("could not start screenshare", err)
 			return fmt.Errorf("could not start screenshare: %w", err)
+		}
+	}
+
+	// Connect to remote BFCP server if we're in active mode (e.g., AVer)
+	// This is done after SDP exchange is complete
+	if o.bfcp != nil {
+		if err := o.bfcp.ConnectToRemote(); err != nil {
+			o.log.Warnw("failed to connect to remote BFCP server", err)
+			// Non-fatal - continue anyway, screenshare may still work
 		}
 	}
 
