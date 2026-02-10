@@ -80,8 +80,9 @@ type MediaOrchestrator struct {
 	tracks      *TrackManager
 	bfcp        *BFCPManager
 
-	sdp   *sdpv2.SDP
-	state MediaState
+	sdp             *sdpv2.SDP
+	delayedOfferSDP *sdpv2.SDP // SDP offer sent in 200 OK for delayed offer calls
+	state           MediaState
 }
 
 func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipInbound, room *Room, audioinfo AudioInfo, opts *MediaOptions) (*MediaOrchestrator, error) {
@@ -131,8 +132,7 @@ func (o *MediaOrchestrator) init(room *Room) error {
 	}
 	o.screenshare = screenshare
 
-	// BFCP manager is created lazily in setupBFCP() when we receive the SDP offer,
-	// so we can determine the correct transport (TCP for Poly, UDP for Cisco)
+	// BFCP manager is created lazily in setupBFCP() once we know the transport from SDP
 
 	// Wire up screenshare lifecycle to BFCP floor control
 	o.screenshare.OnScreenshareStarted = func() {
@@ -296,7 +296,6 @@ func (o *MediaOrchestrator) answerSDP(offer *sdpv2.SDP) (*sdpv2.SDP, error) {
 		o.log.Debugw("selected video codec", "codec", offer.Video.Codec)
 	}
 
-	// Select screenshare codec if present
 	if offer.Screenshare != nil {
 		if err := offer.Screenshare.SelectCodec(); err != nil {
 			return nil, fmt.Errorf("could not select screenshare codec: %w", err)
@@ -332,7 +331,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 
 	builder.SetAddress(o.opts.IP)
 
-	// Copy MLineOrder from offer to preserve RFC 3264 compliant m-line ordering in answer
+	// Copy m-line ordering from the remote offer (RFC 3264)
 	if o.sdp != nil && len(o.sdp.MLineOrder) > 0 {
 		builder.SetMLineOrder(o.sdp.MLineOrder)
 		builder.SetUnknownMedia(o.sdp.UnknownMedia)
@@ -347,7 +346,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 					return c, nil
 				}, false)
 			}
-			// Add DTMF codec for delayed offer scenarios (no existing SDP to copy from)
+			// Add DTMF codec when no existing SDP is available
 			b.AddDTMFCodec()
 		} else {
 			b.AddCodec(func(_ *sdpv2.CodecBuilder) (*sdpv2.Codec, error) {
@@ -368,12 +367,10 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 	if bfcp && o.bfcp != nil {
 		if screenshare {
 			builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
-				// Use the same protocol as the offer (UDP for Cisco, TCP for Poly)
-				proto := sdpv2.BfcpProtoTCP
-				// Use Reverse() for setup role:
-				// - passive → active (we connect to them, e.g., AVer)
-				// - actpass → passive (they connect to us, e.g., Poly/Cisco)
-				// - active → passive (they connect to us)
+				proto := sdpv2.BfcpProtoUDP
+				if o.bfcp.transport == BFCPTransportTCP {
+					proto = sdpv2.BfcpProtoTCP
+				}
 				setup := sdpv2.BfcpSetupPassive
 				if o.sdp != nil && o.sdp.BFCP != nil {
 					proto = o.sdp.BFCP.Proto
@@ -411,7 +408,6 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 				}, true)
 			}
 			b.SetDisabled(o.camera.Status() < VideoStatusReady)
-			// b.SetDisabled(false)
 			b.SetRTPPort(uint16(o.camera.RtpPort()))
 			b.SetRTCPPort(uint16(o.camera.RtcpPort()))
 			b.SetDirection(o.camera.Direction())
@@ -419,8 +415,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 		})
 	}
 
-	// Add screenshare m=video line with content:slides when BFCP is present
-	if screenshare && o.screenshare != nil && o.screenshare.Status() >= VideoStatusReady {
+	if screenshare && o.screenshare != nil {
 		builder.SetScreenshare(func(b *sdpv2.SDPMediaBuilder) (*sdpv2.SDPMedia, error) {
 			codec := o.screenshare.Codec()
 			if codec == nil {
@@ -451,8 +446,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 	return offer, nil
 }
 
-// CreateOfferSDP generates an SDP offer for delayed offer scenarios (RFC 3261 - late media).
-// This is called when the remote sends INVITE without SDP, and we need to generate the offer.
+// CreateOfferSDP generates an SDP offer for delayed offer (INVITE without SDP).
 func (o *MediaOrchestrator) CreateOfferSDP() (offer *sdpv2.SDP, err error) {
 	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return nil, err
@@ -469,23 +463,101 @@ func (o *MediaOrchestrator) CreateOfferSDP() (offer *sdpv2.SDP, err error) {
 func (o *MediaOrchestrator) createOfferSDP() (*sdpv2.SDP, error) {
 	o.log.Debugw("creating offer sdp for delayed offer scenario")
 
-	// For delayed offer, we create an offer with audio only initially
-	// Video and BFCP can be negotiated via re-INVITE later
-	offer, err := o.offerSDP(false, false, false) // audio only for now
+	if o.bfcp == nil {
+		o.setupBFCP(nil, netip.Addr{})
+	}
+
+	offer, err := o.offerSDP(true, true, true)
 	if err != nil {
 		return nil, fmt.Errorf("could not create offer sdp: %w", err)
 	}
 
-	// Structured SDP offer logging (enabled via SIP_SDP_DEBUG=true)
-	logSDPOffer(o.log, offer)
+	// Set video to sendrecv with Cisco-compatible H264 codecs
+	if offer.Video != nil {
+		offer.Video.Disabled = false
+		offer.Video.Direction = sdpv2.DirectionSendRecv
+		setDelayedOfferH264Codecs(offer.Video)
+	}
 
-	o.log.Debugw("created offer sdp for delayed offer", "offer", offer)
+	if offer.Screenshare != nil {
+		setDelayedOfferH264Codecs(offer.Screenshare)
+	}
+
+	// Cisco 5-m-line layout: audio, video(main), BFCP, video(slides), H224(rejected)
+	offer.MLineOrder = []sdpv2.MLineType{
+		sdpv2.MLineAudio,
+		sdpv2.MLineVideo,
+		sdpv2.MLineBFCP,
+		sdpv2.MLineScreenshare,
+		sdpv2.MLineUnknown,
+	}
+	offer.UnknownMedia = []*sdpv2.SDPMedia{{
+		Kind:      sdpv2.MediaKindApplication,
+		Disabled:  true,
+		Port:      0,
+		Direction: sdpv2.DirectionInactive,
+		Codecs: []*sdpv2.Codec{{
+			PayloadType: 0,
+			Name:        "PCMU/8000",
+		}},
+	}}
+
+	o.delayedOfferSDP = offer
+
+	logSDPOffer(o.log, offer)
 
 	return offer, nil
 }
 
+// setDelayedOfferH264Codecs replaces video codecs with H264 packetization-mode=0 (PT 97)
+// and packetization-mode=1 (PT 126) using Cisco-compatible FMTP parameters.
+func setDelayedOfferH264Codecs(m *sdpv2.SDPMedia) {
+	fmtpBase := map[string]string{
+		"profile-level-id": "428016",
+		"max-fs":           "32400",
+		"max-mbps":         "490000",
+	}
+
+	// Replace existing codecs with both mode=0 and mode=1 variants
+	var codecs []*sdpv2.Codec
+	for _, c := range m.Codecs {
+		if c.ClockRate != 90000 {
+			codecs = append(codecs, c)
+			continue
+		}
+
+		// PT 97: packetization-mode=0
+		fmtp0 := make(map[string]string, len(fmtpBase)+1)
+		for k, v := range fmtpBase {
+			fmtp0[k] = v
+		}
+		fmtp0["packetization-mode"] = "0"
+		codecs = append(codecs, &sdpv2.Codec{
+			PayloadType: 97,
+			Name:        c.Name,
+			Codec:       c.Codec,
+			ClockRate:   c.ClockRate,
+			FMTP:        fmtp0,
+		})
+
+		// PT 126: packetization-mode=1
+		fmtp1 := make(map[string]string, len(fmtpBase)+1)
+		for k, v := range fmtpBase {
+			fmtp1[k] = v
+		}
+		fmtp1["packetization-mode"] = "1"
+		codecs = append(codecs, &sdpv2.Codec{
+			PayloadType: 126,
+			Name:        c.Name,
+			Codec:       c.Codec,
+			ClockRate:   c.ClockRate,
+			FMTP:        fmtp1,
+		})
+	}
+	m.Codecs = codecs
+}
+
 // ApplyAnswerSDP applies an SDP answer received in ACK for delayed offer scenarios.
-// This completes the media setup after the remote sends their answer.
 func (o *MediaOrchestrator) ApplyAnswerSDP(answer *sdpv2.SDP) error {
 	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return err
@@ -496,7 +568,55 @@ func (o *MediaOrchestrator) ApplyAnswerSDP(answer *sdpv2.SDP) error {
 }
 
 func (o *MediaOrchestrator) applyAnswerSDP(answer *sdpv2.SDP) error {
-	o.log.Debugw("applying answer sdp for delayed offer", "answer", answer)
+	o.log.Infow("delayed-offer: applying answer SDP",
+		"hasAudio", answer.Audio != nil,
+		"hasVideo", answer.Video != nil,
+		"hasScreenshare", answer.Screenshare != nil,
+		"hasBFCP", answer.BFCP != nil,
+		"mlineOrder", answer.MLineOrder,
+		"unknownCount", len(answer.UnknownMedia),
+		"addr", answer.Addr,
+	)
+
+	if answer.BFCP != nil {
+		o.log.Infow("delayed-offer: answer BFCP",
+			"port", answer.BFCP.Port,
+			"proto", answer.BFCP.Proto,
+			"setup", answer.BFCP.Setup,
+			"floorCtrl", answer.BFCP.FloorCtrl,
+			"confID", answer.BFCP.ConfID,
+			"disabled", answer.BFCP.Disabled,
+		)
+	}
+
+	if answer.Screenshare != nil {
+		o.log.Infow("delayed-offer: answer screenshare",
+			"port", answer.Screenshare.Port,
+			"content", answer.Screenshare.Content,
+			"direction", answer.Screenshare.Direction,
+			"disabled", answer.Screenshare.Disabled,
+			"codecCount", len(answer.Screenshare.Codecs),
+		)
+	}
+
+	if answer.Video != nil {
+		o.log.Infow("delayed-offer: answer video",
+			"port", answer.Video.Port,
+			"content", answer.Video.Content,
+			"direction", answer.Video.Direction,
+			"disabled", answer.Video.Disabled,
+			"codecCount", len(answer.Video.Codecs),
+		)
+	}
+
+	for i, um := range answer.UnknownMedia {
+		o.log.Infow("delayed-offer: unknown media",
+			"index", i,
+			"kind", um.Kind,
+			"port", um.Port,
+			"disabled", um.Disabled,
+		)
+	}
 
 	if answer.Audio == nil {
 		return fmt.Errorf("no audio in answer")
@@ -505,17 +625,28 @@ func (o *MediaOrchestrator) applyAnswerSDP(answer *sdpv2.SDP) error {
 	if err := answer.Audio.SelectCodec(); err != nil {
 		return fmt.Errorf("could not select audio codec from answer: %w", err)
 	}
-	o.log.Debugw("selected audio codec from answer", "codec", answer.Audio.Codec)
+	o.log.Infow("delayed-offer: selected audio codec", "codec", answer.Audio.Codec.Name, "pt", answer.Audio.Codec.PayloadType)
 
 	o.audioinfo.SetMedia(answer.Audio)
 	o.sdp = answer
 
-	// Setup video if present in answer
 	if answer.Video != nil {
 		if err := answer.Video.SelectCodec(); err != nil {
 			return fmt.Errorf("could not select video codec from answer: %w", err)
 		}
-		o.log.Debugw("selected video codec from answer", "codec", answer.Video.Codec)
+		o.log.Infow("delayed-offer: selected video codec", "codec", answer.Video.Codec.Name, "pt", answer.Video.Codec.PayloadType)
+	}
+
+	if answer.Screenshare != nil {
+		if err := answer.Screenshare.SelectCodec(); err != nil {
+			return fmt.Errorf("could not select screenshare codec from answer: %w", err)
+		}
+		o.log.Infow("delayed-offer: selected screenshare codec", "codec", answer.Screenshare.Codec.Name, "pt", answer.Screenshare.Codec.PayloadType)
+	}
+
+	// Override answer PTs with the PTs from our delayed offer
+	if o.delayedOfferSDP != nil {
+		o.remapDelayedOfferPayloadTypes(answer)
 	}
 
 	if err := o.setupSDP(answer); err != nil {
@@ -524,62 +655,104 @@ func (o *MediaOrchestrator) applyAnswerSDP(answer *sdpv2.SDP) error {
 	}
 
 	o.state = MediaStateReady
-	o.log.Debugw("delayed offer answer applied successfully")
+	o.log.Infow("delayed-offer: answer applied, state=Ready")
 
 	return nil
 }
 
-func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
-	o.log.Debugw("setting up sdp", "sdp", sdp)
+// remapDelayedOfferPayloadTypes overrides answer codec PTs with the matching
+// offer PTs, selecting by packetization-mode.
+func (o *MediaOrchestrator) remapDelayedOfferPayloadTypes(answer *sdpv2.SDP) {
+	offer := o.delayedOfferSDP
 
-	o.log.Debugw("reconciling camera")
+	remapPT := func(label string, answerMedia, offerMedia *sdpv2.SDPMedia) {
+		if answerMedia == nil || answerMedia.Codec == nil || offerMedia == nil || len(offerMedia.Codecs) == 0 {
+			return
+		}
+		// Match offer codec by packetization-mode
+		answerMode := answerMedia.Codec.FMTP["packetization-mode"]
+		offerPT := offerMedia.Codecs[0].PayloadType
+		for _, c := range offerMedia.Codecs {
+			if c.FMTP["packetization-mode"] == answerMode {
+				offerPT = c.PayloadType
+				break
+			}
+		}
+		if answerMedia.Codec.PayloadType != offerPT {
+			o.log.Infow("delayed-offer: remapping "+label+" PT",
+				"answerPT", answerMedia.Codec.PayloadType,
+				"offerPT", offerPT,
+				"packetizationMode", answerMode,
+			)
+			answerMedia.Codec.PayloadType = offerPT
+		}
+	}
+
+	remapPT("video", answer.Video, offer.Video)
+	remapPT("screenshare", answer.Screenshare, offer.Screenshare)
+}
+
+func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
+	o.log.Infow("setupSDP: reconciling camera",
+		"videoNil", sdp.Video == nil,
+		"cameraStatus", o.camera.Status(),
+	)
 	if _, err := o.camera.Reconcile(sdp.Addr, sdp.Video); err != nil {
 		o.log.Errorw("could not reconcile video sdp", err)
 		return fmt.Errorf("could not reconcile video sdp: %w", err)
 	}
+	o.log.Infow("setupSDP: camera reconciled", "cameraStatus", o.camera.Status())
 
-	// Setup BFCP manager if the offer includes BFCP
+	o.log.Infow("setupSDP: BFCP check",
+		"sdpBFCP", sdp.BFCP != nil,
+		"existingBFCP", o.bfcp != nil,
+	)
 	if sdp.BFCP != nil && o.bfcp == nil {
 		o.setupBFCP(sdp.BFCP, sdp.Addr)
 	}
 
-	// Reconcile screenshare when BFCP is present
-	if sdp.BFCP != nil && o.screenshare != nil {
-		o.log.Debugw("reconciling screenshare")
-		// Use sdp.Screenshare if available (from re-INVITE), otherwise use sdp.Video for codec info
+	// Reconcile screenshare when BFCP is active
+	bfcpAvailable := sdp.BFCP != nil || o.bfcp != nil
+	o.log.Infow("setupSDP: screenshare check",
+		"bfcpAvailable", bfcpAvailable,
+		"screenshareManager", o.screenshare != nil,
+		"sdpScreenshare", sdp.Screenshare != nil,
+		"sdpVideo", sdp.Video != nil,
+	)
+	if bfcpAvailable && o.screenshare != nil {
 		screenshareMedia := sdp.Screenshare
 		if screenshareMedia == nil {
-			// Initial INVITE: use video media for codec negotiation only
-			// The actual destination port won't be known until re-INVITE
 			screenshareMedia = sdp.Video
 		}
+		o.log.Infow("setupSDP: reconciling screenshare",
+			"usingScreenshareMedia", sdp.Screenshare != nil,
+			"mediaPort", screenshareMedia.Port,
+			"mediaContent", screenshareMedia.Content,
+			"mediaDirection", screenshareMedia.Direction,
+			"screenshareStatus", o.screenshare.Status(),
+		)
 		if _, err := o.screenshare.Reconcile(sdp.Addr, screenshareMedia); err != nil {
 			o.log.Errorw("could not reconcile screenshare sdp", err)
 			return fmt.Errorf("could not reconcile screenshare sdp: %w", err)
 		}
+		o.log.Infow("setupSDP: screenshare reconciled", "screenshareStatus", o.screenshare.Status())
+	} else {
+		o.log.Infow("setupSDP: screenshare reconciliation SKIPPED")
 	}
 
 	return nil
 }
 
-// setupBFCP creates the BFCP manager with the transport type from the SDP offer
 func (o *MediaOrchestrator) setupBFCP(bfcpOffer *sdpv2.SDPBfcp, sessionAddr netip.Addr) {
-	// Determine transport type from the offer's protocol
-	transport := BFCPTransportTCP
-	if bfcpOffer.Proto == sdpv2.BfcpProtoUDP {
-		transport = BFCPTransportUDP
-		o.log.Infow("BFCP offer uses UDP transport (Cisco-style)")
-	} else {
-		o.log.Infow("BFCP offer uses TCP transport (Poly-style)")
+	transport := BFCPTransportUDP
+	if bfcpOffer != nil && bfcpOffer.Proto != sdpv2.BfcpProtoUDP {
+		transport = BFCPTransportTCP
 	}
 
-	// Pass the BFCP offer to determine active/passive mode
 	o.bfcp = NewBFCPManager(o.ctx, o.log, o.opts, transport, bfcpOffer, sessionAddr)
 
-	// Wire up BFCP callbacks to screenshare
 	if o.bfcp != nil {
 		o.bfcp.OnFloorGranted = func(floorID, userID uint16) {
-			// Track when floor is granted (either to us or the remote)
 			if userID == VirtualClientUserID {
 				o.screenshare.SetFloorHeld(true)
 			}
@@ -593,33 +766,56 @@ func (o *MediaOrchestrator) setupBFCP(bfcpOffer *sdpv2.SDPBfcp, sessionAddr neti
 }
 
 func (o *MediaOrchestrator) start() error {
+	o.log.Infow("start: beginning",
+		"cameraStatus", o.camera.Status(),
+		"screenshareNil", o.screenshare == nil,
+		"bfcpNil", o.bfcp == nil,
+		"state", o.state,
+	)
+	if o.screenshare != nil {
+		o.log.Infow("start: screenshare state",
+			"status", o.screenshare.Status(),
+			"isReady", o.screenshare.IsReady(),
+			"isActive", o.screenshare.IsActive(),
+			"hasFloor", o.screenshare.HasFloor(),
+		)
+	}
+	if o.bfcp != nil {
+		o.log.Infow("start: BFCP state",
+			"transport", o.bfcp.transport,
+			"isActive", o.bfcp.isActive,
+			"port", o.bfcp.Port(),
+		)
+	}
+
 	if o.camera.Status() == VideoStatusReady {
-		o.log.Debugw("starting camera")
+		o.log.Infow("start: starting camera")
 		if err := o.camera.Start(); err != nil {
 			o.log.Errorw("could not start camera", err)
 			return fmt.Errorf("could not start camera: %w", err)
 		}
 	}
 
-	// Start screenshare if ready (BFCP was negotiated)
 	if o.screenshare != nil && o.screenshare.Status() == VideoStatusReady {
-		o.log.Debugw("starting screenshare")
+		o.log.Infow("start: starting screenshare")
 		if err := o.screenshare.Start(); err != nil {
 			o.log.Errorw("could not start screenshare", err)
 			return fmt.Errorf("could not start screenshare: %w", err)
 		}
+		o.log.Infow("start: screenshare started", "status", o.screenshare.Status())
+	} else if o.screenshare != nil {
+		o.log.Infow("start: screenshare NOT started", "status", o.screenshare.Status())
 	}
 
-	// Connect to remote BFCP server if we're in active mode (e.g., AVer)
-	// This is done after SDP exchange is complete
 	if o.bfcp != nil {
+		o.log.Infow("start: connecting BFCP to remote", "isActive", o.bfcp.isActive)
 		if err := o.bfcp.ConnectToRemote(); err != nil {
 			o.log.Warnw("failed to connect to remote BFCP server", err)
-			// Non-fatal - continue anyway, screenshare may still work
 		}
 	}
 
 	o.state = MediaStateStarted
+	o.log.Infow("start: complete, state=Started")
 	return nil
 }
 

@@ -988,7 +988,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			}
 		}
 
-		if !c.s.conf.Experimental.InboundWaitACK {
+		if !c.s.conf.Experimental.InboundWaitACK && !c.cc.IsDelayedOffer() {
 			ackReceived = c.cc.InviteACK()
 			// Start this timer right after the Accept.
 			ackTimeout = time.After(inviteOkAckLateTimeout)
@@ -1298,6 +1298,7 @@ func (c *inboundCall) runMediaConnDelayedOffer(tid traceid.ID, enc livekit.SIPMe
 // This is called for delayed offer scenarios (RFC 3261 - late media).
 func (c *inboundCall) completeDelayedOfferMedia(answerData []byte, features []livekit.SIPFeature) error {
 	c.log().Debugw("Completing delayed offer media setup", "answerLength", len(answerData))
+	c.log().Debugw("Raw SDP answer from ACK", "sdp", string(answerData))
 
 	// Parse the SDP answer
 	answer, err := sdpv2.NewSDP(answerData)
