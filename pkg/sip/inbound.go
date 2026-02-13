@@ -1017,9 +1017,11 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			return err // could be success if the caller hung up
 		}
 		disp, ok, err = c.pinPrompt(ctx, trunkID)
+		c.log().Infow("pinPrompt returned", "ok", ok, "err", err)
 		if !ok {
 			return err // already sent a response. Could be success if user hung up
 		}
+		c.log().Infow("pinPrompt accepted", "roomName", disp.Room.RoomName, "identity", disp.Room.Participant.Identity)
 	} else {
 		// Start media with given encryption settings.
 		var err error
@@ -1043,22 +1045,29 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	if pinPrompt {
 		status = CallActive
 	}
+	c.log().Infow("About to join room", "roomName", disp.Room.RoomName, "identity", disp.Room.Participant.Identity)
 	if err := c.joinRoom(ctx, disp.Room, status); err != nil {
+		c.log().Errorw("joinRoom failed", err, "roomName", disp.Room.RoomName)
 		return errors.Wrap(err, "failed joining room")
 	}
+	c.log().Infow("joinRoom succeeded")
 
 	// Publish our own track.
+	c.log().Infow("About to publish track")
 	if err := c.publishTrack(); err != nil {
 		c.log().Errorw("Cannot publish track", err)
 		c.close(true, callDropped, "publish-failed")
 		return errors.Wrap(err, "publishing track to room failed")
 	}
+	c.log().Infow("publishTrack succeeded")
 	c.lkRoom.Subscribe()
+	c.log().Infow("About to start media orchestrator")
 	if err := c.medias.Start(); err != nil {
 		c.log().Errorw("Cannot start media orchestrator", err)
 		c.close(true, callDropped, "media-start-failed")
 		return errors.Wrap(err, "starting media orchestrator failed")
 	}
+	c.log().Infow("Media orchestrator started successfully")
 	if !pinPrompt {
 		c.log().Infow("Waiting for track subscription(s)")
 		// For dispatches without pin, we first wait for LK participant to become available,

@@ -427,16 +427,19 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 	}
 	room := lksdk.NewRoom(roomCallback)
 	room.SetLogger(medialogutils.NewOverrideLogger(r.log))
+	r.log.Infow("Attempting JoinWithToken", "wsUrl", rconf.WsUrl, "roomName", rconf.RoomName, "identity", partConf.Identity)
 	err := room.JoinWithToken(rconf.WsUrl, rconf.Token,
 		lksdk.WithAutoSubscribe(false),
 		lksdk.WithExtraAttributes(partConf.Attributes),
 	)
 	if err != nil {
+		r.log.Errorw("JoinWithToken failed", err, "wsUrl", rconf.WsUrl, "roomName", rconf.RoomName)
 		return err
 	}
 	r.room = room
 	r.p.ID = r.room.LocalParticipant.SID()
 	r.p.Identity = r.room.LocalParticipant.Identity()
+	r.log.Infow("JoinWithToken succeeded", "participantSID", r.p.ID, "identity", r.p.Identity)
 	room.LocalParticipant.SetAttributes(partConf.Attributes)
 	r.ready.Break()
 	r.subscribe.Store(false) // already false, but keep for visibility
