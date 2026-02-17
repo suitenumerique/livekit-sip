@@ -246,6 +246,10 @@ func (r *testRoom) NewTrack() *mixer.Input {
 	return r.room.NewTrack()
 }
 
+func (r *testRoom) IsReady() bool {
+	return r.room.IsReady()
+}
+
 type testSIPClientTransaction struct {
 	responses chan *sip.Response
 	cancels   chan struct{}

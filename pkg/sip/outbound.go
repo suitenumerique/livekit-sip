@@ -932,7 +932,7 @@ func (c *sipOutbound) attemptInvite(ctx context.Context, callID sip.CallIDHeader
 	req.AppendHeader(c.contact)
 
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
-	req.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
+	req.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, UPDATE, SUBSCRIBE"))
 
 	if authHeader != "" {
 		req.AppendHeader(sip.NewHeader(authHeaderName, authHeader))

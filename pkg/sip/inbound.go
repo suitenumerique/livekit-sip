@@ -659,6 +659,29 @@ func (s *Server) onNotify(log *slog.Logger, req *sip.Request, tx sip.ServerTrans
 	}
 }
 
+func (s *Server) onUpdate(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+	tag, err := getFromTag(req)
+	if err != nil {
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "", nil))
+		return
+	}
+	s.cmu.RLock()
+	c := s.byRemoteTag[tag]
+	s.cmu.RUnlock()
+	if c != nil {
+		c.handleUpdate(req, tx)
+		return
+	}
+	ok := false
+	if s.sipUnhandled != nil {
+		ok = s.sipUnhandled(req, tx)
+	}
+	if !ok {
+		s.log.Infow("UPDATE for non-existent call", "sipTag", tag)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call does not exist", nil))
+	}
+}
+
 type inboundCall struct {
 	s           *Server
 	tid         traceid.ID
@@ -828,6 +851,33 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 	// No screenshare, accept as keep-alive with existing SDP
 	newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 	return nil
+}
+
+// handleUpdate processes in-dialog UPDATE requests for session timer refresh.
+func (c *inboundCall) handleUpdate(req *sip.Request, tx sip.ServerTransaction) {
+	c.log().Infow("UPDATE received")
+
+	// Parse and update session timer settings
+	if h := req.GetHeader("Session-Expires"); h != nil {
+		c.cc.ParseSessionTimers(req)
+	}
+
+	// Build 200 OK with session timer headers
+	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
+
+	c.cc.mu.RLock()
+	sessionExpires := c.cc.sessionExpires
+	sessionRefresher := c.cc.sessionRefresher
+	c.cc.mu.RUnlock()
+
+	if sessionExpires > 0 {
+		secs := int(sessionExpires.Seconds())
+		r.AppendHeader(sip.NewHeader("Session-Expires",
+			fmt.Sprintf("%d;refresher=%s", secs, sessionRefresher)))
+		r.AppendHeader(sip.NewHeader("Supported", "timer"))
+	}
+
+	_ = tx.Respond(r)
 }
 
 func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip.Request, trunkID string, conf *config.Config) error {
@@ -1031,6 +1081,21 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		}
 	}
 	p := &disp.Room.Participant
+
+	// Fallback identity/name when fromUser is empty (trunk calls via VCS/Expressway)
+	from := c.cc.From()
+	sipCallID := c.cc.SIPCallID()
+	if p.Identity == "sip_" || p.Identity == "" {
+		shortID := sipCallID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		p.Identity = fmt.Sprintf("sip_%s_%s", from.Host, shortID)
+	}
+	if p.Name == "Phone " || p.Name == "" {
+		p.Name = fmt.Sprintf("Phone %s", from.Host)
+	}
+
 	p.Attributes = HeadersToAttrs(p.Attributes, disp.HeadersToAttributes, disp.IncludeHeaders, c.cc, nil)
 	if disp.MaxCallDuration <= 0 || disp.MaxCallDuration > maxCallDuration {
 		disp.MaxCallDuration = maxCallDuration
@@ -1893,7 +1958,7 @@ func (c *sipInbound) respondWithData(status sip.StatusCode, reason string, conte
 	if typ := sip.ContentTypeHeader(contentType); typ != "" {
 		r.AppendHeader(&typ)
 	}
-	r.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
+	r.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, UPDATE, SUBSCRIBE"))
 	if status >= 200 {
 		// For an ACK to error statuses.
 		r.AppendHeader(c.contact)

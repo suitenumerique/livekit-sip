@@ -649,6 +649,11 @@ func (o *MediaOrchestrator) applyAnswerSDP(answer *sdpv2.SDP) error {
 		o.remapDelayedOfferPayloadTypes(answer)
 	}
 
+	// Fill missing BFCP answer fields from our delayed offer.
+	if answer.BFCP != nil && o.delayedOfferSDP != nil && o.delayedOfferSDP.BFCP != nil {
+		o.inferBFCPAnswerDefaults(answer.BFCP, o.delayedOfferSDP.BFCP)
+	}
+
 	if err := o.setupSDP(answer); err != nil {
 		o.log.Errorw("could not setup sdp from answer", err)
 		return fmt.Errorf("could not setup sdp from answer: %w", err)
@@ -690,6 +695,52 @@ func (o *MediaOrchestrator) remapDelayedOfferPayloadTypes(answer *sdpv2.SDP) {
 
 	remapPT("video", answer.Video, offer.Video)
 	remapPT("screenshare", answer.Screenshare, offer.Screenshare)
+}
+
+// inferBFCPAnswerDefaults fills missing BFCP answer fields from our offer
+// when the answer only contains floorctrl and a port.
+func (o *MediaOrchestrator) inferBFCPAnswerDefaults(answer *sdpv2.SDPBfcp, offer *sdpv2.SDPBfcp) {
+	if answer.FloorCtrl != sdpv2.BfcpFloorCtrlClient && answer.FloorCtrl != sdpv2.BfcpFloorCtrlBoth {
+		return
+	}
+
+	inferred := false
+
+	if answer.Setup == "" {
+		answer.Setup = sdpv2.BfcpSetupActive
+		inferred = true
+	}
+	if answer.Connection == "" {
+		answer.Connection = sdpv2.BfcpConnectionNew
+		inferred = true
+	}
+	if answer.ConfID == 0 && offer.ConfID != 0 {
+		answer.ConfID = offer.ConfID
+		inferred = true
+	}
+	if answer.FloorID == 0 && offer.FloorID != 0 {
+		answer.FloorID = offer.FloorID
+		inferred = true
+	}
+	if answer.MStreamID == 0 && offer.MStreamID != 0 {
+		answer.MStreamID = offer.MStreamID
+		inferred = true
+	}
+	if answer.UserID == 0 && offer.UserID != 0 {
+		answer.UserID = offer.UserID + 1
+		inferred = true
+	}
+
+	if inferred {
+		o.log.Infow("delayed-offer: inferred missing BFCP answer fields from offer",
+			"setup", answer.Setup,
+			"connection", answer.Connection,
+			"confID", answer.ConfID,
+			"userID", answer.UserID,
+			"floorID", answer.FloorID,
+			"mStreamID", answer.MStreamID,
+		)
+	}
 }
 
 func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
