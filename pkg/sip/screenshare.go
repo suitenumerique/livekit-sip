@@ -16,11 +16,11 @@ type ScreenshareManager struct {
 	active    atomic.Bool
 	floorHeld atomic.Bool
 
-	remoteAddr      netip.Addr      // SDP remote address
-	pendingMedia    *sdpv2.SDPMedia // Media for pipeline creation
-	lastKnownMedia  *sdpv2.SDPMedia // SDP media for pipeline restart
-	trackInput      *TrackInput     // Track reference for cleanup
-	pendingTrack    *TrackInput     // Track awaiting pipeline start
+	remoteAddr     netip.Addr
+	pendingMedia   *sdpv2.SDPMedia
+	lastKnownMedia *sdpv2.SDPMedia
+	trackInput     *TrackInput
+	pendingTrack   *TrackInput
 	pendingTrackSID string
 
 	OnScreenshareStarted func()
@@ -61,7 +61,6 @@ func (sm *ScreenshareManager) Reconcile(remote netip.Addr, media *sdpv2.SDPMedia
 
 	isRealScreenshare := media.Content == sdpv2.ContentTypeSlides && media.Port > 0
 
-	// Update RTP destination from SDP if pipeline already active
 	if isRealScreenshare && sm.status >= VideoStatusReady {
 		sm.log.Infow("screenshare.reconcile: updating destination",
 			"rtpDst", netip.AddrPortFrom(remote, media.Port))
@@ -74,7 +73,6 @@ func (sm *ScreenshareManager) Reconcile(remote netip.Addr, media *sdpv2.SDPMedia
 		return ReconcileStatusUpdated, nil
 	}
 
-	// Placeholder port for initial setup before re-INVITE
 	screenshareMedia := *media
 	if !isRealScreenshare {
 		screenshareMedia.Port = 1
@@ -98,7 +96,6 @@ func (sm *ScreenshareManager) Start() error {
 		return err
 	}
 
-	// Process pending track (best-effort)
 	if sm.pendingTrack != nil {
 		ti := sm.pendingTrack
 		sid := sm.pendingTrackSID
@@ -114,13 +111,11 @@ func (sm *ScreenshareManager) Start() error {
 	return nil
 }
 
-// WebrtcTrackInput sets the WebRTC screenshare track.
 func (sm *ScreenshareManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc uint32) error {
 	if sm.active.Load() {
 		return fmt.Errorf("screenshare already active")
 	}
 
-	// Restart pipeline using SDP from previous re-INVITE
 	if sm.status == VideoStatusStopped && sm.lastKnownMedia != nil {
 		sm.log.Infow("screenshare: restarting pipeline", "sid", sid)
 		if _, err := sm.Reconcile(sm.remoteAddr, sm.lastKnownMedia); err != nil {
@@ -132,7 +127,6 @@ func (sm *ScreenshareManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc 
 		return sm.processTrackInput(ti, sid, ssrc)
 	}
 
-	// Store pending track if pipeline not started
 	if sm.status != VideoStatusStarted {
 		sm.log.Infow("screenshare: storing pending track", "status", sm.status, "sid", sid)
 		sm.pendingTrack = ti
@@ -143,12 +137,10 @@ func (sm *ScreenshareManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc 
 	return sm.processTrackInput(ti, sid, ssrc)
 }
 
-// processTrackInput configures the GStreamer pipeline with the track.
 func (sm *ScreenshareManager) processTrackInput(ti *TrackInput, sid string, ssrc uint32) error {
 	if sm.active.Swap(true) {
 		return fmt.Errorf("screenshare already active")
 	}
-
 	sm.log.Debugw("screenshare.track_input", "sid", sid, "ssrc", ssrc)
 
 	p, ok := sm.pipeline.(*screenshare_pipeline.ScreensharePipeline)
@@ -178,7 +170,6 @@ func (sm *ScreenshareManager) Stop() error {
 	sm.pendingTrack = nil
 	sm.pendingTrackSID = ""
 
-	// Close track to unblock pipeline
 	if sm.trackInput != nil {
 		sm.trackInput.RtpIn.Close()
 		sm.trackInput = nil

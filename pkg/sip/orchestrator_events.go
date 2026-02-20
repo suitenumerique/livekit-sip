@@ -97,6 +97,7 @@ func (o *MediaOrchestrator) WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 	}); err != nil {
 		return fmt.Errorf("could not handle webrtc track unsubscribed: %w", err)
 	}
+
 	return nil
 }
 

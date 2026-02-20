@@ -845,6 +845,10 @@ func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error 
 		}
 
 		newCC.AcceptAsKeepAliveWithSessionTimer(answerBytes)
+		// Update lastSDP so OwnSDP() returns the latest answer
+		c.cc.mu.Lock()
+		c.cc.lastSDP = answerBytes
+		c.cc.mu.Unlock()
 		return nil
 	}
 

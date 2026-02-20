@@ -431,7 +431,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			}
 			b.SetRTPPort(uint16(o.screenshare.RtpPort()))
 			b.SetRTCPPort(uint16(o.screenshare.RtcpPort()))
-			b.SetDirection(sdpv2.DirectionSendOnly) // We send screenshare to SIP
+			b.SetDirection(sdpv2.DirectionSendRecv)
 			b.SetLabel(ScreenshareMSTreamID)        // Match BFCP mstrm ID
 			return b.Build()
 		})
