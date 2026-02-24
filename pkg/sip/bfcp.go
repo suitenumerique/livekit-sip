@@ -11,14 +11,12 @@ import (
 	"github.com/vopenia-io/bfcp"
 )
 
-// VirtualClientUserID is the user ID used for the virtual BFCP client
-// representing WebRTC participants. This is used when WebRTC shares screen.
+// VirtualClientUserID is the BFCP user ID for the virtual client representing WebRTC participants.
 const VirtualClientUserID uint16 = 65534
 
-// ContentFloorID is the default floor ID for screenshare/content
+// ContentFloorID is the default floor ID for screenshare/content.
 const ContentFloorID uint16 = 1
 
-// BFCPTransport specifies the BFCP transport protocol
 type BFCPTransport int
 
 const (
@@ -37,23 +35,18 @@ type BFCPManager struct {
 	addr      netip.AddrPort
 	transport BFCPTransport
 
-	// Client mode support (when we need to connect to remote BFCP server)
-	client     *bfcp.Client // BFCP client for active mode
-	isActive   bool         // true = we connect to them (active), false = they connect to us (passive)
-	remoteAddr string       // remote BFCP server address (for active mode)
+	client     *bfcp.Client
+	isActive   bool
+	remoteAddr string
 
-	// Track virtual client floor state (WebRTC side)
 	virtualFloorHeld bool
 	virtualRequestID uint16
 
-	// Callbacks for floor events - set by MediaOrchestrator
 	OnFloorGranted  func(floorID, userID uint16)
 	OnFloorReleased func(floorID, userID uint16)
 }
 
-// NewBFCPManager creates a new BFCP manager.
-// If bfcpOffer.Setup is "passive", we become "active" (connect to them).
-// If bfcpOffer.Setup is "actpass" or "active", we become "passive" (they connect to us).
+// NewBFCPManager creates a new BFCP manager in active or passive mode based on the remote's setup attribute.
 func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, transport BFCPTransport, bfcpOffer *sdpv2.SDPBfcp, sessionAddr netip.Addr) *BFCPManager {
 	ctx, cancel := context.WithCancel(ctx)
 	b := &BFCPManager{
@@ -64,19 +57,16 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 		transport: transport,
 	}
 
-	// Determine if we should be active (client) or passive (server)
-	// based on the remote's setup attribute
 	if bfcpOffer != nil && bfcpOffer.Setup == sdpv2.BfcpSetupPassive {
-		// Remote is passive (server), so we must be active (client)
+		// Active mode: remote is passive, we connect to them
 		b.isActive = true
 		addr := bfcpOffer.ConnectionAddr
 		if !addr.IsValid() {
-			addr = sessionAddr // fallback to session-level c= address
+			addr = sessionAddr
 		}
 		b.remoteAddr = fmt.Sprintf("%s:%d", addr, bfcpOffer.Port)
 		log.Infow("BFCP using active mode (we connect to remote)", "remoteAddr", b.remoteAddr)
 
-		// Still create server config for the port allocation
 		config := bfcp.DefaultServerConfig("0.0.0.0:0", 1)
 		config.PortMin = opts.Ports.Start
 		config.PortMax = opts.Ports.End
@@ -85,8 +75,7 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 		}
 		b.config = config
 
-		// Allocate a local port for SDP answer (even though we won't listen)
-		// We need to report a port in our SDP answer
+		// Allocate a local port for the SDP answer
 		server := bfcp.NewServer(config)
 		if transport == BFCPTransportUDP {
 			config.Transport = bfcp.TransportUDP
@@ -100,23 +89,21 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 		}
 		srvAddr := server.Addr()
 		b.addr = netip.MustParseAddrPort(srvAddr.String())
-		// Close the server immediately - we won't use it in active mode
 		server.Close()
 		b.server = nil
 
 		log.Infow("BFCP active mode initialized", "localPort", b.addr.Port(), "remoteAddr", b.remoteAddr)
 	} else {
-		// Remote is actpass or active, so we are passive (server)
+		// Passive mode: we listen for connections
 		b.isActive = false
 		log.Infow("BFCP using passive mode (we listen for connections)")
 
 		config := bfcp.DefaultServerConfig("0.0.0.0:0", 1)
 		config.PortMin = opts.Ports.Start
 		config.PortMax = opts.Ports.End
-		config.AutoGrant = true // Auto-grant floor requests for 1:1 calls
+		config.AutoGrant = true
 		config.Logger = log.WithComponent("bfcp-server")
 
-		// Set transport type based on SDP offer (UDP for Cisco, TCP for Poly)
 		if transport == BFCPTransportUDP {
 			config.Transport = bfcp.TransportUDP
 			log.Infow("BFCP using UDP transport (RFC 8855)")
@@ -130,7 +117,6 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 		server := bfcp.NewServer(config)
 		b.server = server
 
-		// Create the content floor
 		b.server.CreateFloor(ContentFloorID)
 
 		if err := b.server.Listen(); err != nil {
@@ -142,7 +128,6 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 		addr := b.server.Addr()
 		b.addr = netip.MustParseAddrPort(addr.String())
 
-		// Start server in goroutine
 		go func() {
 			b.server.Serve()
 		}()
@@ -155,21 +140,17 @@ func NewBFCPManager(ctx context.Context, log logger.Logger, opts *MediaOptions, 
 	return b
 }
 
-// Transport returns the BFCP transport type (TCP or UDP)
 func (b *BFCPManager) Transport() BFCPTransport {
 	return b.transport
 }
 
-// IsActive returns true if we are in active mode (we connect to remote)
 func (b *BFCPManager) IsActive() bool {
 	return b.isActive
 }
 
-// ConnectToRemote connects to the remote BFCP server (only in active mode).
-// This should be called after the SDP exchange is complete.
+// ConnectToRemote connects to the remote BFCP server in active mode. No-op in passive mode.
 func (b *BFCPManager) ConnectToRemote() error {
 	if !b.isActive {
-		// We're passive, nothing to do - remote will connect to us
 		return nil
 	}
 
@@ -177,7 +158,6 @@ func (b *BFCPManager) ConnectToRemote() error {
 	defer b.mu.Unlock()
 
 	if b.client != nil {
-		// Already connected
 		return nil
 	}
 
@@ -189,7 +169,6 @@ func (b *BFCPManager) ConnectToRemote() error {
 	client := bfcp.NewClient(config)
 	b.client = client
 
-	// Wire up callbacks
 	client.OnConnected = func() {
 		b.log.Infow("bfcp.client.connected", "addr", b.remoteAddr)
 	}
@@ -227,7 +206,6 @@ func (b *BFCPManager) ConnectToRemote() error {
 		return fmt.Errorf("failed to connect to BFCP server: %w", err)
 	}
 
-	// Send Hello to establish BFCP session
 	if err := client.Hello(); err != nil {
 		b.log.Errorw("bfcp.client.hello_failed", err)
 		return fmt.Errorf("BFCP Hello failed: %w", err)
@@ -244,7 +222,6 @@ func (b *BFCPManager) Close() error {
 
 	b.cancel()
 
-	// Close client if in active mode
 	if b.client != nil {
 		if err := b.client.Disconnect(); err != nil {
 			b.log.Warnw("failed to disconnect BFCP client", err)
@@ -252,7 +229,6 @@ func (b *BFCPManager) Close() error {
 		b.client = nil
 	}
 
-	// Close server if in passive mode
 	if b.server != nil {
 		if err := b.server.Close(); err != nil {
 			return fmt.Errorf("failed to close BFCP server: %w", err)
@@ -276,14 +252,11 @@ func (b *BFCPManager) setupServerCallbacks() {
 		return
 	}
 
-	// Handle incoming floor requests from Poly
 	b.server.OnFloorRequest = func(floorID, userID, requestID uint16) bool {
-		b.log.Infow("bfcp.poly.floor_request", "floorID", floorID, "userID", userID, "requestID", requestID)
-		// Auto-grant is enabled, so this returns true
+		b.log.Infow("bfcp.floor_request", "floorID", floorID, "userID", userID, "requestID", requestID)
 		return true
 	}
 
-	// Handle floor granted events
 	b.server.OnFloorGranted = func(floorID, userID, requestID uint16) {
 		b.log.Infow("bfcp.floor_granted", "floorID", floorID, "userID", userID, "requestID", requestID)
 		if b.OnFloorGranted != nil {
@@ -291,7 +264,6 @@ func (b *BFCPManager) setupServerCallbacks() {
 		}
 	}
 
-	// Handle floor released events
 	b.server.OnFloorReleased = func(floorID, userID uint16) {
 		b.log.Infow("bfcp.floor_released", "floorID", floorID, "userID", userID)
 		if b.OnFloorReleased != nil {
@@ -299,9 +271,8 @@ func (b *BFCPManager) setupServerCallbacks() {
 		}
 	}
 
-	// Handle client connections (Poly connects to our BFCP server)
 	b.server.OnClientConnect = func(remoteAddr string, userID uint16) {
-		b.log.Infow("bfcp.client.connect", "remote", remoteAddr, "userID", userID)
+		b.log.Debugw("bfcp.client.connect", "remote", remoteAddr, "userID", userID)
 	}
 
 	b.server.OnClientDisconnect = func(remoteAddr string, userID uint16) {
@@ -313,9 +284,7 @@ func (b *BFCPManager) setupServerCallbacks() {
 	}
 }
 
-// RequestFloorForVirtualClient requests the content floor on behalf of the
-// virtual BFCP client (representing WebRTC participant starting screenshare).
-// This notifies the remote endpoint that we are now presenting content.
+// RequestFloorForVirtualClient requests the content floor on behalf of the WebRTC screenshare participant.
 func (b *BFCPManager) RequestFloorForVirtualClient() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -327,18 +296,15 @@ func (b *BFCPManager) RequestFloorForVirtualClient() error {
 
 	b.log.Infow("bfcp.webrtc.floor_request")
 
-	// Active mode: use client to request floor from remote server
 	if b.isActive && b.client != nil {
 		_, err := b.client.RequestFloor(ContentFloorID, 0, bfcp.PriorityNormal)
 		if err != nil {
 			b.log.Errorw("bfcp.client.floor_request_failed", err)
 			return fmt.Errorf("floor request failed: %w", err)
 		}
-		// Floor granted callback will set virtualFloorHeld = true
 		return nil
 	}
 
-	// Passive mode: use server to grant floor locally
 	if b.server == nil {
 		return fmt.Errorf("BFCP server not initialized")
 	}
@@ -357,7 +323,6 @@ func (b *BFCPManager) RequestFloorForVirtualClient() error {
 
 	b.log.Infow("bfcp.webrtc.floor_request_status", "status", status.String())
 
-	// Auto-grant for virtual client
 	if status == bfcp.RequestStatusPending || status == bfcp.RequestStatusAccepted {
 		if err := floor.Grant(); err != nil {
 			b.log.Errorw("bfcp.webrtc.floor_grant_failed", err)
@@ -372,15 +337,12 @@ func (b *BFCPManager) RequestFloorForVirtualClient() error {
 
 	b.virtualFloorHeld = true
 
-	// Broadcast FloorStatus to connected BFCP clients (Poly) to notify them
-	// that someone (our virtual client) is now presenting
 	b.server.BroadcastFloorState(ContentFloorID, VirtualClientUserID, bfcp.RequestStatusGranted)
 
 	return nil
 }
 
-// ReleaseFloorForVirtualClient releases the content floor held by the
-// virtual BFCP client (when WebRTC screenshare stops).
+// ReleaseFloorForVirtualClient releases the content floor held by the WebRTC screenshare participant.
 func (b *BFCPManager) ReleaseFloorForVirtualClient() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -392,7 +354,6 @@ func (b *BFCPManager) ReleaseFloorForVirtualClient() error {
 
 	b.log.Infow("bfcp.webrtc.floor_releasing")
 
-	// Active mode: use client to release floor on remote server
 	if b.isActive && b.client != nil {
 		if err := b.client.ReleaseFloor(ContentFloorID); err != nil {
 			b.log.Errorw("bfcp.client.floor_release_failed", err)
@@ -403,7 +364,6 @@ func (b *BFCPManager) ReleaseFloorForVirtualClient() error {
 		return nil
 	}
 
-	// Passive mode: use server to release floor locally
 	if b.server == nil {
 		b.virtualFloorHeld = false
 		return nil
@@ -423,13 +383,11 @@ func (b *BFCPManager) ReleaseFloorForVirtualClient() error {
 	b.virtualFloorHeld = false
 	b.log.Infow("bfcp.webrtc.floor_released")
 
-	// Broadcast FloorStatus to connected BFCP clients (Poly)
 	b.server.BroadcastFloorState(ContentFloorID, VirtualClientUserID, bfcp.RequestStatusReleased)
 
 	return nil
 }
 
-// IsVirtualClientHoldingFloor returns true if the WebRTC side is currently presenting.
 func (b *BFCPManager) IsVirtualClientHoldingFloor() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()

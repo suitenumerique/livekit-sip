@@ -777,22 +777,14 @@ func (c *inboundCall) mediaTimeout() error {
 	return nil // logged as a warning in close
 }
 
-// handleReInvite processes re-INVITE requests, particularly for screenshare and session timer refresh.
-// It parses the SDP to check for screenshare media and reconciles if present.
-// It also handles session timer refresh (RFC 4028) by echoing back Session-Expires.
+// handleReInvite processes re-INVITE requests for screenshare and session timer refresh.
 func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error {
-	// Check for session timer refresh (RFC 4028)
-	// If the re-INVITE contains Session-Expires, this is a session refresh
 	if h := req.GetHeader("Session-Expires"); h != nil {
-		c.log().Infow("Session timer refresh re-INVITE received",
-			"sessionExpires", h.Value())
-		// Parse and update session timer settings from the refresh
 		newCC.ParseSessionTimers(req)
 	}
 
 	rawSDP := req.Body()
 	if len(rawSDP) == 0 {
-		// No SDP body, accept as keep-alive (possibly session timer refresh)
 		newCC.AcceptAsKeepAliveWithSessionTimer(c.cc.OwnSDP())
 		return nil
 	}
@@ -878,6 +870,7 @@ func (c *inboundCall) handleUpdate(req *sip.Request, tx sip.ServerTransaction) {
 		secs := int(sessionExpires.Seconds())
 		r.AppendHeader(sip.NewHeader("Session-Expires",
 			fmt.Sprintf("%d;refresher=%s", secs, sessionRefresher)))
+		r.AppendHeader(sip.NewHeader("Require", "timer"))
 		r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 
@@ -2150,26 +2143,6 @@ func (c *sipInbound) GetMinSE() time.Duration {
 	return c.minSE
 }
 
-// sessionTimerHeaders returns the Session-Expires and related headers for the 200 OK response.
-func (c *sipInbound) sessionTimerHeaders() map[string]string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.sessionExpires == 0 {
-		return nil
-	}
-
-	headers := make(map[string]string)
-	secs := int(c.sessionExpires.Seconds())
-	headers["Session-Expires"] = fmt.Sprintf("%d;refresher=%s", secs, c.sessionRefresher)
-
-	// Include Require: timer if we're supporting session timers
-	// This tells the UAC that session timers are required
-	headers["Require"] = "timer"
-
-	return headers
-}
-
 // Parse100rel extracts 100rel support from the INVITE request.
 // RFC 3262: Reliability of Provisional Responses in SIP
 func (c *sipInbound) Parse100rel(req *sip.Request) {
@@ -2351,11 +2324,13 @@ func (c *sipInbound) AcceptAsKeepAliveWithSessionTimer(sdp []byte) {
 
 	r := sip.NewResponseFromRequest(c.invite, sip.StatusOK, "OK", sdp)
 	r.AppendHeader(&contentTypeHeaderSDP)
+	r.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, UPDATE, SUBSCRIBE"))
+	r.AppendHeader(c.contact)
 
-	// Add Session Timer headers (RFC 4028) if session timers were negotiated
 	if sessionExpires > 0 {
 		secs := int(sessionExpires.Seconds())
 		r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", secs, sessionRefresher)))
+		r.AppendHeader(sip.NewHeader("Require", "timer"))
 		r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 
@@ -2391,7 +2366,7 @@ func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[str
 	if c.sessionExpires > 0 {
 		secs := int(c.sessionExpires.Seconds())
 		r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", secs, c.sessionRefresher)))
-		// Add Supported: timer to indicate we support session timers
+		r.AppendHeader(sip.NewHeader("Require", "timer"))
 		r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 
