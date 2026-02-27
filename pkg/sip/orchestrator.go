@@ -253,6 +253,9 @@ func (o *MediaOrchestrator) close() error {
 }
 
 func (o *MediaOrchestrator) Close() error {
+	if o.cancel == nil {
+		return nil
+	}
 	o.cancel()
 	o.wg.Wait()
 
@@ -311,7 +314,7 @@ func (o *MediaOrchestrator) answerSDP(offer *sdpv2.SDP) (*sdpv2.SDP, error) {
 	}
 	o.log.Debugw("setup sdp complete")
 
-	answer, err := o.offerSDP(offer.Video != nil, offer.BFCP != nil, (offer.Screenshare != nil || (offer.Video != nil && offer.BFCP != nil)))
+	answer, err := o.offerSDP(offer.Video != nil, offer.BFCP != nil, offer.Screenshare != nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not create answer sdp: %w", err)
 	}
@@ -770,11 +773,8 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 		"sdpScreenshare", sdp.Screenshare != nil,
 		"sdpVideo", sdp.Video != nil,
 	)
-	if bfcpAvailable && o.screenshare != nil {
+	if bfcpAvailable && o.screenshare != nil && sdp.Screenshare != nil {
 		screenshareMedia := sdp.Screenshare
-		if screenshareMedia == nil {
-			screenshareMedia = sdp.Video
-		}
 		o.log.Infow("setupSDP: reconciling screenshare",
 			"usingScreenshareMedia", sdp.Screenshare != nil,
 			"mediaPort", screenshareMedia.Port,
