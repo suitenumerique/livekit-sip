@@ -500,6 +500,11 @@ func (p *MediaPort) Port() int {
 	return p.port.LocalAddr().(*net.UDPAddr).Port
 }
 
+// SetDst updates the RTP destination address without rebuilding the audio pipeline.
+func (p *MediaPort) SetDst(addr netip.AddrPort) {
+	p.port.SetDst(addr)
+}
+
 func (p *MediaPort) Received() <-chan struct{} {
 	return p.mediaReceived.Watch()
 }

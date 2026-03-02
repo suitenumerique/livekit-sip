@@ -28,6 +28,7 @@ type AudioInfo interface {
 	Codec() *sdpv2.Codec
 	AvailableCodecs() []*sdpv2.Codec
 	SetMedia(media *sdpv2.SDPMedia)
+	SetDst(addr netip.AddrPort)
 }
 
 type dispatchOperation struct {
@@ -802,6 +803,13 @@ func (o *MediaOrchestrator) setupSDP(sdp *sdpv2.SDP) error {
 		return fmt.Errorf("could not reconcile video sdp: %w", err)
 	}
 	o.log.Infow("setupSDP: camera reconciled", "cameraStatus", o.camera.Status())
+
+	// Update audio RTP destination if port changed
+	if o.sdp != nil && o.sdp.Audio != nil && sdp.Audio != nil && o.sdp.Audio.Port != sdp.Audio.Port {
+		o.log.Infow("updating audio RTP destination",
+			"oldPort", o.sdp.Audio.Port, "newPort", sdp.Audio.Port)
+		o.audioinfo.SetDst(netip.AddrPortFrom(sdp.Addr, sdp.Audio.Port))
+	}
 
 	o.log.Infow("setupSDP: BFCP check",
 		"sdpBFCP", sdp.BFCP != nil,

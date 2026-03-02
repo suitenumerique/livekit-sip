@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"net/netip"
 	"sync"
 
 	"github.com/livekit/media-sdk"
@@ -61,6 +62,11 @@ func (m *MediaPortAdapter) Port() uint16 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return uint16(m.mp.Port())
+}
+
+// SetDst updates the audio RTP destination address.
+func (m *MediaPortAdapter) SetDst(addr netip.AddrPort) {
+	m.mp.SetDst(addr)
 }
 
 var _ AudioInfo = (*MediaPortAdapter)(nil)

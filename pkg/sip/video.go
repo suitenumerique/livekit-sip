@@ -179,6 +179,8 @@ func isMedia(media *sdpv2.SDPMedia) bool {
 	return true
 }
 
+// mediaOK checks if the media stream is functionally unchanged (same codec and direction).
+// Port changes are handled gracefully in Reconcile via SetDst without pipeline teardown.
 func (v *VideoManager) mediaOK(newMedia *sdpv2.SDPMedia) bool {
 	isOld := isMedia(v.Media)
 	isNew := isMedia(newMedia)
@@ -186,12 +188,6 @@ func (v *VideoManager) mediaOK(newMedia *sdpv2.SDPMedia) bool {
 		return true
 	}
 	if !isOld || !isNew {
-		return false
-	}
-	if v.Media.Port != newMedia.Port {
-		return false
-	}
-	if v.Media.RTCPPort != newMedia.RTCPPort {
 		return false
 	}
 	if v.Media.Direction != newMedia.Direction {
@@ -227,6 +223,20 @@ func (v *VideoManager) Reconcile(remote netip.Addr, media *sdpv2.SDPMedia) (Reco
 
 	if v.mediaOK(media) {
 		v.log.Debugw("video media unchanged, no reconciliation needed", "oldMedia", v.Media, "newMedia", media)
+
+		// Update RTP/RTCP destination if ports changed (e.g., session timer re-INVITE)
+		if v.Media != nil && v.status == VideoStatusStarted {
+			if v.Media.Port != media.Port {
+				v.log.Infow("updating RTP destination port",
+					"oldPort", v.Media.Port, "newPort", media.Port)
+				v.rtpConn.SetDst(netip.AddrPortFrom(remote, media.Port))
+			}
+			if v.Media.RTCPPort != media.RTCPPort {
+				v.log.Infow("updating RTCP destination port",
+					"oldPort", v.Media.RTCPPort, "newPort", media.RTCPPort)
+				v.rtcpConn.SetDst(netip.AddrPortFrom(remote, media.RTCPPort))
+			}
+		}
 
 		// Check if PayloadType changed (same codec, different PT)
 		if v.status == VideoStatusStarted && v.Media != nil && v.Media.Codec != nil &&
