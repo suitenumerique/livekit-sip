@@ -340,6 +340,14 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 		builder.SetUnknownMedia(o.sdp.UnknownMedia)
 	}
 
+	// Screenshare mstream ID from offer's label, BFCP mstrm, or default constant
+	screenshareMStreamID := uint16(ScreenshareMSTreamID)
+	if o.sdp != nil && o.sdp.Screenshare != nil && o.sdp.Screenshare.Label > 0 {
+		screenshareMStreamID = o.sdp.Screenshare.Label
+	} else if o.sdp != nil && o.sdp.BFCP != nil && o.sdp.BFCP.MStreamID > 0 {
+		screenshareMStreamID = o.sdp.BFCP.MStreamID
+	}
+
 	// audio is required anyway
 	builder.SetAudio(func(b *sdpv2.SDPMediaBuilder) (*sdpv2.SDPMedia, error) {
 		codec := o.audioinfo.Codec()
@@ -367,33 +375,71 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			Build()
 	}).Build()
 
-	if bfcp && o.bfcp != nil {
-		if screenshare {
-			builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
-				proto := sdpv2.BfcpProtoUDP
-				if o.bfcp.transport == BFCPTransportTCP {
-					proto = sdpv2.BfcpProtoTCP
-				}
-				setup := sdpv2.BfcpSetupPassive
-				if o.sdp != nil && o.sdp.BFCP != nil {
-					proto = o.sdp.BFCP.Proto
-					setup = o.sdp.BFCP.Setup.Reverse()
-				}
+	if bfcp && o.bfcp != nil && screenshare {
+		builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
+			proto := sdpv2.BfcpProtoUDP
+			if o.bfcp.transport == BFCPTransportTCP {
+				proto = sdpv2.BfcpProtoTCP
+			}
+			setup := sdpv2.BfcpSetupPassive
+			if o.sdp != nil && o.sdp.BFCP != nil {
+				proto = o.sdp.BFCP.Proto
+				setup = o.sdp.BFCP.Setup.Reverse()
+			}
 
-				return b.
-					SetPort(o.bfcp.Port()).
-					SetConnectionAddr(o.opts.IP).
-					SetConnection(sdpv2.BfcpConnectionNew).
-					SetProto(proto).
-					SetFloorCtrl(sdpv2.BfcpFloorCtrlServer).
-					SetSetup(setup).
-					SetConfID(o.bfcp.config.ConferenceID).
-					SetUserID(1).
-					SetFloorID(ContentFloorID).
-					SetMStreamID(ScreenshareMSTreamID).
-					Build()
-			})
-		}
+			return b.
+				SetPort(o.bfcp.Port()).
+				SetConnectionAddr(o.opts.IP).
+				SetConnection(sdpv2.BfcpConnectionNew).
+				SetProto(proto).
+				SetFloorCtrl(sdpv2.BfcpFloorCtrlServer).
+				SetSetup(setup).
+				SetConfID(o.bfcp.config.ConferenceID).
+				SetUserID(1).
+				SetFloorID(ContentFloorID).
+				SetMStreamID(screenshareMStreamID).
+				Build()
+		})
+	} else if bfcp && o.bfcp != nil && !screenshare {
+		// BFCP server is running but screenshare is not yet active.
+		// Advertise the real BFCP port so the remote can establish floor control
+		// and later send a re-INVITE with screenshare.
+		builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
+			proto := sdpv2.BfcpProtoUDP
+			if o.bfcp.transport == BFCPTransportTCP {
+				proto = sdpv2.BfcpProtoTCP
+			}
+			setup := sdpv2.BfcpSetupPassive
+			if o.sdp != nil && o.sdp.BFCP != nil {
+				proto = o.sdp.BFCP.Proto
+				setup = o.sdp.BFCP.Setup.Reverse()
+			}
+
+			return b.
+				SetPort(o.bfcp.Port()).
+				SetConnectionAddr(o.opts.IP).
+				SetConnection(sdpv2.BfcpConnectionNew).
+				SetProto(proto).
+				SetFloorCtrl(sdpv2.BfcpFloorCtrlServer).
+				SetSetup(setup).
+				SetConfID(o.bfcp.config.ConferenceID).
+				SetUserID(1).
+				SetFloorID(ContentFloorID).
+				SetMStreamID(screenshareMStreamID).
+				Build()
+		})
+	} else if bfcp && !screenshare {
+		// BFCP in offer but no server started — include disabled m-line for RFC 3264 alignment.
+		builder.SetBFCP(func(b *sdpv2.SDPBfcpBuilder) (*sdpv2.SDPBfcp, error) {
+			proto := sdpv2.BfcpProtoTCP
+			if o.sdp != nil && o.sdp.BFCP != nil {
+				proto = o.sdp.BFCP.Proto
+			}
+			return b.
+				SetDisabled(true).
+				SetProto(proto).
+				Build()
+		})
 	}
 
 	if camera {
@@ -435,7 +481,7 @@ func (o *MediaOrchestrator) offerSDP(camera bool, bfcp bool, screenshare bool) (
 			b.SetRTPPort(uint16(o.screenshare.RtpPort()))
 			b.SetRTCPPort(uint16(o.screenshare.RtcpPort()))
 			b.SetDirection(sdpv2.DirectionSendRecv)
-			b.SetLabel(ScreenshareMSTreamID)        // Match BFCP mstrm ID
+			b.SetLabel(screenshareMStreamID)
 			return b.Build()
 		})
 	}
