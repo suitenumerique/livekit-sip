@@ -858,8 +858,10 @@ func (c *inboundCall) handleUpdate(req *sip.Request, tx sip.ServerTransaction) {
 		c.cc.ParseSessionTimers(req)
 	}
 
-	// Build 200 OK with session timer headers
+	// Build 200 OK with Contact (RFC 3311) and session timer headers (RFC 4028)
 	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
+	r.AppendHeader(c.cc.contact)
+	r.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, UPDATE, SUBSCRIBE"))
 
 	c.cc.mu.RLock()
 	sessionExpires := c.cc.sessionExpires
@@ -873,6 +875,13 @@ func (c *inboundCall) handleUpdate(req *sip.Request, tx sip.ServerTransaction) {
 		r.AppendHeader(sip.NewHeader("Require", "timer"))
 		r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
+
+	// Log all response headers
+	var headers []string
+	for _, h := range r.Headers() {
+		headers = append(headers, fmt.Sprintf("%s: %s", h.Name(), h.Value()))
+	}
+	c.log().Debugw("UPDATE 200 OK response headers", "headers", headers)
 
 	_ = tx.Respond(r)
 }
