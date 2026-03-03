@@ -779,6 +779,13 @@ func (c *inboundCall) mediaTimeout() error {
 
 // handleReInvite processes re-INVITE requests for screenshare and session timer refresh.
 func (c *inboundCall) handleReInvite(newCC *sipInbound, req *sip.Request) error {
+	// Log incoming re-INVITE request path for debugging
+	var reqHeaders []string
+	for _, h := range req.Headers() {
+		reqHeaders = append(reqHeaders, fmt.Sprintf("%s: %s", h.Name(), h.Value()))
+	}
+	c.log().Debugw("re-INVITE request headers", "headers", reqHeaders)
+
 	if h := req.GetHeader("Session-Expires"); h != nil {
 		newCC.ParseSessionTimers(req)
 	}
@@ -2344,6 +2351,14 @@ func (c *sipInbound) AcceptAsKeepAliveWithSessionTimer(sdp []byte) {
 	}
 
 	c.addExtraHeaders(r)
+
+	// Log all response headers for path debugging
+	var headers []string
+	for _, h := range r.Headers() {
+		headers = append(headers, fmt.Sprintf("%s: %s", h.Name(), h.Value()))
+	}
+	c.log.Debugw("re-INVITE 200 OK response headers", "headers", headers)
+
 	_ = c.inviteTx.Respond(r)
 }
 
