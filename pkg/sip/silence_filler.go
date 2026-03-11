@@ -96,7 +96,7 @@ func (h *silenceFiller) isSilenceSuppression(header *rtp.Header) (bool, int) {
 	seqDiff := currentSeq - expectedSeq
 	tsDiff := currentTS - expectedTS
 
-	// A key characteristic of DTX or silence supression is no sequence gaps, but >1 frame TS gaps
+	// A key characteristic of DTX or silence suppression is no sequence gaps, but >1 frame TS gaps
 	if seqDiff != 0 {
 		// Also filters out out-of-order packets
 		return false, 0
@@ -109,7 +109,7 @@ func (h *silenceFiller) isSilenceSuppression(header *rtp.Header) (bool, int) {
 		return false, 0
 	}
 
-	// Silence supression happened - sequential packets (no loss), but with a gap in timestamp
+	// Silence suppression happened - sequential packets (no loss), but with a gap in timestamp
 	return true, missedFrames
 }
 

@@ -261,7 +261,7 @@ func (c *Client) setupRTPReceiver() {
 		}
 
 		if diff > int64(c.audioCodec.Info().RTPClockRate) || diff < -int64(c.audioCodec.Info().RTPClockRate) {
-			c.log.Info("reveived out of sync DTMF message", "dtmfTs", hdr.Timestamp, "lastTs", ts)
+			c.log.Info("received out of sync DTMF message", "dtmfTs", hdr.Timestamp, "lastTs", ts)
 			return nil
 		}
 
@@ -706,7 +706,7 @@ func (c *Client) WaitSignals(ctx context.Context, vals []int, w io.WriteCloser) 
 	done := make(chan struct{})
 
 	h := rtp.Handler(rtp.HandlerFunc(func(hdr *rtp.Header, payload []byte) error {
-		// Make sure er do not send on a closed channel
+		// Make sure we do not send on a closed channel
 		select {
 		case <-done:
 			return ctx.Err()
