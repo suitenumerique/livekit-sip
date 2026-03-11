@@ -18,9 +18,10 @@ name: Release to Docker
 on:
   workflow_dispatch:
   push:
-    # only publish on version tags
+    branches:
+      - 'sip-video'
     tags:
-      - "v*.*.*"
+      - 'v*.*.*-sip-video'
 
 jobs:
   docker:
@@ -42,11 +43,12 @@ jobs:
         id: docker-md
         uses: docker/metadata-action@v5
         with:
-          images: livekit/sip
-          # generate Docker tags based on the following events/attributes
+          images: lasuite/livekit-sip
           tags: |
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -65,8 +67,8 @@ jobs:
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_HUB_USER }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
