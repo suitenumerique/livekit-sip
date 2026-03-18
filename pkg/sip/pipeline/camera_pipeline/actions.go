@@ -311,6 +311,9 @@ func (cp *CameraPipeline) executeDirtySwitch(ssrc uint32) {
 	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
 		cp.Log().Errorw("failed dirty switch", err, "ssrc", ssrc)
 	}
+	if err := cp.RequestTrackKeyframe(track); err != nil {
+		cp.Log().Warnw("failed to request keyframe after dirty switch", err, "ssrc", ssrc)
+	}
 	cp.ResetX264Encoder()
 	cp.pendingSwitchSSRC = 0
 }
