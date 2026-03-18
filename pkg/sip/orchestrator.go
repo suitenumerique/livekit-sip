@@ -84,6 +84,8 @@ type MediaOrchestrator struct {
 	sdp             *sdpv2.SDP
 	delayedOfferSDP *sdpv2.SDP // SDP offer sent in 200 OK for delayed offer calls
 	state           MediaState
+
+	activeSpeakerTimer *time.Timer
 }
 
 func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipInbound, room *Room, audioinfo AudioInfo, opts *MediaOptions) (*MediaOrchestrator, error) {

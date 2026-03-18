@@ -143,8 +143,11 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 		return fmt.Errorf("failed to sync webrtc track elements: %w", err)
 	}
 
-	if err := wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC); err != nil {
-		return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", wt.SSRC, err)
+	// Only auto-switch for the first track; subsequent tracks wait for active speaker events
+	if len(wt.parent.Tracks) <= 1 {
+		if err := wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC); err != nil {
+			return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", wt.SSRC, err)
+		}
 	}
 	return nil
 }

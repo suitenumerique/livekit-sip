@@ -2,6 +2,7 @@ package sip
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
@@ -125,7 +126,16 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 
 func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) error {
 	if err := o.dispatch(func() error {
-		return o.activeParticipantChanged(p)
+		// Debounce: collapse rapid speaker changes (e.g. join storms) into a single switch
+		if o.activeSpeakerTimer != nil {
+			o.activeSpeakerTimer.Stop()
+		}
+		o.activeSpeakerTimer = time.AfterFunc(300*time.Millisecond, func() {
+			o.dispatch(func() error {
+				return o.activeParticipantChanged(p)
+			})
+		})
+		return nil
 	}); err != nil {
 		return fmt.Errorf("could not handle active participant changed: %w", err)
 	}

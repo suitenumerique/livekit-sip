@@ -264,6 +264,16 @@ func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
 		return
 	}
 
+	// Force switch after MaxKeyframeWaitTime if keyframe never arrives
+	if time.Since(cp.switchStartTime) >= MaxKeyframeWaitTime {
+		cp.Log().Warnw("keyframe timeout, forcing switch", nil,
+			"ssrc", ssrc, "waited", time.Since(cp.switchStartTime))
+		if err := cp.executeSwitch(ssrc); err != nil {
+			cp.Log().Errorw("forced switch failed", err, "ssrc", ssrc)
+		}
+		return
+	}
+
 	if time.Since(cp.lastPLITime) >= PLIRetryInterval {
 		if track, ok := cp.WebrtcIo.Tracks[ssrc]; ok {
 			cp.lastPLITime = time.Now()
