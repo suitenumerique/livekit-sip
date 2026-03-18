@@ -17,6 +17,7 @@ package sip
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -172,6 +173,15 @@ type Room struct {
 	stats      *RoomStats
 
 	callbackHandler atomic.Pointer[RoomCallbacks]
+
+	videoPublications map[string]*videoPublicationInfo
+	activeVideoSID   string
+	pendingVideoSID  string
+}
+
+type videoPublicationInfo struct {
+	pub *lksdk.RemoteTrackPublication
+	rp  *lksdk.RemoteParticipant
 }
 
 // IsReady returns true if the room is connected and ready
@@ -208,7 +218,7 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 	if st == nil {
 		st = &RoomStats{}
 	}
-	r := &Room{log: log, stats: st, out: msdk.NewSwitchWriter(RoomSampleRate)}
+	r := &Room{log: log, stats: st, out: msdk.NewSwitchWriter(RoomSampleRate), videoPublications: make(map[string]*videoPublicationInfo)}
 	out := newMediaWriterCount(r.out, &st.OutputFrames, &st.OutputSamples)
 
 	var err error
@@ -289,20 +299,88 @@ func (r *Room) participantJoin(rp *lksdk.RemoteParticipant) {
 func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID())
 	log.Debugw("participant left")
+	sid := rp.SID()
+	delete(r.videoPublications, sid)
+	if r.activeVideoSID == sid {
+		r.activeVideoSID = ""
+	}
+	if r.pendingVideoSID == sid {
+		r.pendingVideoSID = ""
+	}
 }
 
 func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 	log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
-	if k := pub.Kind(); k != lksdk.TrackKindAudio && k != lksdk.TrackKindVideo {
+	k := pub.Kind()
+	if k != lksdk.TrackKindAudio && k != lksdk.TrackKindVideo {
 		log.Debugw("skipping subscription to unsupported track", "kind", k)
 		return
 	}
-	log.Debugw("subscribing to a track")
-	if err := pub.SetSubscribed(true); err != nil {
-		log.Errorw("cannot subscribe to the track", err)
+
+	if k == lksdk.TrackKindAudio {
+		log.Debugw("subscribing to audio track")
+		if err := pub.SetSubscribed(true); err != nil {
+			log.Errorw("cannot subscribe to the track", err)
+			return
+		}
+		r.subscribed.Break()
 		return
 	}
-	r.subscribed.Break()
+
+	// Store video publication for deferred subscription
+	if pub.Source() == livekit.TrackSource_CAMERA {
+		log.Debugw("storing video publication for deferred subscription")
+		r.videoPublications[rp.SID()] = &videoPublicationInfo{pub: pub, rp: rp}
+	} else if pub.Source() == livekit.TrackSource_SCREEN_SHARE {
+		log.Debugw("subscribing to screenshare track")
+		if err := pub.SetSubscribed(true); err != nil {
+			log.Errorw("cannot subscribe to screenshare track", err)
+		}
+	}
+}
+
+// SwitchVideoSubscription subscribes to a new camera track (make-before-break).
+func (r *Room) SwitchVideoSubscription(newSID string) error {
+	info, ok := r.videoPublications[newSID]
+	if !ok {
+		return fmt.Errorf("no video publication for SID %s", newSID)
+	}
+	if r.activeVideoSID == newSID {
+		return nil
+	}
+	r.pendingVideoSID = newSID
+	r.log.Infow("switching video subscription", "newSID", newSID, "oldSID", r.activeVideoSID)
+	if err := info.pub.SetSubscribed(true); err != nil {
+		return err
+	}
+	return nil
+}
+
+// onVideoTrackReady completes the make-before-break switch by unsubscribing the old track.
+func (r *Room) onVideoTrackReady(sid string) {
+	if r.pendingVideoSID != sid {
+		return
+	}
+	if r.activeVideoSID != "" && r.activeVideoSID != sid {
+		if old, ok := r.videoPublications[r.activeVideoSID]; ok {
+			r.log.Infow("unsubscribing old video track", "oldSID", r.activeVideoSID)
+			old.pub.SetSubscribed(false)
+		}
+	}
+	r.activeVideoSID = sid
+	r.pendingVideoSID = ""
+}
+
+// subscribeFirstVideoTrack subscribes to the first available camera track.
+func (r *Room) subscribeFirstVideoTrack() {
+	for sid, info := range r.videoPublications {
+		if r.activeVideoSID == "" {
+			r.log.Infow("subscribing to first video track", "sid", sid)
+			info.pub.SetSubscribed(true)
+			r.activeVideoSID = sid
+			return
+		}
+	}
 }
 
 func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
@@ -357,6 +435,10 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 					}
 				} else {
 					r.log.Warnw("no track subscribed callback set", nil)
+				}
+				// Complete make-before-break video switch
+				if pub.Kind() == lksdk.TrackKindVideo && pub.Source() == livekit.TrackSource_CAMERA {
+					r.onVideoTrackReady(rp.SID())
 				}
 			},
 			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -463,6 +545,7 @@ func (r *Room) Subscribe() {
 			}
 		}
 	}
+	r.subscribeFirstVideoTrack()
 }
 
 func (r *Room) Output() msdk.Writer[msdk.PCM16Sample] {

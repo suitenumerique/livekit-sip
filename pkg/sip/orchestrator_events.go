@@ -112,14 +112,11 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 
 	for _, speaker := range p {
 		sid := speaker.SID()
-		switched, err := o.camera.SwitchActiveWebrtcTrack(sid)
-		if err != nil {
-			o.log.Warnw("could not switch active webrtc track", err, "sid", sid)
-			return nil
+		if err := o.room.SwitchVideoSubscription(sid); err != nil {
+			o.log.Debugw("no video for speaker", "sid", sid)
+			continue
 		}
-		if switched {
-			return nil
-		}
+		return nil
 	}
 	return nil
 }

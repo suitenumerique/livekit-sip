@@ -86,6 +86,7 @@ type MediaOrchestrator struct {
 	state           MediaState
 
 	activeSpeakerTimer *time.Timer
+	room               *Room
 }
 
 func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipInbound, room *Room, audioinfo AudioInfo, opts *MediaOptions) (*MediaOrchestrator, error) {
@@ -121,6 +122,7 @@ func (o *MediaOrchestrator) init(room *Room) error {
 		return err
 	}
 
+	o.room = room
 	o.tracks = NewTrackManager(o.log.WithComponent("track_manager"))
 
 	camera, err := NewCameraManager(o.log.WithComponent("camera"), o.ctx, room, o.opts, o.tracks)
