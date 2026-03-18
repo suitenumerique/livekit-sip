@@ -180,8 +180,9 @@ type Room struct {
 }
 
 type videoPublicationInfo struct {
-	pub *lksdk.RemoteTrackPublication
-	rp  *lksdk.RemoteParticipant
+	pub        *lksdk.RemoteTrackPublication
+	rp         *lksdk.RemoteParticipant
+	subscribed bool
 }
 
 // IsReady returns true if the room is connected and ready
@@ -339,36 +340,65 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 }
 
-// SwitchVideoSubscription subscribes to a new camera track (make-before-break).
+const maxWarmVideoTracks = 3
+
+// SwitchVideoSubscription switches to the given speaker's video track.
+// Keeps up to maxWarmVideoTracks subscribed.
 func (r *Room) SwitchVideoSubscription(newSID string) error {
+	if r.activeVideoSID == newSID {
+		return nil
+	}
 	info, ok := r.videoPublications[newSID]
 	if !ok {
 		return fmt.Errorf("no video publication for SID %s", newSID)
 	}
-	if r.activeVideoSID == newSID {
+	if info.subscribed {
+		r.log.Infow("switching to warm video track", "newSID", newSID, "oldSID", r.activeVideoSID)
+		r.pendingVideoSID = ""
+		r.activeVideoSID = newSID
 		return nil
 	}
+	r.log.Infow("subscribing to new video track", "newSID", newSID, "oldSID", r.activeVideoSID)
 	r.pendingVideoSID = newSID
-	r.log.Infow("switching video subscription", "newSID", newSID, "oldSID", r.activeVideoSID)
-	if err := info.pub.SetSubscribed(true); err != nil {
-		return err
-	}
+	info.pub.SetSubscribed(true)
+	info.subscribed = true
 	return nil
 }
 
-// onVideoTrackReady completes the make-before-break switch by unsubscribing the old track.
+// IsVideoTrackReady returns true if the given SID is the active video track.
+func (r *Room) IsVideoTrackReady(sid string) bool {
+	return r.activeVideoSID == sid
+}
+
+// onVideoTrackReady completes the make-before-break switch when a new track arrives.
 func (r *Room) onVideoTrackReady(sid string) {
 	if r.pendingVideoSID != sid {
 		return
 	}
-	if r.activeVideoSID != "" && r.activeVideoSID != sid {
-		if old, ok := r.videoPublications[r.activeVideoSID]; ok {
-			r.log.Infow("unsubscribing old video track", "oldSID", r.activeVideoSID)
-			old.pub.SetSubscribed(false)
-		}
-	}
 	r.activeVideoSID = sid
 	r.pendingVideoSID = ""
+	r.evictOldVideoTracks()
+}
+
+// evictOldVideoTracks unsubscribes oldest non-active tracks beyond maxWarmVideoTracks limit.
+func (r *Room) evictOldVideoTracks() {
+	subscribed := 0
+	for _, info := range r.videoPublications {
+		if info.subscribed {
+			subscribed++
+		}
+	}
+	for subscribed > maxWarmVideoTracks {
+		for sid, info := range r.videoPublications {
+			if info.subscribed && sid != r.activeVideoSID && sid != r.pendingVideoSID {
+				r.log.Infow("evicting warm video track", "sid", sid)
+				info.pub.SetSubscribed(false)
+				info.subscribed = false
+				subscribed--
+				break
+			}
+		}
+	}
 }
 
 // subscribeFirstVideoTrack subscribes to the first available camera track.
@@ -377,6 +407,7 @@ func (r *Room) subscribeFirstVideoTrack() {
 		if r.activeVideoSID == "" {
 			r.log.Infow("subscribing to first video track", "sid", sid)
 			info.pub.SetSubscribed(true)
+			info.subscribed = true
 			r.activeVideoSID = sid
 			return
 		}
