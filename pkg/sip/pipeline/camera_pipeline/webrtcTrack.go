@@ -143,7 +143,7 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 		return fmt.Errorf("failed to sync webrtc track elements: %w", err)
 	}
 
-	// Only auto-switch for the first track; subsequent tracks wait for active speaker events
+	// Auto-switch only for the first track
 	if len(wt.parent.Tracks) <= 1 {
 		if err := wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC); err != nil {
 			return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", wt.SSRC, err)
@@ -173,7 +173,7 @@ func (wt *WebrtcTrack) keyframeProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.P
 		wt.parent.pipeline.checkPLIRetry(wt.SSRC)
 		return gst.PadProbeDrop
 	} else if pendingSSRC != 0 {
-		// Cross-track timeout: check from active track's frames
+		// Check pending switch timeout from other tracks' probes
 		wt.parent.pipeline.checkPLIRetry(pendingSSRC)
 	}
 

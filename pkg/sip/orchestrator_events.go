@@ -126,7 +126,7 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 
 func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) error {
 	if err := o.dispatch(func() error {
-		// Debounce: collapse rapid speaker changes (e.g. join storms) into a single switch
+		// Debounce active speaker changes (300ms)
 		if o.activeSpeakerTimer != nil {
 			o.activeSpeakerTimer.Stop()
 		}

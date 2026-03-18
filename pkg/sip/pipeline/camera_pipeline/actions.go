@@ -182,9 +182,8 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 	}
 	isActive := activePadName == trackPadName && trackPadName != ""
 
-	if cp.pendingSwitchSSRC == ssrc {
-		cp.pendingSwitchSSRC = 0
-	}
+	// Clear pending switch on track removal
+	cp.pendingSwitchSSRC = 0
 
 	var newTrack *WebrtcTrack
 	if isActive {
@@ -233,6 +232,11 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		return nil
 	}
 
+	// No switch needed with a single track
+	if len(cp.WebrtcIo.Tracks) <= 1 {
+		return nil
+	}
+
 	cp.pendingSwitchSSRC = ssrc
 	cp.switchStartTime = time.Now()
 	cp.lastPLITime = time.Now()
@@ -259,7 +263,7 @@ func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
 		return
 	}
 
-	// Force dirty switch after MaxKeyframeWaitTime if keyframe never arrives
+	// Dirty switch after MaxKeyframeWaitTime
 	if time.Since(cp.switchStartTime) >= MaxKeyframeWaitTime {
 		cp.Log().Warnw("keyframe timeout, forcing dirty switch", nil,
 			"ssrc", ssrc, "waited", time.Since(cp.switchStartTime))
@@ -300,7 +304,7 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	return nil
 }
 
-// executeDirtySwitch switches immediately, allowing frames through without waiting for keyframe.
+// executeDirtySwitch switches the active pad and allows frames through without a keyframe.
 func (cp *CameraPipeline) executeDirtySwitch(ssrc uint32) {
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok || track.SelPad == nil {
