@@ -197,11 +197,6 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 	}
 
 	if isActive && newTrack != nil {
-		newTrack.SeenKeyframeInQueue = false
-		cp.pendingSwitchSSRC = newTrack.SSRC
-		cp.switchStartTime = time.Now()
-		cp.lastPLITime = time.Now()
-
 		if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", newTrack.SelPad); err != nil {
 			cp.Log().Errorw("failed to switch to alternate track", err, "newSsrc", newTrack.SSRC)
 		}
@@ -264,13 +259,11 @@ func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
 		return
 	}
 
-	// Force switch after MaxKeyframeWaitTime if keyframe never arrives
+	// Force dirty switch after MaxKeyframeWaitTime if keyframe never arrives
 	if time.Since(cp.switchStartTime) >= MaxKeyframeWaitTime {
-		cp.Log().Warnw("keyframe timeout, forcing switch", nil,
+		cp.Log().Warnw("keyframe timeout, forcing dirty switch", nil,
 			"ssrc", ssrc, "waited", time.Since(cp.switchStartTime))
-		if err := cp.executeSwitch(ssrc); err != nil {
-			cp.Log().Errorw("forced switch failed", err, "ssrc", ssrc)
-		}
+		cp.executeDirtySwitch(ssrc)
 		return
 	}
 
@@ -305,6 +298,21 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	cp.pendingSwitchSSRC = 0
 
 	return nil
+}
+
+// executeDirtySwitch switches immediately, allowing frames through without waiting for keyframe.
+func (cp *CameraPipeline) executeDirtySwitch(ssrc uint32) {
+	track, ok := cp.WebrtcIo.Tracks[ssrc]
+	if !ok || track.SelPad == nil {
+		cp.pendingSwitchSSRC = 0
+		return
+	}
+	track.SeenKeyframeInQueue = true
+	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
+		cp.Log().Errorw("failed dirty switch", err, "ssrc", ssrc)
+	}
+	cp.ResetX264Encoder()
+	cp.pendingSwitchSSRC = 0
 }
 
 // isActiveTrack checks if the given SSRC is currently the active track.

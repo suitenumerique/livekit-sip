@@ -172,6 +172,9 @@ func (wt *WebrtcTrack) keyframeProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.P
 	} else if pendingSSRC == wt.SSRC {
 		wt.parent.pipeline.checkPLIRetry(wt.SSRC)
 		return gst.PadProbeDrop
+	} else if pendingSSRC != 0 {
+		// Cross-track timeout: check from active track's frames
+		wt.parent.pipeline.checkPLIRetry(pendingSSRC)
 	}
 
 	return gst.PadProbeOK
