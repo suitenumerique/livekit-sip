@@ -20,19 +20,15 @@ type SipToWebrtc struct {
 	pipeline *CameraPipeline
 	log      logger.Logger
 
-	H264Depay     *gst.Element
-	H264Parse     *gst.Element
-	H264Dec       *gst.Element
-	VideoConvert  *gst.Element
-	VideoScale    *gst.Element
-	ResFilter     *gst.Element
-	VideoConvert2 *gst.Element
-	VideoRate     *gst.Element
-	FpsFilter     *gst.Element
-	Queue         *gst.Element
-	Vp8Enc        *gst.Element
-	Vp8Pay        *gst.Element
-	CapsFilter    *gst.Element
+	H264Depay         *gst.Element
+	H264Parse         *gst.Element
+	H264Dec           *gst.Element
+	VideoConvertScale *gst.Element
+	ResFilter         *gst.Element
+	Queue             *gst.Element
+	Vp8Enc            *gst.Element
+	Vp8Pay            *gst.Element
+	CapsFilter        *gst.Element
 }
 
 var _ pipeline.GstChain = (*SipToWebrtc)(nil)
@@ -62,54 +58,26 @@ func (stw *SipToWebrtc) Create() error {
 		return fmt.Errorf("failed to create SIP h264 decoder: %w", err)
 	}
 
-	stw.VideoConvert, err = gst.NewElement("videoconvert")
-	if err != nil {
-		return fmt.Errorf("failed to create SIP videoconvert: %w", err)
-	}
-
-	stw.VideoScale, err = gst.NewElementWithProperties("videoscale", map[string]interface{}{
-		"add-borders": true, // Add black bars for aspect ratio preservation
+	// Single element for convert + scale (avoids intermediate pixel format conversion)
+	stw.VideoConvertScale, err = gst.NewElementWithProperties("videoconvertscale", map[string]interface{}{
+		"add-borders": true,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create SIP videoscale: %w", err)
+		return fmt.Errorf("failed to create SIP videoconvertscale: %w", err)
 	}
 
-	// Force 1280x720 resolution with PAR 1:1 - this forces letterboxing for non-16:9 content
+	// Force 1280x720 I420 output — I420 is what vp8enc expects
 	stw.ResFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1"),
+		"caps": gst.NewCapsFromString("video/x-raw,format=I420,width=1280,height=720,pixel-aspect-ratio=1/1"),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP resolution capsfilter: %w", err)
 	}
 
-	// videoconvert after scaling to ensure proper format
-	stw.VideoConvert2, err = gst.NewElement("videoconvert")
-	if err != nil {
-		return fmt.Errorf("failed to create SIP videoconvert2: %w", err)
-	}
-
-	// Force 24fps output - allow frame duplication to maintain consistent timing
-	stw.VideoRate, err = gst.NewElementWithProperties("videorate", map[string]interface{}{
-		"drop-only":     false, // Allow frame duplication to maintain 24fps
-		"skip-to-first": true,  // Don't output until first frame arrives
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create SIP videorate: %w", err)
-	}
-
-	// Force 24fps in caps
-	stw.FpsFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("video/x-raw,framerate=24/1"),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create SIP fps capsfilter: %w", err)
-	}
-
-	// Buffer queue to decouple decoder timing from encoder - prevents timestamp drift over time
 	stw.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{
-		"max-size-buffers": uint(5),           // 5 frames buffer
-		"max-size-time":    uint64(250000000), // 250ms max latency
-		"leaky":            int(2),            // downstream - drop oldest on overflow
+		"max-size-buffers": uint(5),
+		"max-size-time":    uint64(250000000),
+		"leaky":            int(2),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP to WebRTC queue: %w", err)
@@ -160,12 +128,8 @@ func (stw *SipToWebrtc) Add() error {
 		stw.H264Depay,
 		stw.H264Parse,
 		stw.H264Dec,
-		stw.VideoConvert,
-		stw.VideoScale,
+		stw.VideoConvertScale,
 		stw.ResFilter,
-		stw.VideoConvert2,
-		stw.VideoRate,
-		stw.FpsFilter,
 		stw.Queue,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
@@ -181,12 +145,8 @@ func (stw *SipToWebrtc) Link() error {
 		stw.H264Depay,
 		stw.H264Parse,
 		stw.H264Dec,
-		stw.VideoConvert,
-		stw.VideoScale,
+		stw.VideoConvertScale,
 		stw.ResFilter,
-		stw.VideoConvert2,
-		stw.VideoRate,
-		stw.FpsFilter,
 		stw.Queue,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
@@ -203,12 +163,8 @@ func (stw *SipToWebrtc) Close() error {
 		stw.H264Depay,
 		stw.H264Parse,
 		stw.H264Dec,
-		stw.VideoConvert,
-		stw.VideoScale,
+		stw.VideoConvertScale,
 		stw.ResFilter,
-		stw.VideoConvert2,
-		stw.VideoRate,
-		stw.FpsFilter,
 		stw.Queue,
 		stw.Vp8Enc,
 		stw.Vp8Pay,
