@@ -318,14 +318,7 @@ func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	if r.pendingVideoSID == sid {
 		r.pendingVideoSID = ""
 	}
-	// Clean up audio subscription state
 	delete(r.audioPublications, sid)
-	for i, s := range r.activeAudioSIDs {
-		if s == sid {
-			r.activeAudioSIDs = append(r.activeAudioSIDs[:i], r.activeAudioSIDs[i+1:]...)
-			break
-		}
-	}
 }
 
 func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -340,14 +333,14 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 		r.audioPublications[rp.SID()] = pub
 		// Subscribe immediately if under the limit, otherwise defer until they speak
 		if len(r.activeAudioSIDs) < maxAudioTracks {
-			log.Debugw("subscribing to audio track (under limit)")
+			log.Infow("audio tracks: subscribing", "active", len(r.activeAudioSIDs)+1, "max", maxAudioTracks)
 			if err := pub.SetSubscribed(true); err != nil {
 				log.Errorw("cannot subscribe to the track", err)
 				return
 			}
 			r.activeAudioSIDs = append(r.activeAudioSIDs, rp.SID())
 		} else {
-			log.Debugw("deferring audio subscription (at limit)", "active", len(r.activeAudioSIDs))
+			log.Infow("audio tracks: deferring subscription", "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
 		}
 		r.subscribed.Break()
 		return
@@ -430,6 +423,18 @@ func (r *Room) evictOldVideoTracks() {
 // UpdateActiveAudioSubscriptions subscribes to the top active speakers' audio tracks
 // and unsubscribes from evicted ones. Keeps at most maxAudioTracks subscribed.
 func (r *Room) UpdateActiveAudioSubscriptions(speakers []lksdk.Participant) {
+	// Remove SIDs of participants who left
+	filtered := r.activeAudioSIDs[:0]
+	for _, sid := range r.activeAudioSIDs {
+		if _, ok := r.audioPublications[sid]; ok {
+			filtered = append(filtered, sid)
+		}
+	}
+	if len(r.activeAudioSIDs) != len(filtered) {
+		r.log.Infow("audio tracks: removed stale SIDs", "before", len(r.activeAudioSIDs), "after", len(filtered))
+	}
+	r.activeAudioSIDs = filtered
+
 	for _, speaker := range speakers {
 		sid := speaker.SID()
 		if _, ok := r.audioPublications[sid]; !ok {
@@ -455,14 +460,14 @@ func (r *Room) UpdateActiveAudioSubscriptions(speakers []lksdk.Participant) {
 			continue
 		}
 		r.activeAudioSIDs = append(r.activeAudioSIDs, sid)
-		r.log.Infow("subscribed to active speaker audio", "sid", sid, "active", len(r.activeAudioSIDs))
+		r.log.Infow("audio tracks: promoted active speaker", "sid", sid, "active", len(r.activeAudioSIDs))
 
 		// Evict oldest if over limit
 		for len(r.activeAudioSIDs) > maxAudioTracks {
 			evictSID := r.activeAudioSIDs[0]
 			r.activeAudioSIDs = r.activeAudioSIDs[1:]
 			if evictPub, ok := r.audioPublications[evictSID]; ok {
-				r.log.Infow("unsubscribing evicted audio track", "sid", evictSID, "active", len(r.activeAudioSIDs))
+				r.log.Infow("audio tracks: evicted oldest", "sid", evictSID, "active", len(r.activeAudioSIDs))
 				evictPub.SetSubscribed(false)
 			}
 		}
