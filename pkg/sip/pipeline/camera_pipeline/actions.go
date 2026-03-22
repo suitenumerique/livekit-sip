@@ -168,13 +168,14 @@ func (cp *CameraPipeline) AddWebrtcTrack(ssrc uint32, rtp, rtcp io.ReadCloser, r
 	return track, nil
 }
 
-func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
+// DisconnectWebrtcTrack disconnects a track from the pipeline graph (fast).
+// Returns the track for deferred Cleanup(), or nil if not found.
+func (cp *CameraPipeline) DisconnectWebrtcTrack(ssrc uint32) *WebrtcTrack {
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok {
-		return fmt.Errorf("webrtc track with ssrc %d not found", ssrc)
+		return nil
 	}
 
-	// Check if this is the currently active track
 	activePadName := cp.getActivePadName()
 	trackPadName := ""
 	if track.SelPad != nil {
@@ -182,9 +183,9 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 	}
 	isActive := activePadName == trackPadName && trackPadName != ""
 
-	// Clear pending switch on track removal
 	cp.pendingSwitchSSRC = 0
 
+	// Switch to an alternate track before disconnecting the active one
 	var newTrack *WebrtcTrack
 	if isActive {
 		for s, t := range cp.WebrtcIo.Tracks {
@@ -207,10 +208,17 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 		cp.ResetX264Encoder()
 	}
 
-	if err := track.Close(); err != nil {
-		return fmt.Errorf("failed to close webrtc track with ssrc %d: %w", ssrc, err)
-	}
+	track.Disconnect()
+	return track
+}
 
+// RemoveWebrtcTrack disconnects and immediately cleans up a track (blocking).
+func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
+	track := cp.DisconnectWebrtcTrack(ssrc)
+	if track == nil {
+		return fmt.Errorf("webrtc track with ssrc %d not found", ssrc)
+	}
+	track.Cleanup()
 	return nil
 }
 

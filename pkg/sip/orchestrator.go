@@ -12,6 +12,7 @@ import (
 
 	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
 	"github.com/livekit/protocol/logger"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline"
 )
 
@@ -72,6 +73,7 @@ type MediaOrchestrator struct {
 	inbound *sipInbound
 
 	dispatchCH chan dispatchOperation
+	cleanupCH  chan func()
 	dispatchOK atomic.Bool
 	wg         sync.WaitGroup
 
@@ -85,8 +87,12 @@ type MediaOrchestrator struct {
 	delayedOfferSDP *sdpv2.SDP // SDP offer sent in 200 OK for delayed offer calls
 	state           MediaState
 
+	// Active speaker debounce: store latest speakers under mutex, single dispatch on timer fire
+	pendingSpeakers    []lksdk.Participant
+	pendingSpeakersMu  sync.Mutex
 	activeSpeakerTimer *time.Timer
-	room               *Room
+
+	room *Room
 }
 
 func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipInbound, room *Room, audioinfo AudioInfo, opts *MediaOptions) (*MediaOrchestrator, error) {
@@ -98,6 +104,7 @@ func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipIn
 		opts:       opts,
 		inbound:    inbound,
 		dispatchCH: make(chan dispatchOperation, 1),
+		cleanupCH:  make(chan func(), 16),
 		audioinfo:  audioinfo,
 		state:      MediaStateNew,
 	}
@@ -223,6 +230,8 @@ func (o *MediaOrchestrator) dispatchLoop() {
 		case <-o.ctx.Done():
 			mu.Lock()
 			o.log.Debugw("media orchestrator dispatch loop exiting")
+			// Drain pending cleanup before closing
+			o.drainCleanup()
 			if err := o.close(); err != nil {
 				o.log.Errorw("error closing media orchestrator", err)
 			}
@@ -233,6 +242,32 @@ func (o *MediaOrchestrator) dispatchLoop() {
 			err := op.fn()
 			op.done <- err
 			mu.Unlock()
+		case cleanup := <-o.cleanupCH:
+			// Deferred element teardown, same OS-locked thread
+			cleanup()
+		}
+	}
+}
+
+// scheduleCleanup sends a cleanup function to the dispatch loop for deferred execution.
+// Falls back to inline execution if the channel is full.
+func (o *MediaOrchestrator) scheduleCleanup(fn func()) {
+	select {
+	case o.cleanupCH <- fn:
+	default:
+		o.log.Warnw("cleanup channel full, executing inline", nil)
+		fn()
+	}
+}
+
+// drainCleanup executes all pending cleanup functions before shutdown.
+func (o *MediaOrchestrator) drainCleanup() {
+	for {
+		select {
+		case cleanup := <-o.cleanupCH:
+			cleanup()
+		default:
+			return
 		}
 	}
 }

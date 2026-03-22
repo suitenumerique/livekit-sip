@@ -209,13 +209,15 @@ func (wt *WebrtcTrack) queueOutputProbe(pad *gst.Pad, info *gst.PadProbeInfo) gs
 	return gst.PadProbeOK
 }
 
-func (wt *WebrtcTrack) Close() error {
+// Disconnect releases pads and removes track from parent map.
+// Elements are orphaned but still in pipeline — call Cleanup() to finalize.
+func (wt *WebrtcTrack) Disconnect() {
 	if wt.SelPad != nil {
 		active, err := wt.parent.InputSelector.GetProperty("active-pad")
 		if err == nil && active != nil {
 			if activePad, ok := active.(*gst.Pad); ok && activePad != nil {
 				if activePad.GetName() == wt.SelPad.GetName() {
-					wt.log.Warnw("Closing active track", nil, "ssrc", wt.SSRC)
+					wt.log.Warnw("Disconnecting active track", nil, "ssrc", wt.SSRC)
 				}
 			}
 		}
@@ -234,26 +236,34 @@ func (wt *WebrtcTrack) Close() error {
 		wt.RtcpFunnelPad = nil
 	}
 
-	for _, elem := range []*gst.Element{
+	delete(wt.parent.Tracks, wt.SSRC)
+	wt.log.Infow("Disconnected webrtc track", "ssrc", wt.SSRC)
+}
+
+// Cleanup sets orphaned elements to null state and removes them from pipeline.
+// Must run on the same OS-locked thread as all GStreamer operations.
+func (wt *WebrtcTrack) Cleanup() {
+	elements := []*gst.Element{
 		wt.WebrtcRtpIn,
 		wt.Vp8Depay,
 		wt.RtpQueue,
 		wt.WebrtcRtcpIn,
-	} {
+	}
+
+	for _, elem := range elements {
 		if err := elem.SetState(gst.StateNull); err != nil {
 			wt.log.Errorw("Failed to set webrtc track element to null state", err, "element", elem.GetName())
 		}
 	}
 
-	wt.parent.pipeline.Pipeline().RemoveMany(
-		wt.WebrtcRtpIn,
-		wt.Vp8Depay,
-		wt.RtpQueue,
-		wt.WebrtcRtcpIn,
-	)
+	wt.parent.pipeline.Pipeline().RemoveMany(elements...)
+	wt.log.Infow("Cleaned up webrtc track elements", "ssrc", wt.SSRC)
+}
 
-	wt.log.Infow("Closed webrtc track", "ssrc", wt.SSRC)
-	delete(wt.parent.Tracks, wt.SSRC)
-	wt.log.Infow("Removed webrtc track from parent", "ssrc", wt.SSRC)
+// Close disconnects and immediately cleans up (blocking).
+// Prefer Disconnect() + deferred Cleanup() for non-blocking removal.
+func (wt *WebrtcTrack) Close() error {
+	wt.Disconnect()
+	wt.Cleanup()
 	return nil
 }

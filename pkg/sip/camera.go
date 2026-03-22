@@ -102,20 +102,33 @@ func (cm *CameraManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc uint3
 	return nil
 }
 
-func (cm *CameraManager) RemoveWebrtcTrackInput(sid string) error {
+// DisconnectWebrtcTrackInput disconnects a track from the pipeline (fast).
+// Returns a cleanup function to finalize element teardown, or nil if not found.
+func (cm *CameraManager) DisconnectWebrtcTrackInput(sid string) func() {
 	ssrc, ok := cm.ssrcs[sid]
 	if !ok {
-		return fmt.Errorf("no SSRC found for sid %s", sid)
+		cm.log.Warnw("no SSRC found for sid", nil, "sid", sid)
+		return nil
 	}
-	cm.log.Debugw("removing WebRTC video track input", "sid", sid, "ssrc", ssrc)
+	cm.log.Debugw("disconnecting WebRTC video track input", "sid", sid, "ssrc", ssrc)
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 
-	if err := p.RemoveWebrtcTrack(ssrc); err != nil {
-		return fmt.Errorf("failed to remove WebRTC source from selector: %w", err)
-	}
-
+	track := p.DisconnectWebrtcTrack(ssrc)
 	delete(cm.ssrcs, sid)
+
+	if track == nil {
+		return nil
+	}
+	return track.Cleanup
+}
+
+// RemoveWebrtcTrackInput disconnects and immediately cleans up a track (blocking).
+func (cm *CameraManager) RemoveWebrtcTrackInput(sid string) error {
+	cleanup := cm.DisconnectWebrtcTrackInput(sid)
+	if cleanup != nil {
+		cleanup()
+	}
 	return nil
 }
 

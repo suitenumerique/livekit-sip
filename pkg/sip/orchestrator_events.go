@@ -65,7 +65,12 @@ func (o *MediaOrchestrator) cameraTrackUnsubscribed(_ *webrtc.TrackRemote, _ *lk
 	if o.camera.Status() != VideoStatusStarted {
 		return nil
 	}
-	return o.camera.RemoveWebrtcTrackInput(rp.SID())
+	// Disconnect track from pipeline (fast), schedule element teardown for later
+	cleanup := o.camera.DisconnectWebrtcTrackInput(rp.SID())
+	if cleanup != nil {
+		o.scheduleCleanup(cleanup)
+	}
+	return nil
 }
 
 func (o *MediaOrchestrator) screenshareTrackUnsubscribed(_ *webrtc.TrackRemote, _ *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error {
@@ -124,21 +129,32 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 	return nil
 }
 
+// ActiveParticipantChanged debounces active speaker events.
+// Stores latest speakers under mutex, dispatches once when 300ms timer fires.
 func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) error {
-	if err := o.dispatch(func() error {
-		// Debounce active speaker changes (300ms)
-		if o.activeSpeakerTimer != nil {
-			o.activeSpeakerTimer.Stop()
-		}
-		o.activeSpeakerTimer = time.AfterFunc(300*time.Millisecond, func() {
-			o.dispatch(func() error {
-				return o.activeParticipantChanged(p)
-			})
-		})
+	o.pendingSpeakersMu.Lock()
+	defer o.pendingSpeakersMu.Unlock()
+
+	o.pendingSpeakers = p
+
+	if o.activeSpeakerTimer != nil {
 		return nil
-	}); err != nil {
-		return fmt.Errorf("could not handle active participant changed: %w", err)
 	}
+
+	o.activeSpeakerTimer = time.AfterFunc(300*time.Millisecond, func() {
+		o.pendingSpeakersMu.Lock()
+		speakers := o.pendingSpeakers
+		o.pendingSpeakers = nil
+		o.activeSpeakerTimer = nil
+		o.pendingSpeakersMu.Unlock()
+
+		if speakers == nil {
+			return
+		}
+		o.dispatch(func() error {
+			return o.activeParticipantChanged(speakers)
+		})
+	})
 	return nil
 }
 
