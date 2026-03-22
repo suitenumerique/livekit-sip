@@ -108,6 +108,9 @@ func (o *MediaOrchestrator) WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 }
 
 func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) error {
+	// Update audio subscriptions (subscribe to active speakers, evict old ones)
+	o.room.UpdateActiveAudioSubscriptions(p)
+
 	if o.camera.Status() != VideoStatusStarted {
 		return nil
 	}
@@ -141,7 +144,7 @@ func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) erro
 		return nil
 	}
 
-	o.activeSpeakerTimer = time.AfterFunc(300*time.Millisecond, func() {
+	o.activeSpeakerTimer = time.AfterFunc(500*time.Millisecond, func() {
 		o.pendingSpeakersMu.Lock()
 		speakers := o.pendingSpeakers
 		o.pendingSpeakers = nil

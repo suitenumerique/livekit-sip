@@ -177,6 +177,10 @@ type Room struct {
 	videoPublications map[string]*videoPublicationInfo
 	activeVideoSID   string
 	pendingVideoSID  string
+
+	// Audio subscription management: subscribe only to the last maxAudioTracks speakers
+	audioPublications map[string]*lksdk.RemoteTrackPublication
+	activeAudioSIDs   []string
 }
 
 type videoPublicationInfo struct {
@@ -219,7 +223,13 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 	if st == nil {
 		st = &RoomStats{}
 	}
-	r := &Room{log: log, stats: st, out: msdk.NewSwitchWriter(RoomSampleRate), videoPublications: make(map[string]*videoPublicationInfo)}
+	r := &Room{
+		log:               log,
+		stats:             st,
+		out:               msdk.NewSwitchWriter(RoomSampleRate),
+		videoPublications: make(map[string]*videoPublicationInfo),
+		audioPublications: make(map[string]*lksdk.RemoteTrackPublication),
+	}
 	out := newMediaWriterCount(r.out, &st.OutputFrames, &st.OutputSamples)
 
 	var err error
@@ -308,6 +318,14 @@ func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	if r.pendingVideoSID == sid {
 		r.pendingVideoSID = ""
 	}
+	// Clean up audio subscription state
+	delete(r.audioPublications, sid)
+	for i, s := range r.activeAudioSIDs {
+		if s == sid {
+			r.activeAudioSIDs = append(r.activeAudioSIDs[:i], r.activeAudioSIDs[i+1:]...)
+			break
+		}
+	}
 }
 
 func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -319,10 +337,17 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 
 	if k == lksdk.TrackKindAudio {
-		log.Debugw("subscribing to audio track")
-		if err := pub.SetSubscribed(true); err != nil {
-			log.Errorw("cannot subscribe to the track", err)
-			return
+		r.audioPublications[rp.SID()] = pub
+		// Subscribe immediately if under the limit, otherwise defer until they speak
+		if len(r.activeAudioSIDs) < maxAudioTracks {
+			log.Debugw("subscribing to audio track (under limit)")
+			if err := pub.SetSubscribed(true); err != nil {
+				log.Errorw("cannot subscribe to the track", err)
+				return
+			}
+			r.activeAudioSIDs = append(r.activeAudioSIDs, rp.SID())
+		} else {
+			log.Debugw("deferring audio subscription (at limit)", "active", len(r.activeAudioSIDs))
 		}
 		r.subscribed.Break()
 		return
@@ -340,6 +365,7 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 }
 
+const maxAudioTracks = 8
 const maxWarmVideoTracks = 3
 
 // SwitchVideoSubscription switches to the given speaker's video track.
@@ -396,6 +422,48 @@ func (r *Room) evictOldVideoTracks() {
 				info.subscribed = false
 				subscribed--
 				break
+			}
+		}
+	}
+}
+
+// UpdateActiveAudioSubscriptions subscribes to the top active speakers' audio tracks
+// and unsubscribes from evicted ones. Keeps at most maxAudioTracks subscribed.
+func (r *Room) UpdateActiveAudioSubscriptions(speakers []lksdk.Participant) {
+	for _, speaker := range speakers {
+		sid := speaker.SID()
+		if _, ok := r.audioPublications[sid]; !ok {
+			continue
+		}
+		// Move to front if already active
+		found := false
+		for i, s := range r.activeAudioSIDs {
+			if s == sid {
+				// Move to end (most recent)
+				r.activeAudioSIDs = append(append(r.activeAudioSIDs[:i], r.activeAudioSIDs[i+1:]...), sid)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		// New speaker: subscribe and add
+		pub := r.audioPublications[sid]
+		if err := pub.SetSubscribed(true); err != nil {
+			r.log.Errorw("cannot subscribe to audio track", err, "sid", sid)
+			continue
+		}
+		r.activeAudioSIDs = append(r.activeAudioSIDs, sid)
+		r.log.Infow("subscribed to active speaker audio", "sid", sid, "active", len(r.activeAudioSIDs))
+
+		// Evict oldest if over limit
+		for len(r.activeAudioSIDs) > maxAudioTracks {
+			evictSID := r.activeAudioSIDs[0]
+			r.activeAudioSIDs = r.activeAudioSIDs[1:]
+			if evictPub, ok := r.audioPublications[evictSID]; ok {
+				r.log.Infow("unsubscribing evicted audio track", "sid", evictSID, "active", len(r.activeAudioSIDs))
+				evictPub.SetSubscribed(false)
 			}
 		}
 	}

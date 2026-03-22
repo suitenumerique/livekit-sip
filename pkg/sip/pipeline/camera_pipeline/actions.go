@@ -240,6 +240,13 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		return nil
 	}
 
+	// Skip if already mid-switch (let current switch complete first)
+	if cp.pendingSwitchSSRC != 0 {
+		cp.Log().Debugw("skipping switch, already mid-switch",
+			"pending", cp.pendingSwitchSSRC, "requested", ssrc)
+		return nil
+	}
+
 	// No switch needed with a single track
 	if len(cp.WebrtcIo.Tracks) <= 1 {
 		return nil
@@ -440,6 +447,8 @@ func (cp *CameraPipeline) doRequestSipKeyframe() {
 	}
 }
 
+// ForceKeyframeOnEncoder sends an upstream ForceKeyUnit event to x264enc.
+// Uses upstream event on src pad to avoid blocking on a backed-up encoder.
 func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 	fkuStruct := gst.NewStructure("GstForceKeyUnit")
 	runtime.SetFinalizer(fkuStruct, nil)
@@ -447,14 +456,14 @@ func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 	fkuStruct.SetValue("all-headers", true)
 	fkuStruct.SetValue("count", uint(0))
 
-	fkuEvent := gst.NewCustomEvent(gst.EventTypeCustomDownstream, fkuStruct)
+	fkuEvent := gst.NewCustomEvent(gst.EventTypeCustomUpstream, fkuStruct)
 
-	sinkPad := cp.WebrtcToSip.X264Enc.GetStaticPad("sink")
-	if sinkPad == nil {
-		return fmt.Errorf("x264enc sink pad not found")
+	srcPad := cp.WebrtcToSip.X264Enc.GetStaticPad("src")
+	if srcPad == nil {
+		return fmt.Errorf("x264enc src pad not found")
 	}
 
-	sinkPad.SendEvent(fkuEvent)
+	srcPad.SendEvent(fkuEvent)
 	return nil
 }
 
