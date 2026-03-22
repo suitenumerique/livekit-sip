@@ -56,7 +56,7 @@ func (stw *SipToWebrtc) Create() error {
 	}
 
 	stw.H264Dec, err = gst.NewElementWithProperties("avdec_h264", map[string]interface{}{
-		"max-threads": int(4),
+		"max-threads": int(2),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP h264 decoder: %w", err)
@@ -121,7 +121,7 @@ func (stw *SipToWebrtc) Create() error {
 		"cpu-used":            int(8),
 		"keyframe-max-dist":   int(12),
 		"lag-in-frames":       int(0),
-		"threads":             int(4),
+		"threads":             int(2),
 		"token-partitions":    int(2),   // Enable 4 partitions for multi-threaded encoding
 		"buffer-initial-size": int(200), // Increased for long sessions
 		"buffer-optimal-size": int(300), // Increased for long sessions
