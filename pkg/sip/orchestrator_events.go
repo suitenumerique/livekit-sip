@@ -118,6 +118,8 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 		return nil
 	}
 
+	o.log.Infow("active speaker changed", "topSID", p[0].SID(), "speakers", len(p))
+
 	for _, speaker := range p {
 		sid := speaker.SID()
 		if err := o.room.SwitchVideoSubscription(sid); err != nil {
