@@ -226,11 +226,22 @@ func (o *MediaOrchestrator) dispatchLoop() {
 	mu := sync.Mutex{}
 
 	for {
+		// Dispatch operations have priority over cleanup
+		select {
+		case op := <-o.dispatchCH:
+			mu.Lock()
+			err := op.fn()
+			op.done <- err
+			mu.Unlock()
+			continue
+		default:
+		}
+
+		// Process cleanup or wait for dispatch/shutdown
 		select {
 		case <-o.ctx.Done():
 			mu.Lock()
 			o.log.Debugw("media orchestrator dispatch loop exiting")
-			// Drain pending cleanup before closing
 			o.drainCleanup()
 			if err := o.close(); err != nil {
 				o.log.Errorw("error closing media orchestrator", err)
@@ -243,7 +254,6 @@ func (o *MediaOrchestrator) dispatchLoop() {
 			op.done <- err
 			mu.Unlock()
 		case cleanup := <-o.cleanupCH:
-			// Deferred element teardown, same OS-locked thread
 			cleanup()
 		}
 	}
