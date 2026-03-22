@@ -137,6 +137,8 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 // ActiveParticipantChanged debounces active speaker events.
 // Stores latest speakers under mutex, dispatches once when 300ms timer fires.
 func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) error {
+	o.log.Debugw("OnActiveSpeakersChanged received", "speakers", len(p))
+
 	o.pendingSpeakersMu.Lock()
 	defer o.pendingSpeakersMu.Unlock()
 
@@ -147,6 +149,8 @@ func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) erro
 	}
 
 	o.activeSpeakerTimer = time.AfterFunc(500*time.Millisecond, func() {
+		o.log.Debugw("active speaker debounce timer fired")
+
 		o.pendingSpeakersMu.Lock()
 		speakers := o.pendingSpeakers
 		o.pendingSpeakers = nil
@@ -156,9 +160,11 @@ func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) erro
 		if speakers == nil {
 			return
 		}
-		o.dispatch(func() error {
+		if err := o.dispatch(func() error {
 			return o.activeParticipantChanged(speakers)
-		})
+		}); err != nil {
+			o.log.Errorw("active speaker dispatch failed", err)
+		}
 	})
 	return nil
 }
