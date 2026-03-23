@@ -224,31 +224,37 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 
 func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
+	cp.Log().Infow("SwitchWebrtcInput", "ssrc", ssrc, "trackFound", ok,
+		"isActive", cp.isActiveTrack(ssrc), "pendingSwitch", cp.pendingSwitchSSRC,
+		"totalTracks", len(cp.WebrtcIo.Tracks))
+
 	if !ok {
 		return fmt.Errorf("webrtc track with ssrc %d not found", ssrc)
 	}
 
 	if track.SelPad == nil {
+		cp.Log().Warnw("SwitchWebrtcInput: no selector pad", nil, "ssrc", ssrc)
 		return nil
 	}
 
 	if cp.isActiveTrack(ssrc) {
+		cp.Log().Debugw("SwitchWebrtcInput: already active", "ssrc", ssrc)
 		return nil
 	}
 
 	if cp.pendingSwitchSSRC == ssrc {
+		cp.Log().Debugw("SwitchWebrtcInput: already pending", "ssrc", ssrc)
 		return nil
 	}
 
-	// Skip if already mid-switch (let current switch complete first)
 	if cp.pendingSwitchSSRC != 0 {
-		cp.Log().Debugw("skipping switch, already mid-switch",
+		cp.Log().Debugw("SwitchWebrtcInput: mid-switch, skipping",
 			"pending", cp.pendingSwitchSSRC, "requested", ssrc)
 		return nil
 	}
 
-	// No switch needed with a single track
 	if len(cp.WebrtcIo.Tracks) <= 1 {
+		cp.Log().Debugw("SwitchWebrtcInput: only 1 track, no switch needed", "ssrc", ssrc)
 		return nil
 	}
 
