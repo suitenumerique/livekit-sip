@@ -225,6 +225,7 @@ type RoomCallbacks interface {
 	WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
 	ActiveParticipantChanged(p []lksdk.Participant) error
 	VideoTrackEvicted(sid string) error
+	VideoTrackReady(sid string) error
 	LocalParticipantReady(p *lksdk.LocalParticipant) error
 	Disconnect() error
 }
@@ -406,6 +407,13 @@ func (r *Room) onVideoTrackReady(sid string) {
 	r.activeVideoSID = sid
 	r.pendingVideoSID = ""
 	r.evictOldVideoTracks()
+	// Notify orchestrator to switch camera pipeline to the new track
+	cb := r.callbackHandler.Load()
+	if cb != nil {
+		if err := (*cb).VideoTrackReady(sid); err != nil {
+			r.log.Errorw("video track ready callback error", err)
+		}
+	}
 }
 
 // evictOldVideoTracks unsubscribes oldest non-active tracks beyond maxWarmVideoTracks limit.

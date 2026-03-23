@@ -97,6 +97,19 @@ func (o *MediaOrchestrator) webrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 	return nil
 }
 
+func (o *MediaOrchestrator) VideoTrackReady(sid string) error {
+	if o.camera.Status() != VideoStatusStarted {
+		return nil
+	}
+	if err := o.dispatch(func() error {
+		o.camera.SwitchActiveWebrtcTrack(sid)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("could not handle video track ready: %w", err)
+	}
+	return nil
+}
+
 func (o *MediaOrchestrator) VideoTrackEvicted(sid string) error {
 	if o.camera.Status() != VideoStatusStarted {
 		return nil
