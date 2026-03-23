@@ -505,6 +505,9 @@ func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 }
 
 func (cp *CameraPipeline) ResetVp8Decoder() {
+	if err := cp.FlushVp8Decoder(); err != nil {
+		cp.Log().Warnw("failed to flush vp8 decoder", err)
+	}
 }
 
 func (cp *CameraPipeline) ResetX264Encoder() {
