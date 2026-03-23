@@ -153,9 +153,14 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 	// Complete deferred switch if this track was pending
 	if wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC {
 		wt.log.Infow("completing pending switch after LinkParent", "ssrc", wt.SSRC)
-		// Use executeSwitch (clean, SeenKeyframeInQueue=false drops P-frames until keyframe)
-		// The first frame from LiveKit is a keyframe, so this switches at the right moment
-		wt.parent.pipeline.executeSwitch(wt.SSRC)
+		// Reset pending state so SwitchWebrtcInput proceeds to keyframe-wait path
+		wt.parent.pipeline.pendingSwitchSSRC = 0
+		if wt.parent.pipeline.switchTimer != nil {
+			wt.parent.pipeline.switchTimer.Stop()
+			wt.parent.pipeline.switchTimer = nil
+		}
+		// Wait for keyframe before switching (clean path, no artifacts)
+		wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC)
 	}
 
 	return nil

@@ -345,7 +345,6 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 		return fmt.Errorf("failed to set active-pad: %w", err)
 	}
 
-	cp.ResetVp8Decoder()
 	cp.ResetX264Encoder()
 	cp.pendingSwitchSSRC = 0
 
@@ -504,27 +503,6 @@ func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 	return nil
 }
 
-func (cp *CameraPipeline) ResetVp8Decoder() {
-	if err := cp.FlushVp8Decoder(); err != nil {
-		cp.Log().Warnw("failed to flush vp8 decoder", err)
-	}
-}
-
 func (cp *CameraPipeline) ResetX264Encoder() {
 	cp.ForceKeyframeOnEncoder()
-}
-
-func (cp *CameraPipeline) FlushVp8Decoder() error {
-	sinkPad := cp.WebrtcToSip.Vp8Dec.GetStaticPad("sink")
-	if sinkPad == nil {
-		return fmt.Errorf("vp8dec sink pad not found")
-	}
-
-	flushStart := gst.NewFlushStartEvent()
-	sinkPad.SendEvent(flushStart)
-
-	flushStop := gst.NewFlushStopEvent(true)
-	sinkPad.SendEvent(flushStop)
-
-	return nil
 }
