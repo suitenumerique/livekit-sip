@@ -387,7 +387,7 @@ func (r *Room) SwitchVideoSubscription(newSID string) error {
 		r.activeVideoSID = newSID
 		return nil
 	}
-	r.log.Infow("subscribing to new video track", "newSID", newSID, "oldSID", r.activeVideoSID)
+	r.log.Infow("subscribing to new video track", "newSID", newSID, "oldSID", r.activeVideoSID, "pendingBefore", r.pendingVideoSID)
 	r.pendingVideoSID = newSID
 	info.pub.SetSubscribed(true)
 	info.subscribed = true
@@ -401,6 +401,7 @@ func (r *Room) IsVideoTrackReady(sid string) bool {
 
 // onVideoTrackReady completes the make-before-break switch when a new track arrives.
 func (r *Room) onVideoTrackReady(sid string) {
+	r.log.Infow("onVideoTrackReady", "sid", sid, "pendingVideoSID", r.pendingVideoSID, "activeVideoSID", r.activeVideoSID)
 	if r.pendingVideoSID != sid {
 		return
 	}

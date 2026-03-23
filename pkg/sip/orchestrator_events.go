@@ -178,7 +178,9 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 			o.log.Debugw("no video for speaker", "sid", sid)
 			continue
 		}
-		if o.room.IsVideoTrackReady(sid) {
+		ready := o.room.IsVideoTrackReady(sid)
+		o.log.Infow("video switch attempt", "sid", sid, "ready", ready)
+		if ready {
 			o.camera.SwitchActiveWebrtcTrack(sid)
 		}
 		return nil
