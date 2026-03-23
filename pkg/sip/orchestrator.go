@@ -92,6 +92,11 @@ type MediaOrchestrator struct {
 	pendingSpeakersMu  sync.Mutex
 	activeSpeakerTimer *time.Timer
 
+	// Video switch stability: require consecutive speaker events before switching
+	previousTopSID     string
+	videoSwitchCounter int
+	lastVideoSwitchSID string
+
 	room *Room
 }
 

@@ -120,8 +120,10 @@ func (o *MediaOrchestrator) WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 	return nil
 }
 
+const videoSwitchStabilityThreshold = 2
+
 func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) error {
-	// Update audio subscriptions (subscribe to active speakers, evict old ones)
+	// Update audio subscriptions (promote active speakers, evict old ones)
 	o.room.UpdateActiveAudioSubscriptions(p)
 
 	if o.camera.Status() != VideoStatusStarted {
@@ -131,7 +133,31 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 		return nil
 	}
 
-	o.log.Infow("active speaker changed", "topSID", p[0].SID(), "speakers", len(p))
+	topSID := p[0].SID()
+
+	// Video switch stability: require consecutive events with the same top speaker
+	if topSID == o.lastVideoSwitchSID {
+		o.log.Debugw("video switch skipped, same speaker", "sid", topSID)
+		o.previousTopSID = topSID
+		return nil
+	}
+	if topSID != o.previousTopSID {
+		// New candidate — reset counter
+		o.previousTopSID = topSID
+		o.videoSwitchCounter = 1
+		o.log.Debugw("video switch candidate", "sid", topSID, "count", 1)
+		return nil
+	}
+	// Same candidate as last time — increment
+	o.videoSwitchCounter++
+	if o.videoSwitchCounter < videoSwitchStabilityThreshold {
+		o.log.Debugw("video switch candidate", "sid", topSID, "count", o.videoSwitchCounter)
+		return nil
+	}
+
+	// Stable speaker — switch video
+	o.log.Infow("active speaker changed", "topSID", topSID, "speakers", len(p))
+	o.lastVideoSwitchSID = topSID
 
 	for _, speaker := range p {
 		sid := speaker.SID()
