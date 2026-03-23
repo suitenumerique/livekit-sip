@@ -330,18 +330,10 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 
 	if k == lksdk.TrackKindAudio {
+		// Store publication for deferred subscription — UpdateActiveAudioSubscriptions
+		// will subscribe the right participants based on who's actually speaking.
 		r.audioPublications[rp.SID()] = pub
-		// Subscribe immediately if under the limit, otherwise defer until they speak
-		if len(r.activeAudioSIDs) < maxAudioTracks {
-			log.Infow("audio tracks: subscribing", "active", len(r.activeAudioSIDs)+1, "max", maxAudioTracks)
-			if err := pub.SetSubscribed(true); err != nil {
-				log.Errorw("cannot subscribe to the track", err)
-				return
-			}
-			r.activeAudioSIDs = append(r.activeAudioSIDs, rp.SID())
-		} else {
-			log.Infow("audio tracks: deferring subscription", "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
-		}
+		log.Infow("audio tracks: stored publication", "total", len(r.audioPublications), "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
 		r.subscribed.Break()
 		return
 	}
@@ -476,16 +468,67 @@ func (r *Room) UpdateActiveAudioSubscriptions(speakers []lksdk.Participant) {
 }
 
 // subscribeFirstVideoTrack subscribes to the first available camera track.
+// Prefers a participant who has an active audio subscription (likely a speaker).
 func (r *Room) subscribeFirstVideoTrack() {
-	for sid, info := range r.videoPublications {
-		if r.activeVideoSID == "" {
-			r.log.Infow("subscribing to first video track", "sid", sid)
+	if r.activeVideoSID != "" {
+		return
+	}
+	// Prefer a participant with active audio (more likely to be a speaker)
+	for _, sid := range r.activeAudioSIDs {
+		if info, ok := r.videoPublications[sid]; ok {
+			r.log.Infow("subscribing to first video track (active audio)", "sid", sid)
 			info.pub.SetSubscribed(true)
 			info.subscribed = true
 			r.activeVideoSID = sid
 			return
 		}
 	}
+	// Fallback: any video track
+	for sid, info := range r.videoPublications {
+		r.log.Infow("subscribing to first video track (fallback)", "sid", sid)
+		info.pub.SetSubscribed(true)
+		info.subscribed = true
+		r.activeVideoSID = sid
+		return
+	}
+}
+
+// subscribeInitialAudioTracks subscribes up to maxAudioTracks.
+// Promotes current speakers via UpdateActiveAudioSubscriptions, fills remaining slots.
+func (r *Room) subscribeInitialAudioTracks() {
+	// Build speakers list from current room state
+	var speakers []lksdk.Participant
+	for _, rp := range r.room.GetRemoteParticipants() {
+		if rp.IsSpeaking() {
+			speakers = append(speakers, rp)
+		}
+	}
+	if len(speakers) > 0 {
+		r.UpdateActiveAudioSubscriptions(speakers)
+	}
+
+	// Fill remaining slots with non-speaking participants
+	for sid, pub := range r.audioPublications {
+		if len(r.activeAudioSIDs) >= maxAudioTracks {
+			break
+		}
+		already := false
+		for _, s := range r.activeAudioSIDs {
+			if s == sid {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+		if err := pub.SetSubscribed(true); err != nil {
+			r.log.Errorw("cannot subscribe to audio track", err, "sid", sid)
+			continue
+		}
+		r.activeAudioSIDs = append(r.activeAudioSIDs, sid)
+	}
+	r.log.Infow("audio tracks: initial subscription", "active", len(r.activeAudioSIDs), "total", len(r.audioPublications), "max", maxAudioTracks)
 }
 
 func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
@@ -650,6 +693,8 @@ func (r *Room) Subscribe() {
 			}
 		}
 	}
+	// Subscribe first N audio tracks so there's audio before the first active speaker event
+	r.subscribeInitialAudioTracks()
 	r.subscribeFirstVideoTrack()
 }
 
