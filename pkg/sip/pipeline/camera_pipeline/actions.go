@@ -260,6 +260,17 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		cp.Log().Warnw("failed to request keyframe", err, "ssrc", ssrc)
 	}
 
+	// Timer fallback: force dirty switch if no keyframe arrives via pad probes
+	if cp.switchTimer != nil {
+		cp.switchTimer.Stop()
+	}
+	cp.switchTimer = time.AfterFunc(MaxKeyframeWaitTime, func() {
+		if cp.pendingSwitchSSRC == ssrc {
+			cp.Log().Warnw("keyframe timeout (timer), forcing dirty switch", nil, "ssrc", ssrc)
+			cp.executeDirtySwitch(ssrc)
+		}
+	})
+
 	return nil
 }
 
@@ -297,6 +308,10 @@ func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
 }
 
 func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
+	if cp.switchTimer != nil {
+		cp.switchTimer.Stop()
+		cp.switchTimer = nil
+	}
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok {
 		return fmt.Errorf("track %d not found", ssrc)
@@ -321,6 +336,10 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 
 // executeDirtySwitch switches the active pad and allows frames through without a keyframe.
 func (cp *CameraPipeline) executeDirtySwitch(ssrc uint32) {
+	if cp.switchTimer != nil {
+		cp.switchTimer.Stop()
+		cp.switchTimer = nil
+	}
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok || track.SelPad == nil {
 		cp.pendingSwitchSSRC = 0

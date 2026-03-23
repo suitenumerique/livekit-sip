@@ -23,6 +23,7 @@ type CameraPipeline struct {
 	pendingSwitchSSRC   uint32
 	switchStartTime     time.Time
 	lastPLITime         time.Time
+	switchTimer         *time.Timer
 	sipKeyframeRequests chan struct{} // Channel for requesting SIP keyframes from goroutines
 }
 
