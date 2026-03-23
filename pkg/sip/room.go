@@ -330,10 +330,16 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 
 	if k == lksdk.TrackKindAudio {
-		// Store publication for deferred subscription — UpdateActiveAudioSubscriptions
-		// will subscribe the right participants based on who's actually speaking.
 		r.audioPublications[rp.SID()] = pub
-		log.Infow("audio tracks: stored publication", "total", len(r.audioPublications), "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
+		if len(r.activeAudioSIDs) < maxAudioTracks {
+			if err := pub.SetSubscribed(true); err != nil {
+				log.Errorw("cannot subscribe to audio track", err)
+			}
+			r.activeAudioSIDs = append(r.activeAudioSIDs, rp.SID())
+			log.Infow("audio tracks: subscribing", "total", len(r.audioPublications), "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
+		} else {
+			log.Infow("audio tracks: deferred (at limit)", "total", len(r.audioPublications), "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
+		}
 		r.subscribed.Break()
 		return
 	}
@@ -468,12 +474,24 @@ func (r *Room) UpdateActiveAudioSubscriptions(speakers []lksdk.Participant) {
 }
 
 // subscribeFirstVideoTrack subscribes to the first available camera track.
-// Prefers a participant who has an active audio subscription (likely a speaker).
+// Prefers the currently speaking participant, then active audio, then any.
 func (r *Room) subscribeFirstVideoTrack() {
 	if r.activeVideoSID != "" {
 		return
 	}
-	// Prefer a participant with active audio (more likely to be a speaker)
+	// Prefer the participant who is currently speaking
+	for _, rp := range r.room.GetRemoteParticipants() {
+		if rp.IsSpeaking() {
+			if info, ok := r.videoPublications[rp.SID()]; ok {
+				r.log.Infow("subscribing to first video track (speaking)", "sid", rp.SID())
+				info.pub.SetSubscribed(true)
+				info.subscribed = true
+				r.activeVideoSID = rp.SID()
+				return
+			}
+		}
+	}
+	// Fallback: participant with active audio
 	for _, sid := range r.activeAudioSIDs {
 		if info, ok := r.videoPublications[sid]; ok {
 			r.log.Infow("subscribing to first video track (active audio)", "sid", sid)
@@ -483,7 +501,7 @@ func (r *Room) subscribeFirstVideoTrack() {
 			return
 		}
 	}
-	// Fallback: any video track
+	// Last resort: any video track
 	for sid, info := range r.videoPublications {
 		r.log.Infow("subscribing to first video track (fallback)", "sid", sid)
 		info.pub.SetSubscribed(true)
