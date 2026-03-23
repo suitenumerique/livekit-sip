@@ -20,7 +20,6 @@ type WebrtcToSip struct {
 	pipeline *CameraPipeline
 	log      logger.Logger
 
-	Vp8Dec      *gst.Element
 	VideoRate   *gst.Element
 	RateFilter  *gst.Element
 	VideoScale  *gst.Element
@@ -36,11 +35,6 @@ var _ pipeline.GstChain = (*WebrtcToSip)(nil)
 // Create implements [pipeline.GstChain].
 func (stw *WebrtcToSip) Create() error {
 	var err error
-	stw.Vp8Dec, err = gst.NewElementWithProperties("vp8dec", map[string]interface{}{})
-	if err != nil {
-		return fmt.Errorf("failed to create webrtc vp8 decoder: %w", err)
-	}
-
 	stw.VideoRate, err = gst.NewElement("videorate")
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc videorate: %w", err)
@@ -107,7 +101,6 @@ func (stw *WebrtcToSip) Create() error {
 
 func (stw *WebrtcToSip) Add() error {
 	if err := stw.pipeline.Pipeline().AddMany(
-		stw.Vp8Dec,
 		stw.VideoRate,
 		stw.RateFilter,
 		stw.VideoScale,
@@ -124,7 +117,6 @@ func (stw *WebrtcToSip) Add() error {
 
 func (stw *WebrtcToSip) Link() error {
 	if err := gst.ElementLinkMany(
-		stw.Vp8Dec,
 		stw.VideoRate,
 		stw.RateFilter,
 		stw.VideoScale,
@@ -142,7 +134,6 @@ func (stw *WebrtcToSip) Link() error {
 
 func (stw *WebrtcToSip) Close() error {
 	if err := stw.pipeline.Pipeline().RemoveMany(
-		stw.Vp8Dec,
 		stw.VideoRate,
 		stw.RateFilter,
 		stw.VideoScale,

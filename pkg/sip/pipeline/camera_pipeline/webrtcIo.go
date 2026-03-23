@@ -68,7 +68,7 @@ func (wio *WebrtcIo) Create() error {
 
 	wio.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{
 		"name":          "webrtc_input_selector",
-		"cache-buffers": true,
+		"cache-buffers": false,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create WebRTC input selector: %w", err)
@@ -182,9 +182,9 @@ func (wio *WebrtcIo) Link() error {
 
 	if err := gst.ElementLinkMany(
 		wio.InputSelector,
-		wio.pipeline.WebrtcToSip.Vp8Dec,
+		wio.pipeline.WebrtcToSip.VideoRate,
 	); err != nil {
-		return fmt.Errorf("failed to link webrtc input selector to vp8 decoder: %w", err)
+		return fmt.Errorf("failed to link webrtc input selector to video rate: %w", err)
 	}
 
 	// link rtp out
