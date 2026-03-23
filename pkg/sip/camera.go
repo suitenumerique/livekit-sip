@@ -12,8 +12,9 @@ import (
 
 type CameraManager struct {
 	*VideoManager
-	ssrcs map[string]uint32
-	tm    *TrackManager
+	ssrcs           map[string]uint32
+	pendingSwitchSID string
+	tm              *TrackManager
 }
 
 func NewCameraManager(log logger.Logger, ctx context.Context, room *Room, opts *MediaOptions, tm *TrackManager) (*CameraManager, error) {
@@ -99,6 +100,14 @@ func (cm *CameraManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc uint3
 	}
 
 	cm.ssrcs[sid] = ssrc
+
+	// Complete deferred switch if this track was pending
+	if cm.pendingSwitchSID == sid {
+		cm.log.Infow("completing deferred video switch", "sid", sid, "ssrc", ssrc)
+		cm.pendingSwitchSID = ""
+		p.SwitchWebrtcInput(ssrc)
+	}
+
 	return nil
 }
 
@@ -155,10 +164,13 @@ func (cm *CameraManager) webrtcTrackOutput(to *TrackOutput) error {
 // SwitchActiveWebrtcTrack switches to the video track for the given participant.
 func (cm *CameraManager) SwitchActiveWebrtcTrack(sid string) (bool, error) {
 	ssrc, ok := cm.ssrcs[sid]
+	cm.log.Infow("SwitchActiveWebrtcTrack", "sid", sid, "ssrc", ssrc, "found", ok, "registeredTracks", len(cm.ssrcs))
 	if !ok {
-		cm.log.Debugw("no video track for active speaker", "sid", sid, "registeredTracks", len(cm.ssrcs))
+		cm.pendingSwitchSID = sid
+		cm.log.Infow("SwitchActiveWebrtcTrack deferred, SSRC not yet available", "sid", sid)
 		return false, nil
 	}
+	cm.pendingSwitchSID = ""
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 

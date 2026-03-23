@@ -98,12 +98,15 @@ func (o *MediaOrchestrator) webrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 }
 
 func (o *MediaOrchestrator) VideoTrackReady(sid string) error {
+	o.log.Infow("VideoTrackReady called", "sid", sid, "cameraStatus", o.camera.Status())
 	if o.camera.Status() != VideoStatusStarted {
+		o.log.Warnw("VideoTrackReady skipped, camera not started", nil, "sid", sid)
 		return nil
 	}
 	if err := o.dispatch(func() error {
-		o.camera.SwitchActiveWebrtcTrack(sid)
-		return nil
+		switched, err := o.camera.SwitchActiveWebrtcTrack(sid)
+		o.log.Infow("VideoTrackReady dispatched switch", "sid", sid, "switched", switched, "err", err)
+		return err
 	}); err != nil {
 		return fmt.Errorf("could not handle video track ready: %w", err)
 	}
