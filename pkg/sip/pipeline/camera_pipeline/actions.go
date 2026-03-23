@@ -233,7 +233,18 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 	}
 
 	if track.SelPad == nil {
-		cp.Log().Warnw("SwitchWebrtcInput: no selector pad", nil, "ssrc", ssrc)
+		cp.Log().Infow("SwitchWebrtcInput: SelPad nil, deferring until LinkParent", "ssrc", ssrc)
+		cp.pendingSwitchSSRC = ssrc
+		cp.switchStartTime = time.Now()
+		if cp.switchTimer != nil {
+			cp.switchTimer.Stop()
+		}
+		cp.switchTimer = time.AfterFunc(MaxKeyframeWaitTime, func() {
+			if cp.pendingSwitchSSRC == ssrc {
+				cp.Log().Warnw("keyframe timeout (timer), forcing fallback switch", nil, "ssrc", ssrc)
+				cp.executeFallbackSwitch(ssrc)
+			}
+		})
 		return nil
 	}
 

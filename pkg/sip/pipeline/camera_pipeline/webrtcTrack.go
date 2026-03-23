@@ -149,6 +149,13 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 			return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", wt.SSRC, err)
 		}
 	}
+
+	// Complete deferred switch if this track was pending
+	if wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC {
+		wt.log.Infow("completing pending switch after LinkParent", "ssrc", wt.SSRC)
+		wt.parent.pipeline.executeFallbackSwitch(wt.SSRC)
+	}
+
 	return nil
 }
 
