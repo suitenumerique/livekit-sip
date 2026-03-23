@@ -340,6 +340,7 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 
 	track.SeenKeyframeInQueue = false
 
+	cp.Log().Infow("executeSwitch: switching InputSelector", "ssrc", ssrc)
 	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
 		return fmt.Errorf("failed to set active-pad: %w", err)
 	}
