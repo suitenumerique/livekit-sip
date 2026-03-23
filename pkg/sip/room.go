@@ -374,7 +374,7 @@ const maxWarmVideoTracks = 2
 // Keeps up to maxWarmVideoTracks subscribed.
 func (r *Room) SwitchVideoSubscription(newSID string) error {
 	if r.activeVideoSID == newSID {
-		r.log.Debugw("video switch skipped, same speaker", "sid", newSID)
+		// same speaker, no switch needed
 		return nil
 	}
 	info, ok := r.videoPublications[newSID]

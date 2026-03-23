@@ -60,7 +60,7 @@ func (loop *EventLoop) Run() {
 	loop.wg.Add(1)
 	defer loop.wg.Done()
 	for {
-		loop.log.Debugw("EventLoop: waiting for events...")
+		// EventLoop iteration
 		loop.mu.Lock()
 		cases := make([]reflect.SelectCase, len(loop.callbacks)*2+2)
 		cases[0] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(loop.ctx.Done())}
@@ -72,7 +72,6 @@ func (loop *EventLoop) Run() {
 		}
 
 		chosen, recv, ok := reflect.Select(cases)
-		loop.log.Debugw("EventLoop: selected case", "case", chosen, "ok", ok)
 		if chosen == 0 {
 			loop.mu.Unlock()
 			return

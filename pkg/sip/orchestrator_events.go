@@ -153,7 +153,6 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 
 	// Video switch stability: require consecutive events with the same top speaker
 	if topSID == o.lastVideoSwitchSID {
-		o.log.Debugw("video switch skipped, same speaker", "sid", topSID)
 		o.previousTopSID = topSID
 		return nil
 	}
@@ -194,7 +193,7 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 // ActiveParticipantChanged debounces active speaker events.
 // Stores latest speakers under mutex, dispatches once when 300ms timer fires.
 func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) error {
-	o.log.Debugw("OnActiveSpeakersChanged received", "speakers", len(p))
+	// OnActiveSpeakersChanged received
 
 	o.pendingSpeakersMu.Lock()
 	defer o.pendingSpeakersMu.Unlock()
@@ -206,7 +205,7 @@ func (o *MediaOrchestrator) ActiveParticipantChanged(p []lksdk.Participant) erro
 	}
 
 	o.activeSpeakerTimer = time.AfterFunc(500*time.Millisecond, func() {
-		o.log.Debugw("active speaker debounce timer fired")
+		// debounce timer fired
 
 		o.pendingSpeakersMu.Lock()
 		speakers := o.pendingSpeakers
