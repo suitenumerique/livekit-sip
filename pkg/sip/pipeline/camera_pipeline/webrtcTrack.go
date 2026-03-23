@@ -2,6 +2,7 @@ package camera_pipeline
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/logger"
@@ -139,28 +140,40 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 	queueOutPad := wt.RtpQueue.GetStaticPad("src")
 	queueOutPad.AddProbe(gst.PadProbeTypeBuffer, wt.queueOutputProbe)
 
-	if err := pipeline.SyncElements(wt.Vp8Depay, wt.RtpQueue); err != nil {
-		return fmt.Errorf("failed to sync webrtc track elements: %w", err)
-	}
-
-	// Auto-switch only for the first track
-	if len(wt.parent.Tracks) <= 1 {
-		if err := wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC); err != nil {
-			return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", wt.SSRC, err)
-		}
-	}
-
-	// Complete deferred switch if this track was pending
-	if wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC {
-		wt.log.Infow("completing pending switch after LinkParent", "ssrc", wt.SSRC)
-		// Reset pending state so SwitchWebrtcInput proceeds to keyframe-wait path
-		wt.parent.pipeline.pendingSwitchSSRC = 0
+	// Set up pending switch BEFORE SyncElements so the keyframe probe catches the first keyframe
+	isPendingSwitch := wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC
+	if isPendingSwitch {
+		wt.log.Infow("preparing pending switch before SyncElements", "ssrc", wt.SSRC)
+		// Cancel old timer, keep pendingSwitchSSRC set for the probe
 		if wt.parent.pipeline.switchTimer != nil {
 			wt.parent.pipeline.switchTimer.Stop()
 			wt.parent.pipeline.switchTimer = nil
 		}
-		// Wait for keyframe before switching (clean path, no artifacts)
-		wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC)
+		// Request keyframe from WebRTC source
+		if track, ok := wt.parent.Tracks[wt.SSRC]; ok {
+			wt.parent.pipeline.RequestTrackKeyframe(track)
+		}
+		// Timer fallback if keyframe never arrives
+		ssrc := wt.SSRC
+		wt.parent.pipeline.switchStartTime = time.Now()
+		wt.parent.pipeline.switchTimer = time.AfterFunc(MaxKeyframeWaitTime, func() {
+			if wt.parent.pipeline.pendingSwitchSSRC == ssrc {
+				wt.parent.pipeline.Log().Warnw("keyframe timeout (timer), forcing fallback switch", nil, "ssrc", ssrc)
+				wt.parent.pipeline.executeFallbackSwitch(ssrc)
+			}
+		})
+	}
+
+	// Start data flow — probes are active, pendingSwitchSSRC is set if pending
+	if err := pipeline.SyncElements(wt.Vp8Depay, wt.RtpQueue); err != nil {
+		return fmt.Errorf("failed to sync webrtc track elements: %w", err)
+	}
+
+	// Auto-switch only for the first track (skip if pending switch handles it)
+	if !isPendingSwitch && len(wt.parent.Tracks) <= 1 {
+		if err := wt.parent.pipeline.SwitchWebrtcInput(wt.SSRC); err != nil {
+			return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", wt.SSRC, err)
+		}
 	}
 
 	return nil
