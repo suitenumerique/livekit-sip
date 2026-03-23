@@ -178,9 +178,18 @@ type Room struct {
 	activeVideoSID   string
 	pendingVideoSID  string
 
-	// Audio subscription management: subscribe only to the last maxAudioTracks speakers
+	// Audio: subscribe all tracks for speaker detection, decode/mix only the last 6 speakers
 	audioPublications map[string]*lksdk.RemoteTrackPublication
-	activeAudioSIDs   []string
+	audioTracks       map[string]*audioTrackInfo
+	mixedAudioSIDs    []string                     // LRU list of SIDs currently decoded/mixed
+	mixedCancel       map[string]context.CancelFunc // stop decode goroutine per mixed SID
+	conf              *config.Config
+}
+
+type audioTrackInfo struct {
+	track *webrtc.TrackRemote
+	pub   *lksdk.RemoteTrackPublication
+	rp    *lksdk.RemoteParticipant
 }
 
 type videoPublicationInfo struct {
@@ -229,6 +238,8 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 		out:               msdk.NewSwitchWriter(RoomSampleRate),
 		videoPublications: make(map[string]*videoPublicationInfo),
 		audioPublications: make(map[string]*lksdk.RemoteTrackPublication),
+		audioTracks:       make(map[string]*audioTrackInfo),
+		mixedCancel:       make(map[string]context.CancelFunc),
 	}
 	out := newMediaWriterCount(r.out, &st.OutputFrames, &st.OutputSamples)
 
@@ -318,7 +329,9 @@ func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	if r.pendingVideoSID == sid {
 		r.pendingVideoSID = ""
 	}
+	r.stopMixing(sid)
 	delete(r.audioPublications, sid)
+	delete(r.audioTracks, sid)
 }
 
 func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -330,16 +343,12 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 
 	if k == lksdk.TrackKindAudio {
+		// Subscribe all audio tracks for speaker detection
 		r.audioPublications[rp.SID()] = pub
-		if len(r.activeAudioSIDs) < maxAudioTracks {
-			if err := pub.SetSubscribed(true); err != nil {
-				log.Errorw("cannot subscribe to audio track", err)
-			}
-			r.activeAudioSIDs = append(r.activeAudioSIDs, rp.SID())
-			log.Infow("audio tracks: subscribing", "total", len(r.audioPublications), "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
-		} else {
-			log.Infow("audio tracks: deferred (at limit)", "total", len(r.audioPublications), "active", len(r.activeAudioSIDs), "max", maxAudioTracks)
+		if err := pub.SetSubscribed(true); err != nil {
+			log.Errorw("cannot subscribe to audio track", err)
 		}
+		log.Infow("audio tracks: subscribing", "total", len(r.audioPublications), "mixed", len(r.mixedAudioSIDs), "maxMixed", maxMixedAudioTracks)
 		r.subscribed.Break()
 		return
 	}
@@ -356,7 +365,7 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 }
 
-const maxAudioTracks = 8
+const maxMixedAudioTracks = 6
 const maxWarmVideoTracks = 3
 
 // SwitchVideoSubscription switches to the given speaker's video track.
@@ -419,62 +428,95 @@ func (r *Room) evictOldVideoTracks() {
 	}
 }
 
-// UpdateActiveAudioSubscriptions subscribes to the top active speakers' audio tracks
-// and unsubscribes from evicted ones. Keeps at most maxAudioTracks subscribed.
+// UpdateActiveAudioSubscriptions promotes active speakers to the mixer
+// and evicts the oldest from mixing. All tracks stay subscribed for speaker detection.
 func (r *Room) UpdateActiveAudioSubscriptions(speakers []lksdk.Participant) {
-	// Remove SIDs of participants who left
-	filtered := r.activeAudioSIDs[:0]
-	for _, sid := range r.activeAudioSIDs {
+	// Remove stale SIDs (participants who left)
+	filtered := r.mixedAudioSIDs[:0]
+	for _, sid := range r.mixedAudioSIDs {
 		if _, ok := r.audioPublications[sid]; ok {
 			filtered = append(filtered, sid)
 		}
 	}
-	if len(r.activeAudioSIDs) != len(filtered) {
-		r.log.Infow("audio tracks: removed stale SIDs", "before", len(r.activeAudioSIDs), "after", len(filtered))
+	if len(r.mixedAudioSIDs) != len(filtered) {
+		r.log.Infow("audio tracks: removed stale mixed SIDs", "before", len(r.mixedAudioSIDs), "after", len(filtered))
 	}
-	r.activeAudioSIDs = filtered
+	r.mixedAudioSIDs = filtered
 
 	for _, speaker := range speakers {
 		sid := speaker.SID()
 		if _, ok := r.audioPublications[sid]; !ok {
 			continue
 		}
-		// Move to front if already active
-		found := false
-		for i, s := range r.activeAudioSIDs {
-			if s == sid {
-				// Move to end (most recent)
-				r.activeAudioSIDs = append(append(r.activeAudioSIDs[:i], r.activeAudioSIDs[i+1:]...), sid)
-				found = true
-				break
-			}
-		}
-		if found {
+		// Move to end (most recent) if already mixed
+		if r.isMixed(sid) {
+			r.moveMixedToEnd(sid)
 			continue
 		}
-		// New speaker: subscribe and add
-		pub := r.audioPublications[sid]
-		if err := pub.SetSubscribed(true); err != nil {
-			r.log.Errorw("cannot subscribe to audio track", err, "sid", sid)
-			continue
-		}
-		r.activeAudioSIDs = append(r.activeAudioSIDs, sid)
-		r.log.Infow("audio tracks: promoted active speaker", "sid", sid, "active", len(r.activeAudioSIDs))
+		// New speaker: start mixing
+		r.mixedAudioSIDs = append(r.mixedAudioSIDs, sid)
+		r.startMixingTrack(sid, r.conf)
+		r.log.Infow("audio tracks: promoted to mixer", "sid", sid, "mixed", len(r.mixedAudioSIDs))
 
-		// Evict oldest if over limit
-		for len(r.activeAudioSIDs) > maxAudioTracks {
-			evictSID := r.activeAudioSIDs[0]
-			r.activeAudioSIDs = r.activeAudioSIDs[1:]
-			if evictPub, ok := r.audioPublications[evictSID]; ok {
-				r.log.Infow("audio tracks: evicted oldest", "sid", evictSID, "active", len(r.activeAudioSIDs))
-				evictPub.SetSubscribed(false)
-			}
+		// Evict oldest from mixer if over limit
+		for len(r.mixedAudioSIDs) > maxMixedAudioTracks {
+			evictSID := r.mixedAudioSIDs[0]
+			r.stopMixing(evictSID)
+			r.log.Infow("audio tracks: evicted from mixer", "sid", evictSID, "mixed", len(r.mixedAudioSIDs))
+		}
+	}
+}
+
+// isMixed returns true if the SID is in the active mixer set
+func (r *Room) isMixed(sid string) bool {
+	for _, s := range r.mixedAudioSIDs {
+		if s == sid {
+			return true
+		}
+	}
+	return false
+}
+
+// moveMixedToEnd moves a SID to the end of mixedAudioSIDs (most recent)
+func (r *Room) moveMixedToEnd(sid string) {
+	for i, s := range r.mixedAudioSIDs {
+		if s == sid {
+			r.mixedAudioSIDs = append(append(r.mixedAudioSIDs[:i], r.mixedAudioSIDs[i+1:]...), sid)
+			return
+		}
+	}
+}
+
+// startMixingTrack starts the decode/mix goroutine for a subscribed audio track
+func (r *Room) startMixingTrack(sid string, conf *config.Config) {
+	info, ok := r.audioTracks[sid]
+	if !ok {
+		return // track not yet subscribed, will start when OnTrackSubscribed fires
+	}
+	if _, ok := r.mixedCancel[sid]; ok {
+		return // already mixing
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.mixedCancel[sid] = cancel
+	r.participantAudioTrackSubscribed(ctx, info.track, info.pub, info.rp, conf)
+}
+
+// stopMixing stops the decode/mix goroutine for a SID and removes from mixedAudioSIDs
+func (r *Room) stopMixing(sid string) {
+	if cancel, ok := r.mixedCancel[sid]; ok {
+		cancel()
+		delete(r.mixedCancel, sid)
+	}
+	for i, s := range r.mixedAudioSIDs {
+		if s == sid {
+			r.mixedAudioSIDs = append(r.mixedAudioSIDs[:i], r.mixedAudioSIDs[i+1:]...)
+			return
 		}
 	}
 }
 
 // subscribeFirstVideoTrack subscribes to the first available camera track.
-// Prefers the currently speaking participant, then active audio, then any.
+// Prefers the currently speaking participant, then mixed audio, then any.
 func (r *Room) subscribeFirstVideoTrack() {
 	if r.activeVideoSID != "" {
 		return
@@ -492,7 +534,7 @@ func (r *Room) subscribeFirstVideoTrack() {
 		}
 	}
 	// Fallback: participant with active audio
-	for _, sid := range r.activeAudioSIDs {
+	for _, sid := range r.mixedAudioSIDs {
 		if info, ok := r.videoPublications[sid]; ok {
 			r.log.Infow("subscribing to first video track (active audio)", "sid", sid)
 			info.pub.SetSubscribed(true)
@@ -511,10 +553,10 @@ func (r *Room) subscribeFirstVideoTrack() {
 	}
 }
 
-// subscribeInitialAudioTracks subscribes up to maxAudioTracks.
-// Promotes current speakers via UpdateActiveAudioSubscriptions, fills remaining slots.
+// subscribeInitialAudioTracks marks the first 6 participants for mixing.
+// Prefers currently speaking participants, fills remaining with others.
 func (r *Room) subscribeInitialAudioTracks() {
-	// Build speakers list from current room state
+	// Promote current speakers first
 	var speakers []lksdk.Participant
 	for _, rp := range r.room.GetRemoteParticipants() {
 		if rp.IsSpeaking() {
@@ -525,31 +567,21 @@ func (r *Room) subscribeInitialAudioTracks() {
 		r.UpdateActiveAudioSubscriptions(speakers)
 	}
 
-	// Fill remaining slots with non-speaking participants
-	for sid, pub := range r.audioPublications {
-		if len(r.activeAudioSIDs) >= maxAudioTracks {
+	// Fill remaining mix slots with non-speaking participants
+	for sid := range r.audioPublications {
+		if len(r.mixedAudioSIDs) >= maxMixedAudioTracks {
 			break
 		}
-		already := false
-		for _, s := range r.activeAudioSIDs {
-			if s == sid {
-				already = true
-				break
-			}
-		}
-		if already {
+		if r.isMixed(sid) {
 			continue
 		}
-		if err := pub.SetSubscribed(true); err != nil {
-			r.log.Errorw("cannot subscribe to audio track", err, "sid", sid)
-			continue
-		}
-		r.activeAudioSIDs = append(r.activeAudioSIDs, sid)
+		r.mixedAudioSIDs = append(r.mixedAudioSIDs, sid)
 	}
-	r.log.Infow("audio tracks: initial subscription", "active", len(r.activeAudioSIDs), "total", len(r.audioPublications), "max", maxAudioTracks)
+	r.log.Infow("audio tracks: initial mix set", "mixed", len(r.mixedAudioSIDs), "total", len(r.audioPublications), "maxMixed", maxMixedAudioTracks)
 }
 
 func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
+	r.conf = conf
 	if rconf.WsUrl == "" {
 		rconf.WsUrl = conf.WsUrl
 	}
@@ -591,7 +623,12 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 				r.log.Debugw("track subscribed", "kind", pub.Kind(), "source", pub.Source(), "participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
 				if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
-					r.participantAudioTrackSubscribed(track, pub, rp, conf)
+					// Store track reference for deferred mixing
+					r.audioTracks[rp.SID()] = &audioTrackInfo{track: track, pub: pub, rp: rp}
+					// Only decode/mix if this SID is in the mixed set
+					if r.isMixed(rp.SID()) {
+						r.startMixingTrack(rp.SID(), conf)
+					}
 					return
 				}
 				cb := r.callbackHandler.Load()
@@ -816,7 +853,7 @@ func (r *Room) NewParticipantTrack(sampleRate int) (msdk.WriteCloser[msdk.PCM16S
 	return newMediaWriterCount(pw, &r.stats.PublishedFrames, &r.stats.PublishedSamples), nil
 }
 
-func (r *Room) participantAudioTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant, conf *config.Config) {
+func (r *Room) participantAudioTrackSubscribed(ctx context.Context, track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant, conf *config.Config) {
 	log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", track.ID(), "trackName", pub.Name())
 	if !r.ready.IsBroken() {
 		log.Warnw("ignoring track, room not ready", nil)
@@ -845,9 +882,19 @@ func (r *Room) participantAudioTrackSubscribed(track *webrtc.TrackRemote, pub *l
 		if conf.EnableJitterBuffer {
 			h = rtp.HandleJitter(h)
 		}
-		err = rtp.HandleLoop(in, h)
-		if err != nil && !errors.Is(err, io.EOF) {
-			log.Infow("room track rtp handler returned with failure", "error", err)
+
+		// Decode loop — exits when context cancelled (eviction) or track ends
+		done := make(chan error, 1)
+		go func() { done <- rtp.HandleLoop(in, h) }()
+		select {
+		case err = <-done:
+			if err != nil && !errors.Is(err, io.EOF) {
+				log.Infow("room track rtp handler returned with failure", "error", err)
+			}
+		case <-ctx.Done():
+			mTrack.Close()
+			<-done
+			log.Infow("mixing stopped (evicted)")
 		}
 	}()
 }
