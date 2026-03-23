@@ -97,6 +97,19 @@ func (o *MediaOrchestrator) webrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 	return nil
 }
 
+func (o *MediaOrchestrator) VideoTrackEvicted(sid string) error {
+	if o.camera.Status() != VideoStatusStarted {
+		return nil
+	}
+	if err := o.dispatch(func() error {
+		o.camera.DisconnectWebrtcTrackInput(sid)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("could not handle video track eviction: %w", err)
+	}
+	return nil
+}
+
 func (o *MediaOrchestrator) WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error {
 	if err := o.dispatch(func() error {
 		return o.webrtcTrackUnsubscribed(track, pub, rp)

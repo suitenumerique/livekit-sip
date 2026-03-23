@@ -224,6 +224,7 @@ type RoomCallbacks interface {
 	WebrtcTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
 	WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
 	ActiveParticipantChanged(p []lksdk.Participant) error
+	VideoTrackEvicted(sid string) error
 	LocalParticipantReady(p *lksdk.LocalParticipant) error
 	Disconnect() error
 }
@@ -422,6 +423,11 @@ func (r *Room) evictOldVideoTracks() {
 				info.pub.SetSubscribed(false)
 				info.subscribed = false
 				subscribed--
+				// Immediately disconnect from GStreamer pipeline
+				cb := r.callbackHandler.Load()
+				if cb != nil {
+					(*cb).VideoTrackEvicted(sid)
+				}
 				break
 			}
 		}
