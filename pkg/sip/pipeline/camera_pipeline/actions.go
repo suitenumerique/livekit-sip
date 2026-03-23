@@ -260,14 +260,14 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		cp.Log().Warnw("failed to request keyframe", err, "ssrc", ssrc)
 	}
 
-	// Timer fallback: force dirty switch if no keyframe arrives via pad probes
+	// Timer fallback: force fallback switch if no keyframe arrives via pad probes
 	if cp.switchTimer != nil {
 		cp.switchTimer.Stop()
 	}
 	cp.switchTimer = time.AfterFunc(MaxKeyframeWaitTime, func() {
 		if cp.pendingSwitchSSRC == ssrc {
-			cp.Log().Warnw("keyframe timeout (timer), forcing dirty switch", nil, "ssrc", ssrc)
-			cp.executeDirtySwitch(ssrc)
+			cp.Log().Warnw("keyframe timeout (timer), forcing fallback switch", nil, "ssrc", ssrc)
+			cp.executeFallbackSwitch(ssrc)
 		}
 	})
 
@@ -291,9 +291,9 @@ func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
 
 	// Dirty switch after MaxKeyframeWaitTime
 	if time.Since(cp.switchStartTime) >= MaxKeyframeWaitTime {
-		cp.Log().Warnw("keyframe timeout, forcing dirty switch", nil,
+		cp.Log().Warnw("keyframe timeout, forcing fallback switch", nil,
 			"ssrc", ssrc, "waited", time.Since(cp.switchStartTime))
-		cp.executeDirtySwitch(ssrc)
+		cp.executeFallbackSwitch(ssrc)
 		return
 	}
 
@@ -334,8 +334,8 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	return nil
 }
 
-// executeDirtySwitch switches the active pad and allows frames through without a keyframe.
-func (cp *CameraPipeline) executeDirtySwitch(ssrc uint32) {
+// executeFallbackSwitch switches the active pad and allows frames through without a keyframe.
+func (cp *CameraPipeline) executeFallbackSwitch(ssrc uint32) {
 	if cp.switchTimer != nil {
 		cp.switchTimer.Stop()
 		cp.switchTimer = nil
@@ -347,10 +347,10 @@ func (cp *CameraPipeline) executeDirtySwitch(ssrc uint32) {
 	}
 	track.SeenKeyframeInQueue = true
 	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
-		cp.Log().Errorw("failed dirty switch", err, "ssrc", ssrc)
+		cp.Log().Errorw("failed fallback switch", err, "ssrc", ssrc)
 	}
 	if err := cp.RequestTrackKeyframe(track); err != nil {
-		cp.Log().Warnw("failed to request keyframe after dirty switch", err, "ssrc", ssrc)
+		cp.Log().Warnw("failed to request keyframe after fallback switch", err, "ssrc", ssrc)
 	}
 	cp.ResetX264Encoder()
 	cp.pendingSwitchSSRC = 0
@@ -377,8 +377,8 @@ func (cp *CameraPipeline) getActivePadName() string {
 	return "unknown"
 }
 
-// DirtySwitchWebrtcInput performs an immediate switch without waiting for keyframe (deprecated).
-func (cp *CameraPipeline) DirtySwitchWebrtcInput(ssrc uint32) error {
+// FallbackSwitchWebrtcInput performs an immediate switch without waiting for keyframe (deprecated).
+func (cp *CameraPipeline) FallbackSwitchWebrtcInput(ssrc uint32) error {
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok {
 		return fmt.Errorf("webrtc track with ssrc %d not found", ssrc)
