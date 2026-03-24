@@ -137,7 +137,7 @@ func (cp *CameraPipeline) WebrtcOutput(rtp, rtcp io.WriteCloser) error {
 	return nil
 }
 
-func (cp *CameraPipeline) AddWebrtcTrack(ssrc uint32, rtp, rtcp io.ReadCloser, requestKeyframe func() error) (*WebrtcTrack, error) {
+func (cp *CameraPipeline) AddWebrtcTrack(ssrc uint32, rtp, rtcp io.ReadCloser, requestKeyframe func() error, setSubscribed func(bool) error) (*WebrtcTrack, error) {
 	rtpHandle := cgo.NewHandle(rtp)
 	defer rtpHandle.Delete()
 	rtcpHnd := cgo.NewHandle(rtcp)
@@ -151,6 +151,7 @@ func (cp *CameraPipeline) AddWebrtcTrack(ssrc uint32, rtp, rtcp io.ReadCloser, r
 	}
 
 	track.RequestKeyframe = requestKeyframe
+	track.SetSubscribed = setSubscribed
 	cp.WebrtcIo.Tracks[ssrc] = track
 
 	if err := track.WebrtcRtpIn.SetProperty("handle", uint64(rtpHandle)); err != nil {
@@ -197,12 +198,15 @@ func (cp *CameraPipeline) DisconnectWebrtcTrack(ssrc uint32) *WebrtcTrack {
 	}
 
 	if isActive && newTrack != nil {
+		if err := newTrack.SetSubscribed(true); err != nil {
+			cp.Log().Errorw("failed to subscribe to alternate track", err, "newSsrc", newTrack.SSRC)
+		}
 		if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", newTrack.SelPad); err != nil {
 			cp.Log().Errorw("failed to switch to alternate track", err, "newSsrc", newTrack.SSRC)
-		}
-
-		if err := cp.RequestTrackKeyframe(newTrack); err != nil {
-			cp.Log().Warnw("failed to request keyframe from alternate track", err, "newSsrc", newTrack.SSRC)
+		} else {
+			if err := cp.RequestTrackKeyframe(newTrack); err != nil {
+				cp.Log().Warnw("failed to request keyframe from alternate track", err, "newSsrc", newTrack.SSRC)
+			}
 		}
 
 		cp.ResetX264Encoder()
@@ -341,6 +345,9 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 	track.SeenKeyframeInQueue = false
 
 	cp.Log().Infow("executeSwitch: switching InputSelector", "ssrc", ssrc)
+	if err := track.SetSubscribed(true); err != nil {
+		return fmt.Errorf("failed to set subscribe to track: %w", err)
+	}
 	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
 		return fmt.Errorf("failed to set active-pad: %w", err)
 	}
@@ -363,8 +370,12 @@ func (cp *CameraPipeline) executeFallbackSwitch(ssrc uint32) {
 		return
 	}
 	track.SeenKeyframeInQueue = true
-	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
-		cp.Log().Errorw("failed fallback switch", err, "ssrc", ssrc)
+	if err := track.SetSubscribed(true); err != nil {
+		cp.Log().Errorw("failed to subscribe to alternate track", err, "newSsrc", track.SSRC)
+	} else {
+		if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
+			cp.Log().Errorw("failed fallback switch", err, "ssrc", ssrc)
+		}
 	}
 	if err := cp.RequestTrackKeyframe(track); err != nil {
 		cp.Log().Warnw("failed to request keyframe after fallback switch", err, "ssrc", ssrc)
@@ -421,6 +432,9 @@ func (cp *CameraPipeline) FallbackSwitchWebrtcInput(ssrc uint32) error {
 
 	cp.Log().Infow("switching webrtc input to new ssrc", "ssrc", ssrc)
 
+	if err := track.SetSubscribed(true); err != nil {
+		return fmt.Errorf("failed to set subscribe to track: %w", err)
+	}
 	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
 		return fmt.Errorf("failed to switch webrtc input to ssrc %d: %w", ssrc, err)
 	}

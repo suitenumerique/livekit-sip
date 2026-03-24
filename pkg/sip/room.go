@@ -175,13 +175,13 @@ type Room struct {
 	callbackHandler atomic.Pointer[RoomCallbacks]
 
 	videoPublications map[string]*videoPublicationInfo
-	activeVideoSID   string
-	pendingVideoSID  string
+	activeVideoSID    string
+	pendingVideoSID   string
 
 	// Audio: subscribe all tracks for speaker detection, decode/mix only the last 6 speakers
 	audioPublications map[string]*lksdk.RemoteTrackPublication
 	audioTracks       map[string]*audioTrackInfo
-	mixedAudioSIDs    []string                     // LRU list of SIDs currently decoded/mixed
+	mixedAudioSIDs    []string                      // LRU list of SIDs currently decoded/mixed
 	mixedCancel       map[string]context.CancelFunc // stop decode goroutine per mixed SID
 	conf              *config.Config
 }

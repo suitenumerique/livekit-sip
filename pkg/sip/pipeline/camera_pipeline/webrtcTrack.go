@@ -39,6 +39,7 @@ type WebrtcTrack struct {
 	HasKeyframe         bool
 	SeenKeyframeInQueue bool
 	RequestKeyframe     func() error
+	SetSubscribed       func(bool) error
 }
 
 var _ pipeline.GstChain = (*WebrtcTrack)(nil)

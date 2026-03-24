@@ -12,9 +12,9 @@ import (
 
 type CameraManager struct {
 	*VideoManager
-	ssrcs           map[string]uint32
+	ssrcs            map[string]uint32
 	pendingSwitchSID string
-	tm              *TrackManager
+	tm               *TrackManager
 }
 
 func NewCameraManager(log logger.Logger, ctx context.Context, room *Room, opts *MediaOptions, tm *TrackManager) (*CameraManager, error) {
@@ -93,7 +93,7 @@ func (cm *CameraManager) WebrtcTrackInput(ti *TrackInput, sid string, ssrc uint3
 
 	p := cm.pipeline.(*camera_pipeline.CameraPipeline)
 
-	_, err := p.AddWebrtcTrack(ssrc, ti.RtpIn, ti.RtcpIn, ti.RequestKeyframe)
+	_, err := p.AddWebrtcTrack(ssrc, ti.RtpIn, ti.RtcpIn, ti.RequestKeyframe, ti.SetSubscribed)
 	if err != nil {
 		cm.log.Errorw("failed to add WebRTC source to selector", err)
 		return fmt.Errorf("failed to add WebRTC source to selector: %w", err)

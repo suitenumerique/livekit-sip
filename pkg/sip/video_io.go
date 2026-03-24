@@ -173,6 +173,9 @@ func NewTrackInput(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication,
 			rp.WritePLI(track.SSRC())
 			return nil
 		},
+		SetSubscribed: func(sub bool) error {
+			return pub.SetSubscribed(sub)
+		},
 	}
 	return ti
 }
@@ -183,13 +186,14 @@ type WebrtcTrackInput struct {
 }
 
 type TrackInput struct {
-	RtpIn          io.ReadCloser
-	RtcpIn         io.ReadCloser
+	RtpIn           io.ReadCloser
+	RtcpIn          io.ReadCloser
 	RequestKeyframe func() error // Callback to request keyframe via RTCP PLI
+	SetSubscribed   func(bool) error
 }
 
 type TrackOutput struct {
-	RtpOut           io.WriteCloser
-	RtcpOut          io.WriteCloser
+	RtpOut            io.WriteCloser
+	RtcpOut           io.WriteCloser
 	OnKeyframeRequest func() // Callback when LiveKit viewers request a keyframe (PLI/FIR)
 }
