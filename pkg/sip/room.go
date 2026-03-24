@@ -323,7 +323,13 @@ func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	sid := rp.SID()
 	delete(r.videoPublications, sid)
 	if r.activeVideoSID == sid {
+		// Switch to another participant's video before disconnecting
 		r.activeVideoSID = ""
+		for otherSID := range r.videoPublications {
+			r.log.Infow("active video speaker left, switching to next", "leftSID", sid, "nextSID", otherSID)
+			r.activeVideoSID = otherSID
+			break
+		}
 	}
 	r.stopMixing(sid)
 	delete(r.audioPublications, sid)
