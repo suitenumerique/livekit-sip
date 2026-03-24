@@ -182,9 +182,9 @@ func (wio *WebrtcIo) Link() error {
 
 	if err := gst.ElementLinkMany(
 		wio.InputSelector,
-		wio.pipeline.WebrtcToSip.VideoRate,
+		wio.pipeline.WebrtcToSip.Vp8Dec,
 	); err != nil {
-		return fmt.Errorf("failed to link webrtc input selector to video rate: %w", err)
+		return fmt.Errorf("failed to link webrtc input selector to vp8 decoder: %w", err)
 	}
 
 	// link rtp out

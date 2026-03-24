@@ -24,7 +24,6 @@ type WebrtcTrack struct {
 
 	WebrtcRtpIn  *gst.Element
 	Vp8Depay     *gst.Element
-	Vp8Dec       *gst.Element
 	RtpQueue     *gst.Element
 	WebrtcRtcpIn *gst.Element
 
@@ -63,13 +62,6 @@ func (wt *WebrtcTrack) Create() error {
 		return fmt.Errorf("failed to create webrtc vp8 depayloader: %w", err)
 	}
 
-	wt.Vp8Dec, err = gst.NewElementWithProperties("vp8dec", map[string]interface{}{
-		"name": fmt.Sprintf("vp8dec_%d", wt.SSRC),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create webrtc vp8 decoder: %w", err)
-	}
-
 	wt.RtpQueue, err = gst.NewElementWithProperties("queue", map[string]interface{}{})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc rtp queue: %w", err)
@@ -91,7 +83,6 @@ func (wt *WebrtcTrack) Add() error {
 	if err := wt.parent.pipeline.Pipeline().AddMany(
 		wt.WebrtcRtpIn,
 		wt.Vp8Depay,
-		wt.Vp8Dec,
 		wt.RtpQueue,
 		wt.WebrtcRtcpIn,
 	); err != nil {
@@ -132,7 +123,6 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 
 	if err := gst.ElementLinkMany(
 		wt.Vp8Depay,
-		wt.Vp8Dec,
 		wt.RtpQueue,
 	); err != nil {
 		return fmt.Errorf("failed to link webrtc track rtp elements: %w", err)
@@ -161,7 +151,7 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 	}
 
 	// Start data flow
-	if err := pipeline.SyncElements(wt.Vp8Depay, wt.Vp8Dec, wt.RtpQueue); err != nil {
+	if err := pipeline.SyncElements(wt.Vp8Depay, wt.RtpQueue); err != nil {
 		return fmt.Errorf("failed to sync webrtc track elements: %w", err)
 	}
 
@@ -273,7 +263,6 @@ func (wt *WebrtcTrack) Cleanup() {
 	elements := []*gst.Element{
 		wt.WebrtcRtpIn,
 		wt.Vp8Depay,
-		wt.Vp8Dec,
 		wt.RtpQueue,
 		wt.WebrtcRtcpIn,
 	}

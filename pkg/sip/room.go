@@ -368,7 +368,7 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 }
 
 const maxMixedAudioTracks = 6
-const maxWarmVideoTracks = 2
+const maxWarmVideoTracks = 1
 
 // SwitchVideoSubscription switches to the given speaker's video track.
 // Keeps up to maxWarmVideoTracks subscribed.
