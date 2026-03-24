@@ -10,7 +10,7 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/event"
 )
 
-const MaxKeyframeWaitTime = 5 * time.Second
+const MaxKeyframeWaitTime = 2 * time.Second
 const PLIRetryInterval = 200 * time.Millisecond
 
 type CameraPipeline struct {
