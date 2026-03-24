@@ -97,34 +97,6 @@ func (o *MediaOrchestrator) webrtcTrackUnsubscribed(track *webrtc.TrackRemote, p
 	return nil
 }
 
-func (o *MediaOrchestrator) VideoTrackReady(sid string) error {
-	o.log.Infow("VideoTrackReady called", "sid", sid, "cameraStatus", o.camera.Status())
-	if o.camera.Status() != VideoStatusStarted {
-		o.log.Warnw("VideoTrackReady skipped, camera not started", nil, "sid", sid)
-		return nil
-	}
-	if err := o.dispatch(func() error {
-		switched, err := o.camera.SwitchActiveWebrtcTrack(sid)
-		o.log.Infow("VideoTrackReady dispatched switch", "sid", sid, "switched", switched, "err", err)
-		return err
-	}); err != nil {
-		return fmt.Errorf("could not handle video track ready: %w", err)
-	}
-	return nil
-}
-
-func (o *MediaOrchestrator) VideoTrackEvicted(sid string) error {
-	if o.camera.Status() != VideoStatusStarted {
-		return nil
-	}
-	if err := o.dispatch(func() error {
-		o.camera.DisconnectWebrtcTrackInput(sid)
-		return nil
-	}); err != nil {
-		return fmt.Errorf("could not handle video track eviction: %w", err)
-	}
-	return nil
-}
 
 func (o *MediaOrchestrator) WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error {
 	if err := o.dispatch(func() error {
@@ -180,11 +152,7 @@ func (o *MediaOrchestrator) activeParticipantChanged(p []lksdk.Participant) erro
 			o.log.Debugw("no video for speaker", "sid", sid)
 			continue
 		}
-		ready := o.room.IsVideoTrackReady(sid)
-		o.log.Infow("video switch attempt", "sid", sid, "ready", ready)
-		if ready {
-			o.camera.SwitchActiveWebrtcTrack(sid)
-		}
+		o.camera.SwitchActiveWebrtcTrack(sid)
 		return nil
 	}
 	return nil

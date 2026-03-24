@@ -176,7 +176,6 @@ type Room struct {
 
 	videoPublications map[string]*videoPublicationInfo
 	activeVideoSID    string
-	pendingVideoSID   string
 
 	// Audio: subscribe all tracks for speaker detection, decode/mix only the last 6 speakers
 	audioPublications map[string]*lksdk.RemoteTrackPublication
@@ -224,8 +223,6 @@ type RoomCallbacks interface {
 	WebrtcTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
 	WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
 	ActiveParticipantChanged(p []lksdk.Participant) error
-	VideoTrackEvicted(sid string) error
-	VideoTrackReady(sid string) error
 	LocalParticipantReady(p *lksdk.LocalParticipant) error
 	Disconnect() error
 }
@@ -328,9 +325,6 @@ func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	if r.activeVideoSID == sid {
 		r.activeVideoSID = ""
 	}
-	if r.pendingVideoSID == sid {
-		r.pendingVideoSID = ""
-	}
 	r.stopMixing(sid)
 	delete(r.audioPublications, sid)
 	delete(r.audioTracks, sid)
@@ -355,10 +349,13 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 		return
 	}
 
-	// Store video publication for deferred subscription
+	// Subscribe all camera video tracks immediately (InputSelector picks the active one)
 	if pub.Source() == livekit.TrackSource_CAMERA {
-		log.Debugw("storing video publication for deferred subscription")
-		r.videoPublications[rp.SID()] = &videoPublicationInfo{pub: pub, rp: rp}
+		r.videoPublications[rp.SID()] = &videoPublicationInfo{pub: pub, rp: rp, subscribed: true}
+		if err := pub.SetSubscribed(true); err != nil {
+			log.Errorw("cannot subscribe to video track", err)
+		}
+		log.Infow("video tracks: subscribing", "total", len(r.videoPublications))
 	} else if pub.Source() == livekit.TrackSource_SCREEN_SHARE {
 		log.Debugw("subscribing to screenshare track")
 		if err := pub.SetSubscribed(true); err != nil {
@@ -368,79 +365,19 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 }
 
 const maxMixedAudioTracks = 6
-const maxWarmVideoTracks = 1
-
 // SwitchVideoSubscription switches to the given speaker's video track.
-// Keeps up to maxWarmVideoTracks subscribed.
+// All video tracks are pre-subscribed, so this is always a warm switch.
 func (r *Room) SwitchVideoSubscription(newSID string) error {
 	if r.activeVideoSID == newSID {
-		// same speaker, no switch needed
 		return nil
 	}
-	info, ok := r.videoPublications[newSID]
+	_, ok := r.videoPublications[newSID]
 	if !ok {
 		return fmt.Errorf("no video publication for SID %s", newSID)
 	}
-	if info.subscribed {
-		r.log.Infow("switching to warm video track", "newSID", newSID, "oldSID", r.activeVideoSID)
-		r.pendingVideoSID = ""
-		r.activeVideoSID = newSID
-		return nil
-	}
-	r.log.Infow("subscribing to new video track", "newSID", newSID, "oldSID", r.activeVideoSID, "pendingBefore", r.pendingVideoSID)
-	r.pendingVideoSID = newSID
-	info.pub.SetSubscribed(true)
-	info.subscribed = true
+	r.log.Infow("switching video track", "newSID", newSID, "oldSID", r.activeVideoSID)
+	r.activeVideoSID = newSID
 	return nil
-}
-
-// IsVideoTrackReady returns true if the given SID is the active video track.
-func (r *Room) IsVideoTrackReady(sid string) bool {
-	return r.activeVideoSID == sid
-}
-
-// onVideoTrackReady completes the make-before-break switch when a new track arrives.
-func (r *Room) onVideoTrackReady(sid string) {
-	r.log.Infow("onVideoTrackReady", "sid", sid, "pendingVideoSID", r.pendingVideoSID, "activeVideoSID", r.activeVideoSID)
-	if r.pendingVideoSID != sid {
-		return
-	}
-	r.activeVideoSID = sid
-	r.pendingVideoSID = ""
-	r.evictOldVideoTracks()
-	// Notify orchestrator to switch camera pipeline to the new track
-	cb := r.callbackHandler.Load()
-	if cb != nil {
-		if err := (*cb).VideoTrackReady(sid); err != nil {
-			r.log.Errorw("video track ready callback error", err)
-		}
-	}
-}
-
-// evictOldVideoTracks unsubscribes oldest non-active tracks beyond maxWarmVideoTracks limit.
-func (r *Room) evictOldVideoTracks() {
-	subscribed := 0
-	for _, info := range r.videoPublications {
-		if info.subscribed {
-			subscribed++
-		}
-	}
-	for subscribed > maxWarmVideoTracks {
-		for sid, info := range r.videoPublications {
-			if info.subscribed && sid != r.activeVideoSID && sid != r.pendingVideoSID {
-				r.log.Infow("evicting warm video track", "sid", sid)
-				info.pub.SetSubscribed(false)
-				info.subscribed = false
-				subscribed--
-				// Immediately disconnect from GStreamer pipeline
-				cb := r.callbackHandler.Load()
-				if cb != nil {
-					(*cb).VideoTrackEvicted(sid)
-				}
-				break
-			}
-		}
-	}
 }
 
 // UpdateActiveAudioSubscriptions promotes active speakers to the mixer
@@ -654,11 +591,7 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 				} else {
 					r.log.Warnw("no track subscribed callback set", nil)
 				}
-				// Complete make-before-break video switch
-				if pub.Kind() == lksdk.TrackKindVideo && pub.Source() == livekit.TrackSource_CAMERA {
-					r.onVideoTrackReady(rp.SID())
-				}
-			},
+				},
 			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 				r.log.Debugw("track unsubscribed", "kind", pub.Kind(), "source", pub.Source(), "participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
 				if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
