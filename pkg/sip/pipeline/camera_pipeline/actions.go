@@ -365,8 +365,12 @@ func (cp *CameraPipeline) executeFallbackSwitch(ssrc uint32) {
 		cp.switchTimer = nil
 	}
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
-	if !ok || track.SelPad == nil {
+	if !ok {
 		cp.pendingSwitchSSRC = 0
+		return
+	}
+	if track.SelPad == nil {
+		// SelPad not set yet — LinkParent will handle the switch when data arrives
 		return
 	}
 	track.SeenKeyframeInQueue = true
