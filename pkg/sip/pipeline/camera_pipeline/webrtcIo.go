@@ -11,8 +11,9 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/event"
 )
 
-func NewWebrtcIo(log logger.Logger, parent *CameraPipeline) *WebrtcIo {
+func NewWebrtcIo(ctx context.Context, log logger.Logger, parent *CameraPipeline) *WebrtcIo {
 	return &WebrtcIo{
+		ctx:      ctx,
 		log:      log.WithComponent("webrtc_io"),
 		pipeline: parent,
 		Tracks:   make(map[uint32]*WebrtcTrack),
@@ -20,6 +21,7 @@ func NewWebrtcIo(log logger.Logger, parent *CameraPipeline) *WebrtcIo {
 }
 
 type WebrtcIo struct {
+	ctx      context.Context
 	pipeline *CameraPipeline
 	log      logger.Logger
 
@@ -133,7 +135,7 @@ func (wio *WebrtcIo) Add() error {
 // Link implements [pipeline.GstChain].
 func (wio *WebrtcIo) Link() error {
 	// pt map
-	if _, err := wio.WebrtcRtpBin.Connect("request-pt-map", event.RegisterCallback(context.TODO(), wio.pipeline.Loop(), func(self *gst.Element, session uint, pt uint) *gst.Caps {
+	if _, err := wio.WebrtcRtpBin.Connect("request-pt-map", event.RegisterCallback(wio.ctx, wio.pipeline.Loop(), func(self *gst.Element, session uint, pt uint) *gst.Caps {
 		caps, ok := webrtcCaps[pt]
 		if !ok {
 			return nil
@@ -145,7 +147,7 @@ func (wio *WebrtcIo) Link() error {
 	}
 
 	// link rtp in
-	if _, err := wio.WebrtcRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), wio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
+	if _, err := wio.WebrtcRtpBin.Connect("pad-added", event.RegisterCallback(wio.ctx, wio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
 		wio.log.Debugw("WEBRTC RTPBIN PAD ADDED", "pad", pad.GetName())
 		padName := pad.GetName()
 		if !strings.HasPrefix(padName, "recv_rtp_src_0_") {
@@ -188,7 +190,7 @@ func (wio *WebrtcIo) Link() error {
 	}
 
 	// link rtp out
-	if _, err := wio.WebrtcRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), wio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
+	if _, err := wio.WebrtcRtpBin.Connect("pad-added", event.RegisterCallback(wio.ctx, wio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
 		wio.log.Debugw("WEBRTC RTPBIN PAD ADDED", "pad", pad.GetName())
 		padName := pad.GetName()
 		if padName != "send_rtp_src_0" {
@@ -249,7 +251,7 @@ func (wio *WebrtcIo) Link() error {
 			}
 
 			// Log RTCP feedback (PLI/FIR) requests from WebRTC peers
-			if _, err := sessElem.Connect("on-feedback-rtcp", event.RegisterCallback(context.TODO(), wio.pipeline.Loop(), func(session *gst.Element, fbType uint, fbSubType uint, senderSsrc uint, mediaSsrc uint) {
+			if _, err := sessElem.Connect("on-feedback-rtcp", event.RegisterCallback(wio.ctx, wio.pipeline.Loop(), func(session *gst.Element, fbType uint, fbSubType uint, senderSsrc uint, mediaSsrc uint) {
 				fbTypeName := "unknown"
 				if fbType == 205 {
 					fbTypeName = "RTPFB"

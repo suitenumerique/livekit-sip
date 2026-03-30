@@ -11,14 +11,16 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/event"
 )
 
-func NewSipInput(log logger.Logger, parent *CameraPipeline) *SipIo {
+func NewSipInput(ctx context.Context, log logger.Logger, parent *CameraPipeline) *SipIo {
 	return &SipIo{
+		ctx:      ctx,
 		log:      log.WithComponent("sip_input"),
 		pipeline: parent,
 	}
 }
 
 type SipIo struct {
+	ctx      context.Context
 	log      logger.Logger
 	pipeline *CameraPipeline
 
@@ -99,7 +101,7 @@ func (sio *SipIo) Add() error {
 // Link implements [pipeline.GstChain].
 func (sio *SipIo) Link() error {
 	// link rtp in
-	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), sio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
+	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(sio.ctx, sio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
 		sio.log.Debugw("RTPBIN PAD ADDED", "pad", pad.GetName())
 		padName := pad.GetName()
 		if !strings.HasPrefix(padName, "recv_rtp_src_0_") {
@@ -131,7 +133,7 @@ func (sio *SipIo) Link() error {
 	}
 
 	// link rtp out
-	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(context.TODO(), sio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
+	if _, err := sio.SipRtpBin.Connect("pad-added", event.RegisterCallback(sio.ctx, sio.pipeline.Loop(), func(rtpbin *gst.Element, pad *gst.Pad) {
 		sio.log.Debugw("WEBRTC RTPBIN PAD ADDED", "pad", pad.GetName())
 		padName := pad.GetName()
 		if padName != "send_rtp_src_0" {
@@ -188,7 +190,7 @@ func (sio *SipIo) Link() error {
 			}
 
 			// Log RTCP feedback (PLI/FIR) requests from SIP device
-			if _, err := sessElem.Connect("on-feedback-rtcp", event.RegisterCallback(context.TODO(), sio.pipeline.Loop(), func(session *gst.Element, fbType uint, fbSubType uint, senderSsrc uint, mediaSsrc uint) {
+			if _, err := sessElem.Connect("on-feedback-rtcp", event.RegisterCallback(sio.ctx, sio.pipeline.Loop(), func(session *gst.Element, fbType uint, fbSubType uint, senderSsrc uint, mediaSsrc uint) {
 				fbTypeName := "unknown"
 				if fbType == 205 {
 					fbTypeName = "RTPFB"

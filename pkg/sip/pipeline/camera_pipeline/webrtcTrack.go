@@ -2,6 +2,7 @@ package camera_pipeline
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/logger"
@@ -35,7 +36,7 @@ type WebrtcTrack struct {
 	SelPad        *gst.Pad
 
 	HasKeyframe         bool
-	SeenKeyframeInQueue bool
+	SeenKeyframeInQueue atomic.Bool
 	RequestKeyframe     func() error
 	SetSubscribed       func(bool) error
 }
@@ -141,7 +142,7 @@ func (wt *WebrtcTrack) LinkParent(rtpbinPad *gst.Pad) error {
 	queueOutPad.AddProbe(gst.PadProbeTypeBuffer, wt.queueOutputProbe)
 
 	// Check if this track has a pending switch waiting for LinkParent
-	isPendingSwitch := wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC
+	isPendingSwitch := wt.parent.pipeline.pendingSwitchSSRC.Load() == wt.SSRC
 	if isPendingSwitch {
 		wt.log.Infow("pending switch: clearing timer before SyncElements", "ssrc", wt.SSRC)
 		if wt.parent.pipeline.switchTimer != nil {
@@ -176,7 +177,7 @@ func (wt *WebrtcTrack) keyframeProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.P
 		return gst.PadProbeOK
 	}
 
-	pendingSSRC := wt.parent.pipeline.pendingSwitchSSRC
+	pendingSSRC := wt.parent.pipeline.pendingSwitchSSRC.Load()
 	isKeyframe := !buffer.HasFlags(gst.BufferFlagDeltaUnit)
 
 	if isKeyframe {
@@ -184,14 +185,29 @@ func (wt *WebrtcTrack) keyframeProbe(pad *gst.Pad, info *gst.PadProbeInfo) gst.P
 
 		if pendingSSRC == wt.SSRC {
 			buffer.SetFlags(gst.BufferFlagDiscont)
-			wt.parent.pipeline.onTrackKeyframe(wt.SSRC)
+			// Switch InputSelector inline before the keyframe enters the queue.
+			wt.SeenKeyframeInQueue.Store(false)
+			wt.parent.InputSelector.SetProperty("active-pad", wt.SelPad)
+			wt.parent.pipeline.activeSSRC.Store(wt.SSRC)
+			wt.parent.pipeline.needsEncoderReset.Store(true)
+			// Dispatch subscribe and timer cleanup to the EventLoop.
+			select {
+			case wt.parent.pipeline.switchRequests <- wt.SSRC:
+			default:
+			}
 		}
 	} else if pendingSSRC == wt.SSRC {
-		wt.parent.pipeline.checkPLIRetry(wt.SSRC)
+		select {
+		case wt.parent.pipeline.pliRetryRequests <- wt.SSRC:
+		default:
+		}
 		return gst.PadProbeDrop
 	} else if pendingSSRC != 0 {
 		// Check pending switch timeout from other tracks' probes
-		wt.parent.pipeline.checkPLIRetry(pendingSSRC)
+		select {
+		case wt.parent.pipeline.pliRetryRequests <- pendingSSRC:
+		default:
+		}
 	}
 
 	return gst.PadProbeOK
@@ -203,23 +219,27 @@ func (wt *WebrtcTrack) queueOutputProbe(pad *gst.Pad, info *gst.PadProbeInfo) gs
 		return gst.PadProbeOK
 	}
 
-	if !wt.parent.pipeline.isActiveTrack(wt.SSRC) {
+	if wt.parent.pipeline.activeSSRC.Load() != wt.SSRC {
 		return gst.PadProbeOK
 	}
 
 	isKeyframe := !buffer.HasFlags(gst.BufferFlagDeltaUnit)
 
 	if isKeyframe {
-		wt.SeenKeyframeInQueue = true
+		// Reset x264enc on the first keyframe after a track switch.
+		if wt.parent.pipeline.needsEncoderReset.CompareAndSwap(true, false) {
+			wt.parent.pipeline.ResetX264Encoder()
+		}
+		wt.SeenKeyframeInQueue.Store(true)
 
-		if wt.parent.pipeline.pendingSwitchSSRC == wt.SSRC {
-			wt.parent.pipeline.pendingSwitchSSRC = 0
+		if wt.parent.pipeline.pendingSwitchSSRC.Load() == wt.SSRC {
+			wt.parent.pipeline.pendingSwitchSSRC.Store(0)
 		}
 
 		return gst.PadProbeOK
 	}
 
-	if !wt.SeenKeyframeInQueue {
+	if !wt.SeenKeyframeInQueue.Load() {
 		return gst.PadProbeDrop
 	}
 

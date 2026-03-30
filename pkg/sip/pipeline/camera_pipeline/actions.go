@@ -1,7 +1,6 @@
 package camera_pipeline
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -77,12 +76,15 @@ func (cp *CameraPipeline) SipIO(rtp, rtcp net.Conn, pt uint8) error {
 		"caps", h264Caps,
 	)
 
-	if _, err := cp.SipRtpBin.Connect("request-pt-map", event.RegisterCallback(context.TODO(), cp.Loop(), func(self *gst.Element, session uint, sipPt uint) *gst.Caps {
-		return gst.NewCapsFromString(fmt.Sprintf(
-			"application/x-rtp,media=video,encoding-name=H264,payload=%d,clock-rate=90000,rtcp-fb-nack-pli=1,rtcp-fb-ccm-fir=1",
-			sipPt))
-	})); err != nil {
-		return fmt.Errorf("failed to connect to rtpbin request-pt-map signal: %w", err)
+	if !cp.ptMapConnected {
+		cp.ptMapConnected = true
+		if _, err := cp.SipRtpBin.Connect("request-pt-map", event.RegisterCallback(cp.Context(), cp.Loop(), func(self *gst.Element, session uint, sipPt uint) *gst.Caps {
+			return gst.NewCapsFromString(fmt.Sprintf(
+				"application/x-rtp,media=video,encoding-name=H264,payload=%d,clock-rate=90000,rtcp-fb-nack-pli=1,rtcp-fb-ccm-fir=1",
+				sipPt))
+		})); err != nil {
+			return fmt.Errorf("failed to connect to rtpbin request-pt-map signal: %w", err)
+		}
 	}
 
 	if err := cp.WebrtcToSip.CapsFilter.SetProperty("caps",
@@ -184,7 +186,7 @@ func (cp *CameraPipeline) DisconnectWebrtcTrack(ssrc uint32) *WebrtcTrack {
 	}
 	isActive := activePadName == trackPadName && trackPadName != ""
 
-	cp.pendingSwitchSSRC = 0
+	cp.pendingSwitchSSRC.Store(0)
 
 	// Switch to an alternate track before disconnecting the active one
 	var newTrack *WebrtcTrack
@@ -208,8 +210,10 @@ func (cp *CameraPipeline) DisconnectWebrtcTrack(ssrc uint32) *WebrtcTrack {
 				cp.Log().Warnw("failed to request keyframe from alternate track", err, "newSsrc", newTrack.SSRC)
 			}
 		}
-
+		cp.activeSSRC.Store(newTrack.SSRC)
 		cp.ResetX264Encoder()
+	} else if isActive {
+		cp.activeSSRC.Store(0)
 	}
 
 	track.Disconnect()
@@ -229,7 +233,7 @@ func (cp *CameraPipeline) RemoveWebrtcTrack(ssrc uint32) error {
 func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	cp.Log().Infow("SwitchWebrtcInput", "ssrc", ssrc, "trackFound", ok,
-		"isActive", cp.isActiveTrack(ssrc), "pendingSwitch", cp.pendingSwitchSSRC,
+		"isActive", cp.isActiveTrack(ssrc), "pendingSwitch", cp.pendingSwitchSSRC.Load(),
 		"totalTracks", len(cp.WebrtcIo.Tracks))
 
 	if !ok {
@@ -238,15 +242,18 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 
 	if track.SelPad == nil {
 		cp.Log().Infow("SwitchWebrtcInput: SelPad nil, deferring until LinkParent", "ssrc", ssrc)
-		cp.pendingSwitchSSRC = ssrc
+		cp.pendingSwitchSSRC.Store(ssrc)
 		cp.switchStartTime = time.Now()
 		if cp.switchTimer != nil {
 			cp.switchTimer.Stop()
 		}
 		cp.switchTimer = time.AfterFunc(MaxKeyframeWaitTime, func() {
-			if cp.pendingSwitchSSRC == ssrc {
+			if cp.pendingSwitchSSRC.Load() == ssrc {
 				cp.Log().Warnw("keyframe timeout (timer), forcing fallback switch", nil, "ssrc", ssrc)
-				cp.executeFallbackSwitch(ssrc)
+				select {
+				case cp.fallbackRequests <- ssrc:
+				default:
+				}
 			}
 		})
 		return nil
@@ -257,14 +264,14 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		return nil
 	}
 
-	if cp.pendingSwitchSSRC == ssrc {
+	if cp.pendingSwitchSSRC.Load() == ssrc {
 		cp.Log().Debugw("SwitchWebrtcInput: already pending", "ssrc", ssrc)
 		return nil
 	}
 
-	if cp.pendingSwitchSSRC != 0 {
+	if cp.pendingSwitchSSRC.Load() != 0 {
 		cp.Log().Debugw("SwitchWebrtcInput: mid-switch, skipping",
-			"pending", cp.pendingSwitchSSRC, "requested", ssrc)
+			"pending", cp.pendingSwitchSSRC.Load(), "requested", ssrc)
 		return nil
 	}
 
@@ -273,7 +280,7 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		return nil
 	}
 
-	cp.pendingSwitchSSRC = ssrc
+	cp.pendingSwitchSSRC.Store(ssrc)
 	cp.switchStartTime = time.Now()
 	cp.lastPLITime = time.Now()
 
@@ -286,27 +293,20 @@ func (cp *CameraPipeline) SwitchWebrtcInput(ssrc uint32) error {
 		cp.switchTimer.Stop()
 	}
 	cp.switchTimer = time.AfterFunc(MaxKeyframeWaitTime, func() {
-		if cp.pendingSwitchSSRC == ssrc {
+		if cp.pendingSwitchSSRC.Load() == ssrc {
 			cp.Log().Warnw("keyframe timeout (timer), forcing fallback switch", nil, "ssrc", ssrc)
-			cp.executeFallbackSwitch(ssrc)
+			select {
+			case cp.fallbackRequests <- ssrc:
+			default:
+			}
 		}
 	})
 
 	return nil
 }
 
-func (cp *CameraPipeline) onTrackKeyframe(ssrc uint32) {
-	if cp.pendingSwitchSSRC == 0 || cp.pendingSwitchSSRC != ssrc {
-		return
-	}
-
-	if err := cp.executeSwitch(ssrc); err != nil {
-		cp.Log().Errorw("switch execution failed", err, "ssrc", ssrc)
-	}
-}
-
 func (cp *CameraPipeline) checkPLIRetry(ssrc uint32) {
-	if cp.pendingSwitchSSRC != ssrc {
+	if cp.pendingSwitchSSRC.Load() != ssrc {
 		return
 	}
 
@@ -342,38 +342,35 @@ func (cp *CameraPipeline) executeSwitch(ssrc uint32) error {
 		return fmt.Errorf("track %d has no selector pad", ssrc)
 	}
 
-	track.SeenKeyframeInQueue = false
-
-	cp.Log().Infow("executeSwitch: switching InputSelector", "ssrc", ssrc)
+	cp.Log().Infow("executeSwitch: completing switch", "ssrc", ssrc)
 	if err := track.SetSubscribed(true); err != nil {
 		return fmt.Errorf("failed to set subscribe to track: %w", err)
 	}
-	if err := cp.WebrtcIo.InputSelector.SetProperty("active-pad", track.SelPad); err != nil {
-		return fmt.Errorf("failed to set active-pad: %w", err)
-	}
-
-	cp.ResetX264Encoder()
-	cp.pendingSwitchSSRC = 0
+	// InputSelector, activeSSRC, and needsEncoderReset are set
+	// inline in keyframeProbe.
+	cp.pendingSwitchSSRC.Store(0)
 
 	return nil
 }
 
 // executeFallbackSwitch switches the active pad and allows frames through without a keyframe.
 func (cp *CameraPipeline) executeFallbackSwitch(ssrc uint32) {
+	cp.Log().Infow("executeFallbackSwitch: starting", "ssrc", ssrc)
 	if cp.switchTimer != nil {
 		cp.switchTimer.Stop()
 		cp.switchTimer = nil
 	}
 	track, ok := cp.WebrtcIo.Tracks[ssrc]
 	if !ok {
-		cp.pendingSwitchSSRC = 0
+		cp.Log().Warnw("executeFallbackSwitch: track not found", nil, "ssrc", ssrc)
+		cp.pendingSwitchSSRC.Store(0)
 		return
 	}
 	if track.SelPad == nil {
-		// SelPad not set yet — LinkParent will handle the switch when data arrives
+		cp.Log().Warnw("executeFallbackSwitch: SelPad nil, deferring", nil, "ssrc", ssrc)
 		return
 	}
-	track.SeenKeyframeInQueue = true
+	track.SeenKeyframeInQueue.Store(true)
 	if err := track.SetSubscribed(true); err != nil {
 		cp.Log().Errorw("failed to subscribe to alternate track", err, "newSsrc", track.SSRC)
 	} else {
@@ -381,11 +378,12 @@ func (cp *CameraPipeline) executeFallbackSwitch(ssrc uint32) {
 			cp.Log().Errorw("failed fallback switch", err, "ssrc", ssrc)
 		}
 	}
+	cp.activeSSRC.Store(ssrc)
 	if err := cp.RequestTrackKeyframe(track); err != nil {
 		cp.Log().Warnw("failed to request keyframe after fallback switch", err, "ssrc", ssrc)
 	}
 	cp.ResetX264Encoder()
-	cp.pendingSwitchSSRC = 0
+	cp.pendingSwitchSSRC.Store(0)
 }
 
 // isActiveTrack checks if the given SSRC is currently the active track.

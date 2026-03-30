@@ -77,7 +77,7 @@ func (*SourceReader) ClassInit(klass *glib.ObjectClass) {
 		"Custom Reader Source",
 		"Source",
 		"Reads from a Go io.Reader",
-		"Maxime SENARD <senard.maxime@gmail.com>",
+		"roomkit-visio",
 	)
 
 	CAT.Log(gst.LevelDebug, "Adding pad template")

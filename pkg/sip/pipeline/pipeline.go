@@ -47,6 +47,10 @@ func (p *BasePipeline) Loop() *event.EventLoop {
 	return p.loop
 }
 
+func (p *BasePipeline) Context() context.Context {
+	return p.ctx
+}
+
 func (p *BasePipeline) Pipeline() *gst.Pipeline {
 	return p.pipeline
 }
@@ -215,6 +219,7 @@ func New(ctx context.Context, log logger.Logger, cleanup func() error) (*BasePip
 
 	gp := &BasePipeline{
 		log:      log,
+		ctx:      ctx,
 		pipeline: pipeline,
 		cleanup:  cleanup,
 		loop:     event.NewEventLoop(ctx, log),

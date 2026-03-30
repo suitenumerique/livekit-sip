@@ -9,8 +9,10 @@ import (
 )
 
 func NewDebugWriteCloser(w io.WriteCloser, prefix string, tick time.Duration) *DebugWriteCloser {
+	ctx, cancel := context.WithCancel(context.Background())
 	dw := &DebugWriteCloser{
-		ctx:         context.Background(),
+		ctx:         ctx,
+		cancel:      cancel,
 		WriteCloser: w,
 		Prefix:      prefix,
 	}
@@ -40,6 +42,7 @@ func NewDebugWriteCloser(w io.WriteCloser, prefix string, tick time.Duration) *D
 type DebugWriteCloser struct {
 	io.WriteCloser
 	ctx    context.Context
+	cancel context.CancelFunc
 	n      atomic.Int64
 	c      atomic.Int64
 	Prefix string
@@ -55,13 +58,15 @@ func (d *DebugWriteCloser) Write(p []byte) (int, error) {
 }
 
 func (d *DebugWriteCloser) Close() error {
-	d.ctx.Done()
+	d.cancel()
 	return d.WriteCloser.Close()
 }
 
 func NewDebugReadCloser(r io.ReadCloser, prefix string, tick time.Duration) *DebugReadCloser {
+	ctx, cancel := context.WithCancel(context.Background())
 	dr := &DebugReadCloser{
-		ctx:        context.Background(),
+		ctx:        ctx,
+		cancel:     cancel,
 		ReadCloser: r,
 		Prefix:     prefix,
 	}
@@ -91,6 +96,7 @@ func NewDebugReadCloser(r io.ReadCloser, prefix string, tick time.Duration) *Deb
 type DebugReadCloser struct {
 	io.ReadCloser
 	ctx    context.Context
+	cancel context.CancelFunc
 	n      atomic.Int64
 	c      atomic.Int64
 	Prefix string
@@ -106,6 +112,6 @@ func (d *DebugReadCloser) Read(p []byte) (int, error) {
 }
 
 func (d *DebugReadCloser) Close() error {
-	d.ctx.Done()
+	d.cancel()
 	return d.ReadCloser.Close()
 }

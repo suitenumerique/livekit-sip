@@ -37,7 +37,7 @@ func init() {
 	}
 
 	mainLoop = glib.NewMainLoop(glib.MainContextDefault(), false)
-	_ = mainLoop
+	go mainLoop.Run()
 }
 
 type SipPipeline interface {

@@ -76,7 +76,7 @@ func (*sinkWriter) ClassInit(klass *glib.ObjectClass) {
 		"Custom Writer Sink",
 		"Sink",
 		"Writes to a Go io.Writer",
-		"Maxime SENARD <senard.maxime@gmail.com>",
+		"roomkit-visio",
 	)
 
 	CAT.Log(gst.LevelDebug, "Adding pad template")
