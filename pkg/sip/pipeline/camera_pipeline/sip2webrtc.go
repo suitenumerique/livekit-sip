@@ -24,6 +24,8 @@ type SipToWebrtc struct {
 	H264Parse         *gst.Element
 	H264Dec           *gst.Element
 	VideoConvertScale *gst.Element
+	VideoRate         *gst.Element
+	RateFilter        *gst.Element
 	ResFilter         *gst.Element
 	Queue             *gst.Element
 	Vp8Enc            *gst.Element
@@ -64,6 +66,20 @@ func (stw *SipToWebrtc) Create() error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP videoconvertscale: %w", err)
+	}
+
+	stw.VideoRate, err = gst.NewElementWithProperties("videorate", map[string]interface{}{
+		"drop-only": true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create SIP videorate: %w", err)
+	}
+
+	stw.RateFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString("video/x-raw,framerate=24/1"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create SIP rate capsfilter: %w", err)
 	}
 
 	// Force 1280x720 I420 output — I420 is what vp8enc expects
@@ -129,6 +145,8 @@ func (stw *SipToWebrtc) Add() error {
 		stw.H264Parse,
 		stw.H264Dec,
 		stw.VideoConvertScale,
+		stw.VideoRate,
+		stw.RateFilter,
 		stw.ResFilter,
 		stw.Queue,
 		stw.Vp8Enc,
@@ -146,6 +164,8 @@ func (stw *SipToWebrtc) Link() error {
 		stw.H264Parse,
 		stw.H264Dec,
 		stw.VideoConvertScale,
+		stw.VideoRate,
+		stw.RateFilter,
 		stw.ResFilter,
 		stw.Queue,
 		stw.Vp8Enc,
@@ -164,6 +184,8 @@ func (stw *SipToWebrtc) Close() error {
 		stw.H264Parse,
 		stw.H264Dec,
 		stw.VideoConvertScale,
+		stw.VideoRate,
+		stw.RateFilter,
 		stw.ResFilter,
 		stw.Queue,
 		stw.Vp8Enc,
