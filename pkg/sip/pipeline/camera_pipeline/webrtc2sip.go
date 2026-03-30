@@ -41,7 +41,10 @@ func (stw *WebrtcToSip) Create() error {
 		return fmt.Errorf("failed to create shared vp8 decoder: %w", err)
 	}
 
-	stw.VideoRate, err = gst.NewElement("videorate")
+	stw.VideoRate, err = gst.NewElementWithProperties("videorate", map[string]interface{}{
+		"drop-only":     true,
+		"skip-to-first": true,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc videorate: %w", err)
 	}
