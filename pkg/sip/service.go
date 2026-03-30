@@ -291,7 +291,7 @@ func (s *Service) Start() error {
 		}
 
 		ConfigureTLS(tlsConf)
-		opts = append(opts, sipgo.WithUserAgenTLSConfig(tlsConf))
+		opts = append(opts, sipgo.WithUserAgentTLSConfig(tlsConf))
 	}
 	ua, err := sipgo.NewUA(opts...)
 	if err != nil {

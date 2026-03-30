@@ -181,7 +181,7 @@ func (c *Client) createSIPParticipant(ctx context.Context, req *rpc.InternalCrea
 	if req.CallTo == "" {
 		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "call-to number must be set")
 	} else if req.Address == "" {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "trunk adresss must be set")
+		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "trunk address must be set")
 	} else if req.Number == "" {
 		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "trunk outbound number must be set")
 	} else if req.RoomName == "" {

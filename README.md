@@ -104,7 +104,7 @@ different rooms depending on the metadata of the call. Things like who is callin
 
 ```shell
 livekit-cli create-sip-dispatch-rule \
-  --request <path to SIP Distpach Rule creation request JSON file>
+  --request <path to SIP Dispatch Rule creation request JSON file>
 ```
 
 The SIP Bridge request creation JSON file uses the following syntax:

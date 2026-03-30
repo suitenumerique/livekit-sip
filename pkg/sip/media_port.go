@@ -491,7 +491,7 @@ func (p *MediaPort) timeoutLoop(tid traceid.ID, timeoutCallback func()) {
 					"sinceStart", time.Since(startTime),
 				)
 				if curPackets == startPackets {
-					log.Warnw("media timout is idle for a long time", nil)
+					log.Warnw("media timeout is idle for a long time", nil)
 				} else {
 					log.Infow("media timeout stats")
 				}
