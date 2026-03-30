@@ -145,4 +145,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/livekit/media-sdk => github.com/suitenumerique/media-sdk v0.0.0-20260303060948-295106911f1d
+replace github.com/livekit/media-sdk => github.com/suitenumerique/media-sdk v0.0.0-20260330090400-79cde87cff7d
