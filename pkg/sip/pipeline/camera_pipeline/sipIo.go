@@ -56,10 +56,9 @@ func (sio *SipIo) Create() error {
 	}
 
 	sio.SipRtpOut, err = gst.NewElementWithProperties("sinkwriter", map[string]interface{}{
-		"name":        "sip_rtp_out",
-		"max-bitrate": int(1_500_000),
-		"sync":        false,
-		"async":       false,
+		"name":  "sip_rtp_out",
+		"sync":  false,
+		"async": false,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create SIP rtp sinkwriter: %w", err)

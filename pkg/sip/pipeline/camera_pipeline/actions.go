@@ -519,24 +519,9 @@ func (cp *CameraPipeline) ForceKeyframeOnEncoder() error {
 	return nil
 }
 
-// ResetX264Encoder flushes the downstream encoding chain and forces an IDR.
+// ResetX264Encoder resets videorate timestamp state and forces an IDR.
 func (cp *CameraPipeline) ResetX264Encoder() {
-	sinkPad := cp.WebrtcToSip.VideoRate.GetStaticPad("sink")
-	if sinkPad == nil {
-		cp.Log().Warnw("videorate sink pad not found for flush", nil)
-		cp.ForceKeyframeOnEncoder()
-		return
-	}
-
-	peerPad := sinkPad.GetPeer()
-	if peerPad == nil {
-		cp.Log().Warnw("videorate sink pad has no peer for flush", nil)
-		cp.ForceKeyframeOnEncoder()
-		return
-	}
-
-	peerPad.SendEvent(gst.NewFlushStartEvent())
-	peerPad.SendEvent(gst.NewFlushStopEvent(true))
-
+	cp.WebrtcToSip.VideoRate.SetState(gst.StateReady)
+	cp.WebrtcToSip.VideoRate.SetState(gst.StatePlaying)
 	cp.ForceKeyframeOnEncoder()
 }

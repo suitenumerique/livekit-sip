@@ -42,8 +42,7 @@ func (stw *WebrtcToSip) Create() error {
 	}
 
 	stw.VideoRate, err = gst.NewElementWithProperties("videorate", map[string]interface{}{
-		"drop-only":     true,
-		"skip-to-first": true,
+		"drop-only": true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc videorate: %w", err)
@@ -79,12 +78,12 @@ func (stw *WebrtcToSip) Create() error {
 	}
 
 	stw.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
-		"bitrate":          uint(2000),
+		"bitrate":          uint(3000),
 		"key-int-max":      uint(12),
-		"speed-preset":     int(1), // ultrafast
+		"speed-preset":     int(3), // veryfast
 		"tune":             uint(4), // zerolatency
 		"bframes":          uint(0),
-		"vbv-buf-capacity": uint(2000),
+		"vbv-buf-capacity": uint(1500),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create webrtc x264 encoder: %w", err)
