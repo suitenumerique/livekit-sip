@@ -345,11 +345,11 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 
 	if k == lksdk.TrackKindAudio {
-		// Subscribe all audio tracks for speaker detection
 		r.audioPublications[rp.SID()] = pub
 		if err := pub.SetSubscribed(true); err != nil {
 			log.Errorw("cannot subscribe to audio track", err)
 		}
+		r.markForMixing(rp.SID())
 		log.Infow("audio tracks: subscribing", "total", len(r.audioPublications), "mixed", len(r.mixedAudioSIDs), "maxMixed", maxMixedAudioTracks)
 		r.subscribed.Break()
 		return
@@ -445,6 +445,16 @@ func (r *Room) moveMixedToEnd(sid string) {
 	}
 }
 
+func (r *Room) markForMixing(sid string) {
+	if r.isMixed(sid) {
+		return
+	}
+	if len(r.mixedAudioSIDs) >= maxMixedAudioTracks {
+		return
+	}
+	r.mixedAudioSIDs = append(r.mixedAudioSIDs, sid)
+}
+
 // startMixingTrack starts the decode/mix goroutine for a subscribed audio track
 func (r *Room) startMixingTrack(sid string, conf *config.Config) {
 	info, ok := r.audioTracks[sid]
@@ -525,15 +535,11 @@ func (r *Room) subscribeInitialAudioTracks() {
 		r.UpdateActiveAudioSubscriptions(speakers)
 	}
 
-	// Fill remaining mix slots with non-speaking participants
 	for sid := range r.audioPublications {
 		if len(r.mixedAudioSIDs) >= maxMixedAudioTracks {
 			break
 		}
-		if r.isMixed(sid) {
-			continue
-		}
-		r.mixedAudioSIDs = append(r.mixedAudioSIDs, sid)
+		r.markForMixing(sid)
 	}
 	r.log.Infow("audio tracks: initial mix set", "mixed", len(r.mixedAudioSIDs), "total", len(r.audioPublications), "maxMixed", maxMixedAudioTracks)
 }
