@@ -26,6 +26,7 @@ import (
 
 	"github.com/frostbyte73/core"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
@@ -795,7 +796,7 @@ func (r *Room) Participant() ParticipantInfo {
 }
 
 func (r *Room) NewParticipantTrack(sampleRate int) (msdk.WriteCloser[msdk.PCM16Sample], error) {
-	track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "pion")
+	track, err := lksdk.NewLocalSampleTrack(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus})
 	if err != nil {
 		return nil, err
 	}
@@ -805,12 +806,61 @@ func (r *Room) NewParticipantTrack(sampleRate int) (msdk.WriteCloser[msdk.PCM16S
 	}); err != nil {
 		return nil, err
 	}
-	ow := msdk.FromSampleWriter[opus.Sample](track, sampleRate, rtp.DefFrameDur)
+	level := &atomic.Uint32{}
+	sw := &audioLevelSampleWriter{lk: track, level: level}
+	ow := msdk.FromSampleWriter[opus.Sample](sw, sampleRate, rtp.DefFrameDur)
 	pw, err := opus.Encode(ow, channels, r.log)
 	if err != nil {
 		return nil, err
 	}
-	return newMediaWriterCount(pw, &r.stats.PublishedFrames, &r.stats.PublishedSamples), nil
+	return newMediaWriterCount(&audioLevelPCM16Writer{inner: pw, level: level}, &r.stats.PublishedFrames, &r.stats.PublishedSamples), nil
+}
+
+type audioLevelSampleWriter struct {
+	lk    *lksdk.LocalTrack
+	level *atomic.Uint32
+}
+
+func (w *audioLevelSampleWriter) WriteSample(s media.Sample) error {
+	lv := uint8(w.level.Load())
+	return w.lk.WriteSample(s, &lksdk.SampleWriteOptions{AudioLevel: &lv})
+}
+
+type audioLevelPCM16Writer struct {
+	inner msdk.WriteCloser[msdk.PCM16Sample]
+	level *atomic.Uint32
+}
+
+func (w *audioLevelPCM16Writer) WriteSample(pcm msdk.PCM16Sample) error {
+	w.level.Store(uint32(pcm16AudioLevel(pcm)))
+	return w.inner.WriteSample(pcm)
+}
+
+func (w *audioLevelPCM16Writer) SampleRate() int { return w.inner.SampleRate() }
+func (w *audioLevelPCM16Writer) String() string  { return w.inner.String() }
+func (w *audioLevelPCM16Writer) Close() error    { return w.inner.Close() }
+
+func pcm16AudioLevel(pcm msdk.PCM16Sample) uint8 {
+	if len(pcm) == 0 {
+		return 127
+	}
+	var sum float64
+	for _, s := range pcm {
+		f := float64(s)
+		sum += f * f
+	}
+	rms := math.Sqrt(sum / float64(len(pcm)))
+	if rms < 1 {
+		return 127
+	}
+	dbov := -20 * math.Log10(rms/32767.0)
+	if dbov < 0 {
+		return 0
+	}
+	if dbov > 127 {
+		return 127
+	}
+	return uint8(dbov)
 }
 
 func (r *Room) participantAudioTrackSubscribed(ctx context.Context, track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant, conf *config.Config) {

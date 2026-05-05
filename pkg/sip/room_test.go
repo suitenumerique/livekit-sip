@@ -17,6 +17,7 @@ package sip
 import (
 	"testing"
 
+	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/protocol/logger"
 )
 
@@ -61,5 +62,33 @@ func TestMarkForMixing_Idempotent(t *testing.T) {
 	r.markForMixing("A")
 	if got := len(r.mixedAudioSIDs); got != 1 {
 		t.Fatalf("mixedAudioSIDs len = %d, want 1", got)
+	}
+}
+
+func TestPCM16AudioLevel_SilenceIsQuietest(t *testing.T) {
+	if got := pcm16AudioLevel(make(msdk.PCM16Sample, 320)); got != 127 {
+		t.Fatalf("silence level = %d, want 127", got)
+	}
+}
+
+func TestPCM16AudioLevel_FullScaleIsLoudest(t *testing.T) {
+	pcm := make(msdk.PCM16Sample, 320)
+	for i := range pcm {
+		pcm[i] = 32767
+	}
+	if got := pcm16AudioLevel(pcm); got > 1 {
+		t.Fatalf("full-scale level = %d, want ~0", got)
+	}
+}
+
+func TestPCM16AudioLevel_MonotonicWithAmplitude(t *testing.T) {
+	quiet := make(msdk.PCM16Sample, 320)
+	loud := make(msdk.PCM16Sample, 320)
+	for i := range quiet {
+		quiet[i] = 100
+		loud[i] = 10000
+	}
+	if pcm16AudioLevel(loud) >= pcm16AudioLevel(quiet) {
+		t.Fatalf("loud=%d quiet=%d - level must decrease as amplitude rises (RFC 6464)", pcm16AudioLevel(loud), pcm16AudioLevel(quiet))
 	}
 }
