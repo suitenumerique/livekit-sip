@@ -1195,6 +1195,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			ackTimeout = nil // all good, disable timeout
 			ackReceived = nil
 		case <-ackTimeout:
+			if c.cc.GotACK() {
+				// ACK arrived before this loop started watching (e.g. during pinPrompt).
+				ackTimeout = nil
+				ackReceived = nil
+				continue
+			}
 			// Only warn, the other side still thinks the call is active, media may be flowing.
 			c.log().Warnw("Call accepted, but no ACK received", errNoACK)
 			// We don't need to wait for a full media timeout initially, we already know something is not quite right.
