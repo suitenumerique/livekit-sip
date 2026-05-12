@@ -989,3 +989,34 @@ func (o *MediaOrchestrator) Start() (err error) {
 	}
 	return nil
 }
+
+// SetPlaceholderVideoMode delegates to the camera manager. Returns an error
+// if the camera/pipeline aren't running yet — Start() must have been called.
+func (o *MediaOrchestrator) SetPlaceholderVideoMode(active bool, pngPath string) error {
+	if o.camera == nil {
+		return fmt.Errorf("no camera manager")
+	}
+	return o.camera.SetPlaceholderVideoMode(active, pngPath)
+}
+
+// SetCameraMuted toggles the LK-side mute flag on the gateway's published
+// camera track so browser participants render the avatar placeholder
+// instead of a stuck last frame while we drop SIP→WebRTC frames.
+func (o *MediaOrchestrator) SetCameraMuted(muted bool) {
+	if o.camera == nil {
+		return
+	}
+	o.camera.SetCameraMuted(muted)
+}
+
+// SetSipToWebrtcDropping toggles whether the SIP caller's webcam frames
+// reach the LK room. Used by the inbound call's placeholder mode so the
+// room sees the SIP participant as "camera off" while the gateway-side
+// camera pipeline stays in PLAYING (it must, for the placeholder PNG
+// chain to flow toward the SIP caller).
+func (o *MediaOrchestrator) SetSipToWebrtcDropping(dropping bool) error {
+	if o.camera == nil {
+		return fmt.Errorf("no camera manager")
+	}
+	return o.camera.SetSipToWebrtcDropping(dropping)
+}

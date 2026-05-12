@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,7 @@ type CameraPipeline struct {
 	*WebrtcIo
 	*SipToWebrtc
 	*WebrtcToSip
+	PlaceholderVideo *PlaceholderVideo
 
 	activeSSRC          atomic.Uint32
 	pendingSwitchSSRC   atomic.Uint32
@@ -34,6 +36,59 @@ type CameraPipeline struct {
 	switchRequests      chan uint32   // Channel for clean switch (IDR received)
 	fallbackRequests    chan uint32   // Channel for fallback switch (timeout)
 	pliRetryRequests    chan uint32   // Channel for PLI retry checks
+
+	// Placeholder-mode buffer dropper at the SIP→WebRTC chain entry.
+	sipDropping    atomic.Bool
+	sipDropMu      sync.Mutex
+	sipDropPad     *gst.Pad
+	sipDropProbeID uint64
+}
+
+// SetPlaceholderVideoMode would route the gateway's outgoing SIP video to
+// the embedded "this meeting is encrypted" frozen frame (active=true) or
+// back to the normal participant-track path (active=false). Currently a
+// graceful no-op when the placeholder chain isn't added to the pipeline
+// (see pipeline.New). The audio prompt and SIP→WebRTC drop probe driven
+// by the encryption watcher still work without it.
+func (cp *CameraPipeline) SetPlaceholderVideoMode(active bool, pngPath string) error {
+	if cp.PlaceholderVideo == nil {
+		return nil // placeholder video disabled, no-op
+	}
+	if active {
+		if pngPath != "" {
+			if err := cp.PlaceholderVideo.SetLocation(pngPath); err != nil {
+				return fmt.Errorf("set placeholder image: %w", err)
+			}
+		}
+	}
+	return cp.PlaceholderVideo.Activate(active)
+}
+
+// SetSipToWebrtcDropping installs (idempotently) a pad probe on the head
+// of the SIP→WebRTC chain that drops every buffer when dropping=true.
+// Net effect: the camera track stays published to LK (keeping the pipeline
+// in PLAYING) but no actual video frames reach the room.
+func (cp *CameraPipeline) SetSipToWebrtcDropping(dropping bool) error {
+	if cp.SipToWebrtc == nil || cp.SipToWebrtc.H264Depay == nil {
+		return fmt.Errorf("sip-to-webrtc chain not initialised")
+	}
+	cp.sipDropMu.Lock()
+	defer cp.sipDropMu.Unlock()
+	cp.sipDropping.Store(dropping)
+	if dropping && cp.sipDropProbeID == 0 {
+		pad := cp.SipToWebrtc.H264Depay.GetStaticPad("sink")
+		if pad == nil {
+			return fmt.Errorf("could not get H264Depay sink pad")
+		}
+		cp.sipDropProbeID = pad.AddProbe(gst.PadProbeTypeBuffer, func(p *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+			if cp.sipDropping.Load() {
+				return gst.PadProbeDrop
+			}
+			return gst.PadProbeOK
+		})
+		cp.sipDropPad = pad
+	}
+	return nil
 }
 
 func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
@@ -108,12 +163,20 @@ func New(ctx context.Context, log logger.Logger) (*CameraPipeline, error) {
 		return nil, err
 	}
 
+	p.Log().Debugw("Adding Placeholder Video chain")
+	cp.PlaceholderVideo, err = pipeline.AddChain(cp, NewPlaceholderVideo(log, cp))
+	if err != nil {
+		p.Log().Errorw("Failed to add Placeholder Video chain", err)
+		return nil, err
+	}
+
 	p.Log().Debugw("Linking chains")
 	if err := pipeline.LinkChains(cp,
 		cp.SipIo,
 		cp.WebrtcIo,
 		cp.SipToWebrtc,
 		cp.WebrtcToSip,
+		cp.PlaceholderVideo,
 	); err != nil {
 		p.Log().Errorw("Failed to link chains", err)
 		return nil, err
@@ -151,6 +214,13 @@ func (cp *CameraPipeline) cleanup() error {
 		return fmt.Errorf("failed to close WebRTC to SIP chain: %w", err)
 	}
 	cp.WebrtcToSip = nil
+	if cp.PlaceholderVideo != nil {
+		cp.Log().Debugw("Closing Placeholder Video chain")
+		if err := cp.PlaceholderVideo.Close(); err != nil {
+			return fmt.Errorf("failed to close Placeholder Video chain: %w", err)
+		}
+		cp.PlaceholderVideo = nil
+	}
 
 	cp.Log().Debugw("Camera pipeline chains closed")
 	return nil

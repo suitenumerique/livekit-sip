@@ -113,8 +113,20 @@ type TrackManager struct {
 	p     *lksdk.LocalParticipant
 
 	camera           *TrackOutput
+	cameraPub        *lksdk.LocalTrackPublication
 	cameraRtcpClosed atomic.Bool
 	CameraTracks     trackKindManager
+}
+
+// SetCameraMuted signals the LK room that the gateway's camera track is
+// muted. Used by the encryption watcher to make browser tiles show the
+// LK avatar placeholder (instead of a stuck last frame) while we're
+// dropping SIP→WebRTC frames in placeholder mode.
+func (tm *TrackManager) SetCameraMuted(muted bool) {
+	if tm.cameraPub == nil {
+		return
+	}
+	tm.cameraPub.SetMuted(muted)
 }
 
 func (tm *TrackManager) Participant() *lksdk.LocalParticipant {
@@ -155,6 +167,7 @@ func (tm *TrackManager) Camera() (*TrackOutput, error) {
 	if err != nil {
 		return nil, err
 	}
+	tm.cameraPub = pt
 	tm.log.Infow("published camera track", "SID", pt.SID())
 	trackRtcp := &RtcpWriter{
 		pc: tm.p.GetPublisherPeerConnection(),

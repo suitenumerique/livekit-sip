@@ -71,6 +71,32 @@ func (cm *CameraManager) Start() error {
 	return nil
 }
 
+// SetCameraMuted marks the gateway's published camera track as muted in
+// the LK room. Browser participants then render the LK avatar placeholder
+// for the SIP tile (instead of the last frame that arrived before the
+// SIP→WebRTC drop probe kicked in). Paired with SetSipToWebrtcDropping.
+func (cm *CameraManager) SetCameraMuted(muted bool) {
+	if cm.tm != nil {
+		cm.tm.SetCameraMuted(muted)
+	}
+}
+
+// SetSipToWebrtcDropping toggles whether SIP-side camera frames reach the
+// LK room. When dropping=true, a GStreamer pad probe drops every buffer
+// at the head of the SIP→WebRTC chain — used in placeholder mode so the
+// room sees the SIP participant as "camera off" while the gateway still
+// has a published track keeping the pipeline in PLAYING.
+func (cm *CameraManager) SetSipToWebrtcDropping(dropping bool) error {
+	if cm.pipeline == nil {
+		return fmt.Errorf("camera pipeline not started")
+	}
+	p, ok := cm.pipeline.(*camera_pipeline.CameraPipeline)
+	if !ok {
+		return fmt.Errorf("camera pipeline is not a *CameraPipeline")
+	}
+	return p.SetSipToWebrtcDropping(dropping)
+}
+
 func (cm *CameraManager) CreateVideoPipeline(opt *MediaOptions) (SipPipeline, error) {
 	pipeline, err := camera_pipeline.New(cm.ctx, cm.log)
 	if err != nil {
@@ -183,4 +209,19 @@ func (cm *CameraManager) SwitchActiveWebrtcTrack(sid string) (bool, error) {
 
 func (cm *CameraManager) RecoverTracks() error {
 	return nil
+}
+
+// SetPlaceholderVideoMode toggles the frozen-frame "this meeting is
+// encrypted" PNG as the source feeding the WebRTC→SIP video chain. Used by
+// the inbound call's placeholder mode so the SIP/phone caller sees the
+// branded message instead of black video. Safe to call after Start().
+func (cm *CameraManager) SetPlaceholderVideoMode(active bool, pngPath string) error {
+	if cm.VideoManager == nil || cm.pipeline == nil {
+		return fmt.Errorf("camera pipeline not started")
+	}
+	p, ok := cm.pipeline.(*camera_pipeline.CameraPipeline)
+	if !ok {
+		return fmt.Errorf("camera pipeline is not a *CameraPipeline")
+	}
+	return p.SetPlaceholderVideoMode(active, pngPath)
 }

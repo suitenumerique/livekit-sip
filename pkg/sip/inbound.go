@@ -35,6 +35,7 @@ import (
 
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
+	"github.com/livekit/media-sdk/mixer"
 	"github.com/livekit/media-sdk/rtp"
 	"github.com/livekit/media-sdk/sdp"
 	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
@@ -1146,6 +1147,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		return errors.Wrap(err, "starting media orchestrator failed")
 	}
 	c.log().Infow("Media orchestrator started successfully")
+
+	// Encryption watcher: drives the SIP→WebRTC drop probe + audio prompt
+	// while encryption is live. Video placeholder calls inside will fail
+	// gracefully (chain detached from pipeline); the other two effects
+	// keep working.
+	go c.runEncryptionWatcher(ctx)
 	if !pinPrompt {
 		c.log().Infow("Waiting for track subscription(s)")
 		// For dispatches without pin, we first wait for LK participant to become available,
@@ -1769,6 +1776,128 @@ func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status Cal
 		return errors.Wrap(err, "cannot create LiveKit participant")
 	}
 	return nil
+}
+
+// getRoomMetadata returns the LiveKit room's current metadata blob, or empty
+// string if the room isn't ready yet. Used by the encryption placeholder
+// goroutine to poll for state changes.
+func (c *inboundCall) getRoomMetadata() string {
+	r := c.lkRoom.Room()
+	if r == nil {
+		return ""
+	}
+	return r.Metadata()
+}
+
+// isLiveEncryptedRoom reports whether the room we just joined currently has
+// active E2EE — the backend pushes `is_encrypted` and `encryption_paused` into
+// room metadata; live = encrypted AND not paused.
+func (c *inboundCall) isLiveEncryptedRoom() bool {
+	return parseRoomEncryptionState(c.getRoomMetadata()).IsLive()
+}
+
+// runEncryptionWatcher polls room metadata for the duration of the call,
+// toggling placeholder mode (video PNG + SIP→LK drop + audio prompt loop)
+// whenever live E2EE flips on/off. Lets the admin pause and resume
+// encryption arbitrarily many times during a single SIP call.
+func (c *inboundCall) runEncryptionWatcher(ctx context.Context) {
+	c.log().Infow("encryption watcher: starting", "initialLive", c.isLiveEncryptedRoom(), "metadata", c.getRoomMetadata())
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	// nil = uninitialised → first apply always fires.
+	var active *bool
+	var (
+		audioCtx   context.Context
+		audioStop  context.CancelFunc
+		audioTrack *mixer.Input
+		audioDone  chan struct{}
+	)
+
+	stopAudio := func() {
+		if audioStop != nil {
+			audioStop()
+		}
+		if audioDone != nil {
+			<-audioDone
+			audioDone = nil
+		}
+		if audioTrack != nil {
+			_ = audioTrack.Close()
+			audioTrack = nil
+		}
+		audioStop = nil
+		audioCtx = nil
+	}
+
+	apply := func(live bool) {
+		// Always re-assert the InputSelector's active-pad. The auto-switch
+		// in webrtcTrack.go assumes only-one-source semantics; with the
+		// placeholder always linked, we have to keep telling the selector
+		// which pad to forward, every tick. SetPlaceholderVideoMode(true)
+		// pins it to the placeholder; SetPlaceholderVideoMode(false) hands
+		// it back to a webrtc track if any.
+		if live {
+			if err := c.medias.SetPlaceholderVideoMode(true, EncryptionBlockedImagePath); err != nil {
+				c.log().Warnw("watcher: activate placeholder video failed", err)
+			}
+		} else {
+			if err := c.medias.SetPlaceholderVideoMode(false, ""); err != nil {
+				c.log().Warnw("watcher: deactivate placeholder video failed", err)
+			}
+		}
+
+		if active != nil && *active == live {
+			return
+		}
+		first := active == nil
+		c.log().Infow("encryption watcher: transition", "first", first, "wasActive", active != nil && *active, "newLive", live)
+		active = &live
+		if live {
+			c.log().Infow("encryption watcher: entering placeholder mode")
+			if err := c.medias.SetSipToWebrtcDropping(true); err != nil {
+				c.log().Warnw("watcher: enable SIP→WebRTC drop failed", err)
+			}
+			// Mute the LK publication so the browser tile shows the
+			// avatar placeholder instead of a stuck last frame.
+			c.medias.SetCameraMuted(true)
+			audioTrack = c.lkRoom.NewTrack()
+			if audioTrack == nil {
+				c.log().Warnw("watcher: cannot allocate audio mixer track", nil)
+				return
+			}
+			audioCtx, audioStop = context.WithCancel(ctx)
+			audioDone = make(chan struct{})
+			go func(track *mixer.Input, ctx context.Context, done chan struct{}) {
+				defer close(done)
+				playEncryptionPlaceholderLoop(ctx, track, c.s.res.encryptionBlocked)
+			}(audioTrack, audioCtx, audioDone)
+		} else {
+			if !first {
+				c.log().Infow("encryption watcher: leaving placeholder mode")
+				stopAudio()
+			}
+			if err := c.medias.SetSipToWebrtcDropping(false); err != nil {
+				c.log().Warnw("watcher: disable SIP→WebRTC drop failed", err)
+			}
+			// Unmute the LK publication so frames flow again.
+			c.medias.SetCameraMuted(false)
+		}
+	}
+
+	apply(c.isLiveEncryptedRoom())
+	for {
+		select {
+		case <-ctx.Done():
+			stopAudio()
+			return
+		case <-c.lkRoom.Closed():
+			stopAudio()
+			return
+		case <-ticker.C:
+			apply(c.isLiveEncryptedRoom())
+		}
+	}
 }
 
 func (c *inboundCall) playAudio(ctx context.Context, frames []msdk.PCM16Sample) {

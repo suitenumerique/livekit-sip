@@ -15,19 +15,34 @@
 package sip
 
 import (
+	"os"
+	"path/filepath"
+
 	msdk "github.com/livekit/media-sdk"
 
 	"github.com/livekit/sip/res"
 )
 
+// EncryptionBlockedImagePath is the on-disk location of the embedded
+// "this meeting is encrypted" placeholder PNG. Materialised once at server
+// startup so GStreamer pipelines can read it via `multifilesrc`.
+var EncryptionBlockedImagePath = filepath.Join(os.TempDir(), "encryption_blocked.png")
+
 type mediaRes struct {
-	enterPin []msdk.PCM16Sample
-	roomJoin []msdk.PCM16Sample
-	wrongPin []msdk.PCM16Sample
+	enterPin          []msdk.PCM16Sample
+	roomJoin          []msdk.PCM16Sample
+	wrongPin          []msdk.PCM16Sample
+	encryptionBlocked []msdk.PCM16Sample
 }
 
 func (s *Server) initMediaRes() {
 	s.res.enterPin = res.ReadOggAudioFile(res.EnterPinOgg)
 	s.res.roomJoin = res.ReadOggAudioFile(res.RoomJoinOgg)
 	s.res.wrongPin = res.ReadOggAudioFile(res.WrongPinOgg)
+	s.res.encryptionBlocked = res.ReadOggAudioFile(res.EncryptionBlockedOgg)
+
+	// Best-effort: write the placeholder PNG once so the video pipeline can
+	// pick it up via multifilesrc. Failures here are non-fatal — the audio
+	// placeholder still works without it.
+	_ = os.WriteFile(EncryptionBlockedImagePath, res.EncryptionBlockedPng, 0o644)
 }

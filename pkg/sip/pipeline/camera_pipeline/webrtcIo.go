@@ -42,9 +42,21 @@ type WebrtcIo struct {
 var _ pipeline.GstChain = (*WebrtcIo)(nil)
 
 const VP8CAPS = "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96,rtcp-fb-nack-pli=1,rtcp-fb-nack=1,rtcp-fb-ccm-fir=1"
+const VP9CAPS = "application/x-rtp,media=video,encoding-name=VP9,clock-rate=90000,payload=98,rtcp-fb-nack-pli=1,rtcp-fb-nack=1,rtcp-fb-ccm-fir=1"
+const H264CAPS_PT97 = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=97,rtcp-fb-nack-pli=1,rtcp-fb-nack=1,rtcp-fb-ccm-fir=1"
+const H264CAPS_PT108 = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=108,rtcp-fb-nack-pli=1,rtcp-fb-nack=1,rtcp-fb-ccm-fir=1"
+const H264CAPS_PT125 = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=125,rtcp-fb-nack-pli=1,rtcp-fb-nack=1,rtcp-fb-ccm-fir=1"
 
+// Browser-offered video payload types we know how to handle. Chrome's
+// default video preference order in WebRTC is VP9 > VP8 > H.264 (PT 108
+// for packetization-mode=1) > H.264 PT 125. LiveKit sends through
+// whatever the publisher picked.
 var webrtcCaps = map[uint]string{
-	96: VP8CAPS,
+	96:  VP8CAPS,
+	97:  H264CAPS_PT97,
+	98:  VP9CAPS,
+	108: H264CAPS_PT108,
+	125: H264CAPS_PT125,
 }
 
 // Create implements [pipeline.GstChain].
@@ -136,7 +148,11 @@ func (wio *WebrtcIo) Link() error {
 	if _, err := wio.WebrtcRtpBin.Connect("request-pt-map", event.RegisterCallback(wio.ctx, wio.pipeline.Loop(), func(self *gst.Element, session uint, pt uint) *gst.Caps {
 		caps, ok := webrtcCaps[pt]
 		if !ok {
-			return nil
+			// Returning nil here crashes go-gst's marshaller in
+			// (*Caps).ToGValue. Hand back AnyCaps so GStreamer can
+			// continue (it'll figure it out from RTP headers).
+			wio.log.Warnw("RTPBIN requested unknown PT map, returning AnyCaps to avoid nil-Caps crash", nil, "pt", pt)
+			return gst.NewAnyCaps()
 		}
 		wio.log.Debugw("RTPBIN requested PT map", "pt", pt, "caps", caps)
 		return gst.NewCapsFromString(caps)
