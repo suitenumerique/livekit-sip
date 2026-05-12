@@ -211,11 +211,10 @@ func (cm *CameraManager) RecoverTracks() error {
 	return nil
 }
 
-// SetPlaceholderVideoMode toggles the frozen-frame "this meeting is
-// encrypted" PNG as the source feeding the WebRTC→SIP video chain. Used by
-// the inbound call's placeholder mode so the SIP/phone caller sees the
-// branded message instead of black video. Safe to call after Start().
-func (cm *CameraManager) SetPlaceholderVideoMode(active bool, pngPath string) error {
+// SetPlaceholderVideoMode picks which raw-YUV source feeds the SIP video
+// encoder ("placeholder", "black", or "bridge"). See CameraPipeline for
+// the modes.
+func (cm *CameraManager) SetPlaceholderVideoMode(mode string) error {
 	if cm.VideoManager == nil || cm.pipeline == nil {
 		return fmt.Errorf("camera pipeline not started")
 	}
@@ -223,5 +222,5 @@ func (cm *CameraManager) SetPlaceholderVideoMode(active bool, pngPath string) er
 	if !ok {
 		return fmt.Errorf("camera pipeline is not a *CameraPipeline")
 	}
-	return p.SetPlaceholderVideoMode(active, pngPath)
+	return p.SetPlaceholderVideoMode(mode)
 }

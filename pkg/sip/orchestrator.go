@@ -990,13 +990,13 @@ func (o *MediaOrchestrator) Start() (err error) {
 	return nil
 }
 
-// SetPlaceholderVideoMode delegates to the camera manager. Returns an error
-// if the camera/pipeline aren't running yet — Start() must have been called.
-func (o *MediaOrchestrator) SetPlaceholderVideoMode(active bool, pngPath string) error {
+// SetPlaceholderVideoMode picks which raw-YUV source feeds the SIP video
+// encoder ("placeholder", "black", or "bridge"). See CameraPipeline.
+func (o *MediaOrchestrator) SetPlaceholderVideoMode(mode string) error {
 	if o.camera == nil {
 		return fmt.Errorf("no camera manager")
 	}
-	return o.camera.SetPlaceholderVideoMode(active, pngPath)
+	return o.camera.SetPlaceholderVideoMode(mode)
 }
 
 // SetCameraMuted toggles the LK-side mute flag on the gateway's published

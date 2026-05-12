@@ -1837,14 +1837,22 @@ func (c *inboundCall) runEncryptionWatcher(ctx context.Context) {
 		// which pad to forward, every tick. SetPlaceholderVideoMode(true)
 		// pins it to the placeholder; SetPlaceholderVideoMode(false) hands
 		// it back to a webrtc track if any.
-		if live {
-			if err := c.medias.SetPlaceholderVideoMode(true, EncryptionBlockedImagePath); err != nil {
-				c.log().Warnw("watcher: activate placeholder video failed", err)
-			}
-		} else {
-			if err := c.medias.SetPlaceholderVideoMode(false, ""); err != nil {
-				c.log().Warnw("watcher: deactivate placeholder video failed", err)
-			}
+		// Pick which raw-YUV source the SIP video encoder consumes.
+		// placeholder: live encryption (PNG)
+		// black:       bridge mode but no webrtc video tracks → avoid
+		//              showing a stale last-frame to the caller
+		// bridge:      bridge mode with at least one webrtc track
+		var mode string
+		switch {
+		case live:
+			mode = "placeholder"
+		case c.lkRoom.HasWebrtcVideoTracks():
+			mode = "bridge"
+		default:
+			mode = "black"
+		}
+		if err := c.medias.SetPlaceholderVideoMode(mode); err != nil {
+			c.log().Warnw("watcher: set placeholder video mode failed", err, "mode", mode)
 		}
 
 		if active != nil && *active == live {

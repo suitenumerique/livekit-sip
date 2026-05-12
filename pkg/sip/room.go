@@ -150,6 +150,7 @@ type RoomInterface interface {
 	SendData(data lksdk.DataPacket, opts ...lksdk.DataPublishOption) error
 	NewTrack() *mixer.Input
 	IsReady() bool
+	HasWebrtcVideoTracks() bool
 }
 
 type GetRoomFunc func(log logger.Logger, st *RoomStats) RoomInterface
@@ -296,6 +297,29 @@ func (r *Room) Subscribed() <-chan struct{} {
 		return nil
 	}
 	return r.subscribed.Watch()
+}
+
+// HasWebrtcVideoTracks reports whether any remote participant currently
+// has at least one un-muted video track. Used by the encryption watcher
+// to decide between live bridge and the "black" fallback in placeholder
+// mode (when no one in the room has their camera on, the SIP caller
+// would otherwise see the last frame produced by an earlier source).
+func (r *Room) HasWebrtcVideoTracks() bool {
+	if r == nil || r.room == nil {
+		return false
+	}
+	for _, rp := range r.room.GetRemoteParticipants() {
+		for _, pub := range rp.TrackPublications() {
+			if pub.Kind() != lksdk.TrackKindVideo {
+				continue
+			}
+			if pub.IsMuted() {
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Room) Room() *lksdk.Room {

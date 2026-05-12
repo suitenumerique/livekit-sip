@@ -44,24 +44,27 @@ type CameraPipeline struct {
 	sipDropProbeID uint64
 }
 
-// SetPlaceholderVideoMode would route the gateway's outgoing SIP video to
-// the embedded "this meeting is encrypted" frozen frame (active=true) or
-// back to the normal participant-track path (active=false). Currently a
-// graceful no-op when the placeholder chain isn't added to the pipeline
-// (see pipeline.New). The audio prompt and SIP→WebRTC drop probe driven
-// by the encryption watcher still work without it.
-func (cp *CameraPipeline) SetPlaceholderVideoMode(active bool, pngPath string) error {
+// SetPlaceholderVideoMode picks which raw-YUV source feeds the SIP video
+// encoder. Three modes:
+//
+//	"placeholder" → PNG ("this meeting is encrypted")
+//	"black"       → black fallback (no webrtc video available)
+//	"bridge"      → live webrtc participant video
+//
+// Idempotent; safe to call every watcher tick. Returns nil silently when
+// the placeholder chain isn't wired into the pipeline.
+func (cp *CameraPipeline) SetPlaceholderVideoMode(mode string) error {
 	if cp.PlaceholderVideo == nil {
-		return nil // placeholder video disabled, no-op
+		return nil
 	}
-	if active {
-		if pngPath != "" {
-			if err := cp.PlaceholderVideo.SetLocation(pngPath); err != nil {
-				return fmt.Errorf("set placeholder image: %w", err)
-			}
-		}
+	switch mode {
+	case "placeholder":
+		return cp.PlaceholderVideo.SelectPad(PadPlaceholder)
+	case "black":
+		return cp.PlaceholderVideo.SelectPad(PadBlack)
+	default:
+		return cp.PlaceholderVideo.SelectPad(PadBridge)
 	}
-	return cp.PlaceholderVideo.Activate(active)
 }
 
 // SetSipToWebrtcDropping installs (idempotently) a pad probe on the head
