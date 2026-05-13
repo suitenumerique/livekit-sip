@@ -1146,6 +1146,18 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		return errors.Wrap(err, "starting media orchestrator failed")
 	}
 	c.log().Infow("Media orchestrator started successfully")
+
+	// Encrypted rooms cannot accept SIP/phone participants — they have no
+	// way to derive the room key. Play a short "encryption not supported"
+	// prompt, then drop. We do this *after* joining so we can read the
+	// room metadata (the only authoritative source for `encryption_mode`).
+	if c.lkRoom.IsEncrypted() {
+		c.log().Infow("Room is encrypted; playing encryption-not-supported prompt and dropping call")
+		c.playAudio(ctx, c.s.res.encryptionNotSupported)
+		c.close(false, callDropped, "encryption-not-supported")
+		return nil
+	}
+
 	if !pinPrompt {
 		c.log().Infow("Waiting for track subscription(s)")
 		// For dispatches without pin, we first wait for LK participant to become available,

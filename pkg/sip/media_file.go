@@ -21,13 +21,15 @@ import (
 )
 
 type mediaRes struct {
-	enterPin []msdk.PCM16Sample
-	roomJoin []msdk.PCM16Sample
-	wrongPin []msdk.PCM16Sample
+	enterPin               []msdk.PCM16Sample
+	roomJoin               []msdk.PCM16Sample
+	wrongPin               []msdk.PCM16Sample
+	encryptionNotSupported []msdk.PCM16Sample
 }
 
 func (s *Server) initMediaRes() {
 	s.res.enterPin = res.ReadOggAudioFile(res.EnterPinOgg)
 	s.res.roomJoin = res.ReadOggAudioFile(res.RoomJoinOgg)
 	s.res.wrongPin = res.ReadOggAudioFile(res.WrongPinOgg)
+	s.res.encryptionNotSupported = res.ReadOggAudioFile(res.EncryptionNotSupportedOgg)
 }

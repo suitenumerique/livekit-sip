@@ -250,6 +250,10 @@ func (r *testRoom) IsReady() bool {
 	return r.room.IsReady()
 }
 
+func (r *testRoom) IsEncrypted() bool {
+	return r.room.IsEncrypted()
+}
+
 type testSIPClientTransaction struct {
 	responses chan *sip.Response
 	cancels   chan struct{}

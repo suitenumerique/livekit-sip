@@ -16,6 +16,7 @@ package sip
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -150,6 +151,7 @@ type RoomInterface interface {
 	SendData(data lksdk.DataPacket, opts ...lksdk.DataPublishOption) error
 	NewTrack() *mixer.Input
 	IsReady() bool
+	IsEncrypted() bool
 }
 
 type GetRoomFunc func(log logger.Logger, st *RoomStats) RoomInterface
@@ -296,6 +298,27 @@ func (r *Room) Subscribed() <-chan struct{} {
 		return nil
 	}
 	return r.subscribed.Watch()
+}
+
+// IsEncrypted reports whether the joined LiveKit room is end-to-end
+// encrypted by reading its metadata (`{"encryption_mode": "basic"}` is
+// pushed by the backend on `room_started`). Encrypted rooms can't accept
+// SIP callers — they have no way to derive the room key.
+func (r *Room) IsEncrypted() bool {
+	if r == nil || r.room == nil {
+		return false
+	}
+	md := r.room.Metadata()
+	if md == "" {
+		return false
+	}
+	var parsed struct {
+		EncryptionMode string `json:"encryption_mode"`
+	}
+	if err := json.Unmarshal([]byte(md), &parsed); err != nil {
+		return false
+	}
+	return parsed.EncryptionMode != "" && parsed.EncryptionMode != "none"
 }
 
 func (r *Room) Room() *lksdk.Room {
