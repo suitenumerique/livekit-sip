@@ -2,6 +2,7 @@ package audiopcmu
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -73,7 +74,11 @@ func (e *AudioPcmu) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.RtpPcmuPay, err = gst.NewElementWithProperties("rtppcmupay", map[string]interface{}{})
+	e.RtpPcmuPay, err = gst.NewElementWithProperties("rtppcmupay", map[string]interface{}{
+		"min-ptime":      int64(20 * time.Millisecond.Nanoseconds()),
+		"max-ptime":      int64(20 * time.Millisecond.Nanoseconds()),
+		"ptime-multiple": int64(20 * time.Millisecond.Nanoseconds()),
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtppcmupay element: %v", err))
 		self.Error("Failed to create rtppcmupay element", err)

@@ -2,6 +2,7 @@ package audiopcma
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -73,7 +74,11 @@ func (e *AudioPcma) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.RtpPcmaPay, err = gst.NewElementWithProperties("rtppcmapay", map[string]interface{}{})
+	e.RtpPcmaPay, err = gst.NewElementWithProperties("rtppcmapay", map[string]interface{}{
+		"min-ptime":      int64(20 * time.Millisecond.Nanoseconds()),
+		"max-ptime":      int64(20 * time.Millisecond.Nanoseconds()),
+		"ptime-multiple": int64(20 * time.Millisecond.Nanoseconds()),
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtppcmapay element: %v", err))
 		self.Error("Failed to create rtppcmapay element", err)

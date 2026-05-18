@@ -26,8 +26,9 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 	var err error
 
 	compositorMicrophone.SilenceSrc, err = gst.NewElementWithProperties("audiotestsrc", map[string]interface{}{
-		"is-live": true,
-		"wave":    int(4), // silence
+		"is-live":          true,
+		"wave":             int(4),    // silence
+		"samplesperbuffer": uint(160), // 160 bytes = 10 ms at 16 kHz S16LE mono, match audiomixer default output-buffer-duration.
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create microphone silence source: %w", err)
