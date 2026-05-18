@@ -7,15 +7,15 @@ import "C"
 import (
 	"runtime"
 	"runtime/debug"
+	"time"
 )
 
-// Call this after p.SetState(gst.StateNull) and p.Unref()
+// Call this after p.SetState(gst.StateNull)
 func ForceMemoryRelease() {
-	runtime.GC()
-
-	// 1. Force Go GC to run (clean up Go wrappers)
+	for range 5 {
+		runtime.GC()
+		time.Sleep(100 * time.Millisecond)
+	}
 	debug.FreeOSMemory()
-
-	// 2. Force C glibc to release free pages to OS
 	C.malloc_trim(0)
 }

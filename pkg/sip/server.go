@@ -41,6 +41,7 @@ import (
 	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
+	"github.com/livekit/sip/pkg/sip/pipeline"
 	"github.com/livekit/sip/pkg/stats"
 )
 
@@ -202,7 +203,8 @@ func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats
 		option(s)
 	}
 	s.infos.byCallID = expirable.NewLRU[string, *inboundCallInfo](maxCallCache, nil, callCacheTTL)
-	s.initMediaRes()
+	s.initMediaRes(s.conf)
+	pipeline.SetupLogging(log, conf.Gst)
 	return s
 }
 
@@ -312,6 +314,7 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	s.sipSrv.OnOptions(s.onOptions)
 	s.sipSrv.OnInvite(s.onInvite)
 	s.sipSrv.OnAck(s.onAck)
+	s.sipSrv.OnUpdate(s.onUpdate)
 	s.sipSrv.OnBye(s.onBye)
 	s.sipSrv.OnNotify(s.onNotify)
 	s.sipSrv.OnNoRoute(s.OnNoRoute)

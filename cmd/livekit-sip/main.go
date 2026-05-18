@@ -81,8 +81,8 @@ func runService(_ context.Context, c *cli.Command) error {
 		return err
 	}
 
-	stopChan := make(chan os.Signal, 1)
-	signal.Notify(stopChan, syscall.SIGTERM, syscall.SIGQUIT)
+	// stopChan := make(chan os.Signal, 1)
+	// signal.Notify(stopChan, syscall.SIGTERM, syscall.SIGQUIT)
 
 	killChan := make(chan os.Signal, 1)
 	signal.Notify(killChan, syscall.SIGINT)
@@ -105,9 +105,9 @@ func runService(_ context.Context, c *cli.Command) error {
 
 	go func() {
 		select {
-		case sig := <-stopChan:
-			log.Infow("exit requested, finishing all SIP then shutting down", "signal", sig)
-			svc.Stop(false)
+		// case sig := <-stopChan:
+		// 	log.Infow("exit requested, finishing all SIP then shutting down", "signal", sig)
+		// 	svc.Stop(false)
 		case sig := <-killChan:
 			log.Infow("exit requested, stopping all SIP and shutting down", "signal", sig)
 			svc.Stop(true)

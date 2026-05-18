@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -56,6 +57,25 @@ type TLSConfig struct {
 	KeyLog     string    `yaml:"key_log"`
 }
 
+type VideoConfig struct {
+	Width     int `yaml:"width"`
+	Height    int `yaml:"height"`
+	Framerate int `yaml:"framerate"`
+}
+
+type GstConfig struct {
+	Debug   string `yaml:"debug"`
+	DumpDot bool   `yaml:"dump_dot"`
+	DumpDir string `yaml:"dump_dir"`
+}
+
+type PublishCodecConfig struct {
+	Camera           string `yaml:"camera"`
+	Microphone       string `yaml:"microphone"`
+	Screenshare      string `yaml:"screenshare"`
+	ScreenshareAudio string `yaml:"screenshareaudio"`
+}
+
 type Config struct {
 	Redis     *redis.RedisConfig `yaml:"redis"`      // required
 	ApiKey    string             `yaml:"api_key"`    // required (env LIVEKIT_API_KEY)
@@ -72,6 +92,7 @@ type Config struct {
 	TLS                *TLSConfig          `yaml:"tls"`
 	RTPPort            rtcconfig.PortRange `yaml:"rtp_port"`
 	Logging            logger.Config       `yaml:"logging"`
+	Gst                GstConfig           `yaml:"gst"`
 	ClusterID          string              `yaml:"cluster_id"` // cluster this instance belongs to
 	MaxCpuUtilization  float64             `yaml:"max_cpu_utilization"`
 
@@ -84,9 +105,10 @@ type Config struct {
 	MediaUseExternalIP bool   `yaml:"media_use_external_ip"`
 	MediaNAT1To1IP     string `yaml:"media_nat_1_to_1_ip"`
 
-	MediaTimeout        time.Duration   `yaml:"media_timeout"`
-	MediaTimeoutInitial time.Duration   `yaml:"media_timeout_initial"`
-	Codecs              map[string]bool `yaml:"codecs"`
+	MediaTimeout        time.Duration      `yaml:"media_timeout"`
+	MediaTimeoutInitial time.Duration      `yaml:"media_timeout_initial"`
+	Codecs              map[string]bool    `yaml:"codecs"`
+	PublishCodecs       PublishCodecConfig `yaml:"publish_codecs"`
 
 	// HideInboundPort controls how SIP endpoint responds to unverified inbound requests.
 	// Setting it to true makes SIP server silently drop INVITE requests if it gets a negative Auth or Dispatch response.
@@ -96,13 +118,16 @@ type Config struct {
 	AddRecordRoute bool `yaml:"add_record_route"`
 
 	// AudioDTMF forces SIP to generate audio DTMF tones in addition to digital.
+	AudioLanguage          string  `yaml:"audio_language"` // currently only supports "en" (English) and "fr" (French)
 	AudioDTMF              bool    `yaml:"audio_dtmf"`
 	EnableJitterBuffer     bool    `yaml:"enable_jitter_buffer"`
 	EnableJitterBufferProb float64 `yaml:"enable_jitter_buffer_prob"`
 
 	// internal
-	ServiceName string `yaml:"-"`
-	NodeID      string // Do not provide, will be overwritten
+	ServiceName           string      `yaml:"-"`
+	NodeID                string      // Do not provide, will be overwritten
+	Video                 VideoConfig `yaml:"video"`
+	MaxActiveParticipants int         `yaml:"max_active_participants"`
 
 	// Experimental, these option might go away without notice.
 	Experimental struct {
@@ -156,6 +181,24 @@ func (c *Config) Init() error {
 	}
 	if c.MaxCpuUtilization <= 0 || c.MaxCpuUtilization > 1 {
 		c.MaxCpuUtilization = 0.9
+	}
+
+	if c.AudioLanguage == "" {
+		c.AudioLanguage = "en"
+	}
+	c.AudioLanguage = strings.ToLower(c.AudioLanguage)
+
+	if c.Video.Width == 0 || c.Video.Height == 0 {
+		c.Video.Width = 1280
+		c.Video.Height = 720
+	}
+
+	if c.Video.Framerate <= 0 {
+		c.Video.Framerate = 24
+	}
+
+	if c.Gst.Debug == "" {
+		c.Gst.Debug = "*:3,sipbin:4" // sipbin log sdp as info and we want them to be visible by default
 	}
 
 	if err := c.InitLogger(); err != nil {

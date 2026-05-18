@@ -5,3 +5,7 @@ cmd/server/server
 
 test/config.yaml
 test/*/*.mkv
+
+*_test.dot
+*.bak
+testdata/

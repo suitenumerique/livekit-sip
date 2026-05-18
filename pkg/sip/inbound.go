@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"math"
 	"net/netip"
-	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,12 +32,8 @@ import (
 	"github.com/icholy/digest"
 	"github.com/pkg/errors"
 
-	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
-	"github.com/livekit/media-sdk/rtp"
 	"github.com/livekit/media-sdk/sdp"
-	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
-	"github.com/livekit/media-sdk/tones"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
@@ -46,12 +42,10 @@ import (
 	"github.com/livekit/protocol/utils"
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
-	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/stats"
-	"github.com/livekit/sip/res"
 )
 
 const (
@@ -68,6 +62,12 @@ const (
 	inviteOkAckLateTimeout     = inviteOkRetryIntervalMax
 
 	inviteCredentialValidity = 60 * time.Minute // Allow reuse of credentials for 1h
+
+	sipUserAgent     = "LiveKit SIP"
+	sipAllowMethods  = "INVITE, ACK, BYE, CANCEL, OPTIONS, UPDATE, NOTIFY, REFER"
+	sipSupportedTags = "timer"
+	sessionTimerSecs = 900
+	minSESecs        = 15
 )
 
 var errNoACK = errors.New("no ACK received for 200 OK")
@@ -302,6 +302,59 @@ func (s *Server) onInvite(log *slog.Logger, req *sip.Request, tx sip.ServerTrans
 	_ = s.processInvite(req, tx)
 }
 
+func (s *Server) onUpdate(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+	tag, err := getFromTag(req)
+	if err != nil {
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "", nil))
+		return
+	}
+
+	s.cmu.RLock()
+	c := s.byRemoteTag[tag]
+	s.cmu.RUnlock()
+	if c == nil {
+		s.log.Warnw("Received UPDATE for unknown call", nil, "tag", tag)
+		err := tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotFound, "", nil))
+		if err != nil {
+			s.log.Errorw("Failed to respond to UPDATE request", err)
+		}
+		return
+	}
+
+	c.cc.AcceptUpdate(req, tx)
+
+	// if c != nil {
+	// 	c.cc.AcceptBye(req, tx)
+	// 	var (
+	// 		reason    ReasonHeader
+	// 		rawReason string
+	// 	)
+	// 	if h := req.GetHeader("Reason"); h != nil {
+	// 		rawReason = h.Value()
+	// 		reason, err = ParseReasonHeader(rawReason)
+	// 		if err != nil {
+	// 			c.log().Warnw("cannot parse reason header", err, "reason-raw", rawReason)
+	// 		}
+	// 	}
+	// 	c.log().Infow("BYE from remote",
+	// 		"reason-type", reason.Type,
+	// 		"reason-cause", reason.Cause,
+	// 		"reason-text", reason.Text,
+	// 		"reason-raw", rawReason,
+	// 	)
+	// 	c.Bye(reason)
+	// 	return
+	// }
+	// ok := false
+	// if s.sipUnhandled != nil {
+	// 	ok = s.sipUnhandled(req, tx)
+	// }
+	// if !ok {
+	// 	s.log.Infow("BYE for non-existent call", "sipTag", tag)
+	// 	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call does not exist", nil))
+	// }
+}
+
 func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retErr error) {
 	start := time.Now()
 	var state *CallState
@@ -343,11 +396,19 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 		if c == nil || len(c.attrsToHdr) == 0 {
 			return headers
 		}
-		r := c.lkRoom.Room()
-		if r == nil {
+		// r := c.lkRoom.Room()
+		// if r == nil {
+		// 	return headers
+		// }
+		// return AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
+		if c.medias == nil {
 			return headers
 		}
-		return AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
+		attr := c.medias.Attributes()
+		if len(attr) == 0 {
+			return headers
+		}
+		return AttrsToHeaders(attr, c.attrsToHdr, headers)
 	})
 	log = LoggerWithParams(log, cc)
 	log = LoggerWithHeaders(log, cc)
@@ -399,7 +460,22 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	if existing != nil && existing.cc.InviteCSeq() < cc.InviteCSeq() {
 		log.Infow("accepting reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength())
 		existing.log().Infow("reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
-		cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+
+		existing.cc.resetRefreshTimer()
+
+		offerData := req.Body()
+		if existing.medias != nil && len(offerData) > 0 {
+			answerData, err := existing.medias.AnswerSDP(offerData)
+			if err != nil {
+				existing.log().Errorw("Cannot create SDP answer for re-INVITE", err)
+				cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+			} else {
+				existing.cc.SetOwnSDP(answerData)
+				cc.AcceptAsKeepAlive(answerData)
+			}
+		} else {
+			cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+		}
 		return nil
 	}
 
@@ -528,7 +604,8 @@ func (s *Server) onAck(log *slog.Logger, req *sip.Request, tx sip.ServerTransact
 		return
 	}
 	c.log().Infow("ACK from remote")
-	c.cc.AcceptAck(req, tx)
+	// c.cc.AcceptAck(req, tx) // moved to c.AcceptAck
+	c.AcceptAck(req, tx)
 }
 
 func (s *Server) onBye(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
@@ -638,18 +715,18 @@ type inboundCall struct {
 	cancel      func()
 	closeReason atomic.Pointer[ReasonHeader]
 	call        *rpc.SIPCall
-	media       *MediaPort
-	medias      *MediaOrchestrator
-	dtmf        chan dtmf.Event // buffered
-	lkRoom      RoomInterface   // LiveKit room; only active after correct pin is entered
+	// media       *MediaPort
+	medias *MediaOrchestrator
+	dtmf   chan dtmf.Event // buffered
+	// lkRoom      RoomInterface   // LiveKit room; only active after correct pin is entered
 	callDur     func() time.Duration
 	joinDur     func() time.Duration
 	forwardDTMF atomic.Bool
 	done        atomic.Bool
 	started     core.Fuse
-	stats       Stats
-	jitterBuf   bool
-	projectID   string
+	// stats       Stats
+	jitterBuf bool
+	projectID string
 }
 
 func (s *Server) newInboundCall(
@@ -679,7 +756,7 @@ func (s *Server) newInboundCall(
 	}
 	c.setLog(log.WithValues("jitterBuf", c.jitterBuf))
 	// we need it created earlier so that the audio mixer is available for pin prompts
-	c.lkRoom = s.getRoom(c.log(), &c.stats.Room)
+	// c.lkRoom = s.getRoom(c.log(), &c.stats.Room)
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	s.cmu.Lock()
 	s.byRemoteTag[cc.Tag()] = c
@@ -786,6 +863,30 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		pinPrompt = true
 	}
 
+	opts := &MediaOptions{
+		IP:                  c.s.sconf.MediaIP,
+		IPLocal:             c.s.sconf.MediaIPLocal,
+		Ports:               conf.RTPPort,
+		MediaTimeoutInitial: c.s.conf.MediaTimeoutInitial,
+		MediaTimeout:        c.s.conf.MediaTimeout,
+		EnableJitterBuffer:  c.jitterBuf,
+		// Stats:                 &c.stats.Port,
+		NoInputResample:       !RoomResample,
+		VideoWidth:            uint(c.s.conf.Video.Width),
+		VideoHeight:           uint(c.s.conf.Video.Height),
+		Framerate:             uint(c.s.conf.Video.Framerate),
+		MaxActiveParticipants: c.s.conf.MaxActiveParticipants,
+		Gst:                   c.s.conf.Gst,
+		PublishCodecs:         c.s.conf.PublishCodecs,
+	}
+
+	orchestrator, err := NewMediaOrchestrator(c.log(), c.ctx, c.cc, opts)
+	if err != nil {
+		c.log().Errorw("Cannot create media orchestrator", err)
+		return err
+	}
+	c.medias = orchestrator
+
 	runMedia := func(enc livekit.SIPMediaEncryption) ([]byte, error) {
 		log := c.log()
 		if h := req.ContentLength(); h != nil {
@@ -826,6 +927,13 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			c.close(true, status, reason)
 			return nil, err
 		}
+
+		if err := c.medias.Start(); err != nil {
+			c.log().Errorw("Cannot start media orchestrator", err)
+			c.close(true, callDropped, "media-start-failed")
+			return nil, errors.Wrap(err, "starting media orchestrator failed")
+		}
+
 		return answerData, nil
 	}
 
@@ -840,9 +948,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	acceptCall := func(answerData []byte) (bool, error) {
 		headers := disp.Headers
 		c.attrsToHdr = disp.AttributesToHeaders
-		if r := c.lkRoom.Room(); r != nil {
-			headers = AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
+		if medias := c.medias; medias != nil {
+			headers = AttrsToHeaders(medias.Attributes(), disp.AttributesToHeaders, headers)
 		}
+		// if r := c.lkRoom.Room(); r != nil {
+		// 	headers = AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
+		// }
 		c.log().Infow("Accepting the call", "headers", headers)
 		err := c.cc.Accept(ctx, answerData, headers)
 		if errors.Is(err, errNoACK) {
@@ -854,16 +965,28 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			c.close(true, callAcceptFailed, "accept-failed")
 			return false, err
 		}
+		// For late offer calls (empty INVITE body), the ACK contains the answer SDP.
+		// We must wait for it before proceeding (e.g. pin prompt needs media to be ready).
+		// The ACK arrives via Server.onAck() which forwards it to the pipeline.
+		// if len(req.Body()) == 0 {
+		select {
+		case <-c.cc.InviteACK():
+		case <-time.After(inviteOkAckLateTimeout):
+			c.log().Warnw("Late offer: no ACK received", nil)
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+		// }
 		if !c.s.conf.Experimental.InboundWaitACK {
 			ackReceived = c.cc.InviteACK()
 			// Start this timer right after the Accept.
 			ackTimeout = time.After(inviteOkAckLateTimeout)
 		}
-		c.media.EnableTimeout(true)
-		c.media.EnableOut()
-		if ok, err := c.waitMedia(ctx); !ok {
-			return false, err
-		}
+		// c.media.EnableTimeout(true)
+		// c.media.EnableOut()
+		// if ok, err := c.waitMedia(ctx); !ok {
+		// 	return false, err
+		// }
 		c.setStatus(CallActive)
 		return true, nil
 	}
@@ -882,6 +1005,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		if ok, err = acceptCall(answerData); !ok {
 			return err // could be success if the caller hung up
 		}
+		time.Sleep(1 * time.Second)
 		disp, ok, err = c.pinPrompt(ctx, trunkID)
 		if !ok {
 			return err // already sent a response. Could be success if user hung up
@@ -895,6 +1019,20 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		}
 	}
 	p := &disp.Room.Participant
+
+	from := c.cc.From()
+	sipCallID := c.cc.SIPCallID()
+	if p.Identity == "sip_" || p.Identity == "" {
+		shortID := sipCallID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		p.Identity = fmt.Sprintf("sip_%s_%s", from.Host, shortID)
+	}
+	if p.Name == "Phone " || p.Name == "" {
+		p.Name = fmt.Sprintf("Phone %s", from.Host)
+	}
+
 	p.Attributes = HeadersToAttrs(p.Attributes, disp.HeadersToAttributes, disp.IncludeHeaders, c.cc, nil)
 	if disp.MaxCallDuration <= 0 || disp.MaxCallDuration > maxCallDuration {
 		disp.MaxCallDuration = maxCallDuration
@@ -914,17 +1052,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	}
 
 	// Publish our own track.
-	if err := c.publishTrack(); err != nil {
-		c.log().Errorw("Cannot publish track", err)
-		c.close(true, callDropped, "publish-failed")
-		return errors.Wrap(err, "publishing track to room failed")
-	}
-	c.lkRoom.Subscribe()
-	if err := c.medias.Start(); err != nil {
-		c.log().Errorw("Cannot start media orchestrator", err)
-		c.close(true, callDropped, "media-start-failed")
-		return errors.Wrap(err, "starting media orchestrator failed")
-	}
+	// if err := c.publishTrack(); err != nil {
+	// 	c.log().Errorw("Cannot publish track", err)
+	// 	c.close(true, callDropped, "publish-failed")
+	// 	return errors.Wrap(err, "publishing track to room failed")
+	// }
+	// c.lkRoom.Subscribe()
 	if !pinPrompt {
 		c.log().Infow("Waiting for track subscription(s)")
 		// For dispatches without pin, we first wait for LK participant to become available,
@@ -940,11 +1073,18 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	c.state.Update(ctx, func(info *livekit.SIPCallInfo) {
 		info.StartedAtNs = time.Now().UnixNano()
 		info.CallStatus = livekit.SIPCallStatus_SCS_ACTIVE
-		if r := c.lkRoom.Room(); r != nil {
-			info.RoomId = r.SID()
-			info.RoomName = r.Name()
-			info.ParticipantAttributes = r.LocalParticipant.Attributes()
+		// if r := c.lkRoom.Room(); r != nil {
+		// 	info.RoomId = r.SID()
+		// 	info.RoomName = r.Name()
+		// 	info.ParticipantAttributes = r.LocalParticipant.Attributes()
+		// }
+
+		if medias := c.medias; medias != nil {
+			info.RoomId = medias.SID()
+			info.RoomName = medias.RoomName()
+			info.ParticipantAttributes = medias.Attributes()
 		}
+
 	})
 
 	c.started.Break()
@@ -957,19 +1097,22 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		case <-ticker.C:
 			c.log().Debugw("sending keep-alive")
 			c.state.ForceFlush(ctx)
-			c.stats.Update()
-			c.printStats(c.log())
+			if c.medias != nil {
+				c.medias.UpdateStats()
+			}
+			c.printStats(c.log(), c.medias)
 		case <-ctx.Done():
 			c.closeWithHangup()
 			return nil
-		case <-c.lkRoom.Closed():
+		// case <-c.lkRoom.Closed():
+		case <-c.medias.Closed():
 			c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 				info.DisconnectReason = livekit.DisconnectReason_CLIENT_INITIATED
 			})
 			c.close(false, callDropped, "removed")
 			return nil
-		case <-c.media.Timeout():
-			return c.mediaTimeout()
+		// case <-c.media.Timeout():
+		// 	return c.mediaTimeout()
 		case <-ackReceived:
 			ackTimeout = nil // all good, disable timeout
 			ackReceived = nil
@@ -977,7 +1120,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			// Only warn, the other side still thinks the call is active, media may be flowing.
 			c.log().Warnw("Call accepted, but no ACK received", errNoACK)
 			// We don't need to wait for a full media timeout initially, we already know something is not quite right.
-			c.media.SetTimeout(min(inviteOkAckLateTimeout, c.s.conf.MediaTimeoutInitial), c.s.conf.MediaTimeout)
+			// c.media.SetTimeout(min(inviteOkAckLateTimeout, c.s.conf.MediaTimeoutInitial), c.s.conf.MediaTimeout)
 		}
 	}
 }
@@ -992,48 +1135,31 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	}
 	_ = e // currently not used for inbound calls
 
-	opts := &MediaOptions{
-		IP:                  c.s.sconf.MediaIP,
-		IPLocal:             c.s.sconf.MediaIPLocal,
-		Ports:               conf.RTPPort,
-		MediaTimeoutInitial: c.s.conf.MediaTimeoutInitial,
-		MediaTimeout:        c.s.conf.MediaTimeout,
-		EnableJitterBuffer:  c.jitterBuf,
-		Stats:               &c.stats.Port,
-		NoInputResample:     !RoomResample,
-	}
+	// mp, err := NewMediaPort(tid, c.log(), c.mon, opts, RoomSampleRate)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// c.media = mp
+	// c.media.EnableTimeout(false) // enabled once we accept the call
+	// c.media.DisableOut()         // disabled until we send 200
+	// c.media.SetDTMFAudio(conf.AudioDTMF)
 
-	mp, err := NewMediaPort(tid, c.log(), c.mon, opts, RoomSampleRate)
-	if err != nil {
-		return nil, err
-	}
-	c.media = mp
-	c.media.EnableTimeout(false) // enabled once we accept the call
-	c.media.DisableOut()         // disabled until we send 200
-	c.media.SetDTMFAudio(conf.AudioDTMF)
+	// audioinfo := NewAudioInfo(c.media)
 
-	audioinfo := NewAudioInfo(c.media)
+	// c.lkRoom.(*Room).SetCallbacks(c.medias)
 
-	orchestrator, err := NewMediaOrchestrator(c.log(), c.ctx, c.cc, c.lkRoom.(*Room), audioinfo, opts)
-	if err != nil {
-		c.log().Errorw("Cannot create media orchestrator", err)
-		return nil, err
-	}
-	c.medias = orchestrator
-	c.lkRoom.(*Room).SetCallbacks(orchestrator)
+	// offer, err := sdpv2.NewSDP(offerData)
+	// if err != nil {
+	// 	c.log().Errorw("Cannot parse SDP offer", err)
+	// 	return nil, err
+	// }
 
-	offer, err := sdpv2.NewSDP(offerData)
-	if err != nil {
-		c.log().Errorw("Cannot parse SDP offer", err)
-		return nil, err
-	}
+	// if offer.Audio == nil {
+	// 	c.log().Errorw("No audio in SDP offer", err)
+	// 	return nil, sdp.ErrNoCommonMedia
+	// }
 
-	if offer.Audio == nil {
-		c.log().Errorw("No audio in SDP offer", err)
-		return nil, sdp.ErrNoCommonMedia
-	}
-
-	answer, err := c.medias.AnswerSDP(offer)
+	answerData, err = c.medias.AnswerSDP(offerData)
 	if err != nil {
 		c.log().Errorw("Cannot create SDP answer", err)
 		return nil, err
@@ -1052,37 +1178,39 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	// 	return nil, SDPError{Err: err}
 	// }
 
-	mc, err := answer.V1MediaConfig(netip.AddrPortFrom(offer.Addr, offer.Audio.Port))
-	if err != nil {
-		return nil, err
-	}
+	// mc, err := answer.V1MediaConfig(netip.AddrPortFrom(offer.Addr, offer.Audio.Port))
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	mconf := &MediaConf{MediaConfig: mc}
-	answerData, err = answer.Marshal()
-	if err != nil {
-		return nil, err
-	}
+	// mconf := &MediaConf{MediaConfig: mc}
+	// answerData, err = answer.Marshal()
+	// if err != nil {
+	// 	return nil, err
+	// }
 	c.mon.SDPSize(len(answerData), false)
 	c.log().Debugw("SDP answer", "sdp", string(answerData))
 
-	mconf.Processor = c.s.handler.GetMediaProcessor(features)
-	if err = c.media.SetConfig(mconf); err != nil {
-		return nil, err
-	}
-	if mconf.Audio.DTMFType != 0 {
-		c.media.HandleDTMF(c.handleDTMF)
-	}
+	// mconf.Processor = c.s.handler.GetMediaProcessor(features)
+	// if err = c.media.SetConfig(mconf); err != nil {
+	// 	return nil, err
+	// }
+	// if mconf.Audio.DTMFType != 0 {
+	// 	c.media.HandleDTMF(c.handleDTMF)
+	// }
+
+	c.medias.DtmfHandler(c.handleDTMF)
 
 	// Must be set earlier to send the pin prompts.
-	if w := c.lkRoom.SwapOutput(c.media.GetAudioWriter()); w != nil {
-		_ = w.Close()
-	}
-	if mconf.Audio.DTMFType != 0 {
-		c.lkRoom.SetDTMFOutput(c.media)
-	}
-	c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
-		info.AudioCodec = mconf.Audio.Codec.Info().SDPName
-	})
+	// if w := c.lkRoom.SwapOutput(c.media.GetAudioWriter()); w != nil {
+	// 	_ = w.Close()
+	// }
+	// if mconf.Audio.DTMFType != 0 {
+	// 	c.lkRoom.SetDTMFOutput(c.media)
+	// }
+	// c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
+	// 	info.AudioCodec = mconf.Audio.Codec.Info().SDPName
+	// })
 	return answerData, nil
 }
 
@@ -1105,12 +1233,13 @@ func (c *inboundCall) waitMedia(ctx context.Context) (bool, error) {
 	case <-ctx.Done():
 		c.closeWithHangup()
 		return false, nil // caller hung up
-	case <-c.lkRoom.Closed():
+	// case <-c.lkRoom.Closed():
+	case <-c.medias.Closed():
 		c.closeWithHangup()
 		return false, psrpc.NewErrorf(psrpc.Canceled, "room closed")
-	case <-c.media.Timeout():
-		return false, c.mediaTimeout()
-	case <-c.media.Received():
+	// case <-c.media.Timeout():
+	// 	return false, c.mediaTimeout()
+	// case <-c.media.Received():
 	case <-delay.C:
 	}
 	return true, nil
@@ -1128,15 +1257,17 @@ func (c *inboundCall) waitSubscribe(ctx context.Context, timeout time.Duration) 
 	case <-ctx.Done():
 		c.closeWithHangup()
 		return false, nil
-	case <-c.lkRoom.Closed():
+	// case <-c.lkRoom.Closed():
+	case <-c.medias.Closed():
 		c.closeWithHangup()
 		return false, psrpc.NewErrorf(psrpc.Canceled, "room closed")
-	case <-c.media.Timeout():
-		return false, c.mediaTimeout()
+	// case <-c.media.Timeout():
+	// 	return false, c.mediaTimeout()
 	case <-timer.C:
 		c.close(false, callDropped, "cannot-subscribe")
 		return false, psrpc.NewErrorf(psrpc.DeadlineExceeded, "room subscription timed out")
-	case <-c.lkRoom.Subscribed():
+	// case <-c.lkRoom.Subscribed():
+	case <-c.medias.Subscribed():
 		return true, nil
 	}
 }
@@ -1146,7 +1277,7 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	defer span.End()
 	c.log().Infow("Requesting Pin for SIP call")
 	const pinLimit = 16
-	c.playAudio(ctx, c.s.res.enterPin)
+	c.playAudio(ctx, c.s.res.enterPinFd)
 	pin := ""
 	noPin := false
 	for {
@@ -1157,8 +1288,8 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 		case <-ctx.Done():
 			c.closeWithHangup()
 			return disp, false, nil
-		case <-c.media.Timeout():
-			return disp, false, c.mediaTimeout()
+		// case <-c.media.Timeout():
+		// 	return disp, false, c.mediaTimeout()
 		case b, ok := <-c.dtmf:
 			if !ok {
 				c.Close()
@@ -1171,7 +1302,7 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				// End of the pin
 				noPin = pin == ""
 
-				c.log().Infow("Checking Pin for SIP call", "pin", pin, "noPin", noPin)
+				c.log().Debugw("Checking Pin for SIP call", "pin", pin, "noPin", noPin)
 				disp = c.s.handler.DispatchCall(ctx, &CallInfo{
 					TrunkID: trunkID,
 					Call:    c.call,
@@ -1190,17 +1321,17 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				}
 				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
 					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
-					c.playAudio(ctx, c.s.res.wrongPin)
+					c.playAudio(ctx, c.s.res.wrongPinFd)
 					c.close(false, callDropped, "wrong-pin")
 					return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
 				}
-				c.playAudio(ctx, c.s.res.roomJoin)
+				c.playAudio(ctx, c.s.res.roomJoinFd)
 				return disp, true, nil
 			}
 			// Gather pin numbers
 			pin += string(b.Digit)
 			if len(pin) > pinLimit {
-				c.playAudio(ctx, c.s.res.wrongPin)
+				c.playAudio(ctx, c.s.res.wrongPinFd)
 				c.close(false, callDropped, "wrong-pin")
 				return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
 			}
@@ -1208,8 +1339,25 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	}
 }
 
-func (c *inboundCall) printStats(log logger.Logger) {
-	c.stats.Log(log, c.callStart)
+func (c *inboundCall) printStats(log logger.Logger, medias *MediaOrchestrator) {
+	if medias == nil {
+		c.log().Warnw("call stats not available", nil)
+		return
+	}
+	stats := medias.Stats()
+	if stats == nil {
+		c.log().Warnw("call stats not available", nil)
+		return
+	}
+
+	c.log().Infow("call statistics",
+		"microphone", stats.Microphone,
+		"microphone-pt-caps", stats.MicrophonePtCaps,
+		"camera", stats.Camera,
+		"camera-pt-caps", stats.CameraPtCaps,
+		"screen-share", stats.ScreenShare,
+		"screen-share-pt-caps", stats.ScreenSharePtCaps,
+	)
 }
 
 // close should only be called from handleInvite.
@@ -1217,10 +1365,10 @@ func (c *inboundCall) close(error bool, status CallStatus, reason string) {
 	if !c.done.CompareAndSwap(false, true) {
 		return
 	}
-	c.stats.Closed.Store(true)
+	// c.stats.Closed.Store(true)
 	sipCode, sipStatus := status.SIPStatus()
 	log := c.log().WithValues("status", sipCode, "reason", reason)
-	defer c.printStats(log)
+	defer c.printStats(log, c.medias)
 	c.setStatus(status)
 	c.mon.CallTerminate(reason)
 	isWarn := error || status == callHangupMedia
@@ -1318,16 +1466,27 @@ func (c *inboundCall) Bye(reason ReasonHeader) {
 	_ = c.Close()
 }
 
+func (c *inboundCall) AcceptAck(req *sip.Request, tx sip.ServerTransaction) {
+	if c.medias != nil {
+		c.log().Debugw("Forwarding ACK SDP to media orchestrator")
+		if err := c.medias.AckSDP(req, tx); err != nil {
+			c.log().Errorw("failed to forward ACK SDP", err)
+		}
+	}
+	c.cc.AcceptAck(req, tx)
+}
+
 func (c *inboundCall) Close() error {
 	c.cancel()
 	return nil
 }
 
 func (c *inboundCall) closeMedia() {
-	c.lkRoom.Close()
-	if c.media != nil {
-		c.media.Close()
-	}
+	// c.lkRoom.Close()
+	// c.medias.Close()
+	// if c.media != nil {
+	// 	c.media.Close()
+	// }
 }
 
 func (c *inboundCall) setStatus(v CallStatus) {
@@ -1335,15 +1494,20 @@ func (c *inboundCall) setStatus(v CallStatus) {
 	if attr == "" {
 		return
 	}
-	if c.lkRoom == nil {
+	// if c.lkRoom == nil {
+	if c.medias == nil {
 		return
 	}
-	r := c.lkRoom.Room()
-	if r == nil || r.LocalParticipant == nil {
-		return
-	}
+	// r := c.lkRoom.Room()
+	// if r == nil || r.LocalParticipant == nil {
+	// 	return
+	// }
 
-	r.LocalParticipant.SetAttributes(map[string]string{
+	// r.LocalParticipant.SetAttributes(map[string]string{
+	// 	livekit.AttrSIPCallStatus: attr,
+	// })
+
+	c.medias.SetAttributes(map[string]string{
 		livekit.AttrSIPCallStatus: attr,
 	})
 }
@@ -1371,22 +1535,23 @@ func (c *inboundCall) createLiveKitParticipant(ctx context.Context, rconf RoomCo
 		return err
 	}
 
-	err = c.lkRoom.Connect(c.s.conf, rconf)
+	// err = c.lkRoom.Connect(c.s.conf, rconf)
+	err = c.medias.Connect(c.s.conf, rconf)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *inboundCall) publishTrack() error {
-	local, err := c.lkRoom.NewParticipantTrack(RoomSampleRate)
-	if err != nil {
-		_ = c.lkRoom.Close()
-		return err
-	}
-	c.media.WriteAudioTo(local)
-	return nil
-}
+// func (c *inboundCall) publishTrack() error {
+// 	local, err := c.lkRoom.NewParticipantTrack(RoomSampleRate)
+// 	if err != nil {
+// 		_ = c.lkRoom.Close()
+// 		return err
+// 	}
+// 	c.media.WriteAudioTo(local)
+// 	return nil
+// }
 
 func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status CallStatus) error {
 	if c.joinDur != nil {
@@ -1407,31 +1572,35 @@ func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status Cal
 	return nil
 }
 
-func (c *inboundCall) playAudio(ctx context.Context, frames []msdk.PCM16Sample) {
-	t := c.lkRoom.NewTrack()
-	if t == nil {
-		return // closed
+func (c *inboundCall) playAudio(ctx context.Context, fd int) {
+	if err := c.medias.PlayAudio(ctx, fd); err != nil {
+		c.log().Errorw("Cannot play audio", err)
 	}
-	defer t.Close()
+	// t := c.lkRoom.NewTrack()
+	// if t == nil {
+	// 	return // closed
+	// }
+	// defer t.Close()
 
-	sampleRate := res.SampleRate
-	if t.SampleRate() != sampleRate {
-		frames = slices.Clone(frames)
-		for i := range frames {
-			frames[i] = msdk.Resample(nil, t.SampleRate(), frames[i], sampleRate)
-		}
-	}
-	_ = msdk.PlayAudio[msdk.PCM16Sample](ctx, t, rtp.DefFrameDur, frames)
+	// sampleRate := res.SampleRate
+	// if t.SampleRate() != sampleRate {
+	// 	frames = slices.Clone(frames)
+	// 	for i := range frames {
+	// 		frames[i] = msdk.Resample(nil, t.SampleRate(), frames[i], sampleRate)
+	// 	}
+	// }
+	// _ = msdk.PlayAudio[msdk.PCM16Sample](ctx, t, rtp.DefFrameDur, frames)
 }
 
 func (c *inboundCall) handleDTMF(tone dtmf.Event) {
-	if c.forwardDTMF.Load() {
-		_ = c.lkRoom.SendData(&livekit.SipDTMF{
-			Code:  uint32(tone.Code),
-			Digit: string([]byte{tone.Digit}),
-		}, lksdk.WithDataPublishReliable(true))
-		return
-	}
+	// if c.forwardDTMF.Load() {
+	// 	c.log().Infow("Forwarding DTMF tone", "digit", string(tone.Digit), "code", tone.Code)
+	// 	_ = c.lkRoom.SendData(&livekit.SipDTMF{
+	// 		Code:  uint32(tone.Code),
+	// 		Digit: string([]byte{tone.Digit}),
+	// 	}, lksdk.WithDataPublishReliable(true))
+	// 	return
+	// }
 	// We should have enough buffer here.
 	select {
 	case c.dtmf <- tone:
@@ -1449,28 +1618,28 @@ func (c *inboundCall) transferCall(ctx context.Context, transferTo string, heade
 
 	if dialtone && c.started.IsBroken() && !c.done.Load() {
 		const ringVolume = math.MaxInt16 / 2
-		rctx, rcancel := context.WithCancel(ctx)
-		defer rcancel()
+		// rctx, rcancel := context.WithCancel(ctx)
+		// defer rcancel()
 
 		// mute the room audio to the SIP participant
-		w := c.lkRoom.SwapOutput(nil)
+		// w := c.lkRoom.SwapOutput(nil)
 
-		defer func() {
-			if retErr != nil && !c.done.Load() {
-				c.lkRoom.SwapOutput(w)
-			} else if w != nil {
-				w.Close()
-			}
-		}()
+		// defer func() {
+		// 	if retErr != nil && !c.done.Load() {
+		// 		c.lkRoom.SwapOutput(w)
+		// 	} else if w != nil {
+		// 		w.Close()
+		// 	}
+		// }()
 
-		go func() {
-			aw := c.media.GetAudioWriter()
+		// go func() {
+		// 	aw := c.media.GetAudioWriter()
 
-			err := tones.Play(rctx, aw, ringVolume, tones.ETSIRinging)
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				c.log().Infow("cannot play dial tone", "error", err)
-			}
-		}()
+		// 	err := tones.Play(rctx, aw, ringVolume, tones.ETSIRinging)
+		// 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// 		c.log().Infow("cannot play dial tone", "error", err)
+		// 	}
+		// }()
 	}
 
 	err = c.cc.TransferCall(ctx, transferTo, headers)
@@ -1541,6 +1710,11 @@ type sipInbound struct {
 	ringing         chan struct{}
 	acked           core.Fuse
 	setHeaders      setHeadersFunc
+
+	sessionExpires uint32      // negotiated SE in seconds
+	minSe          uint32      // Min-SE in seconds
+	refresher      string      // "uac" or "uas"
+	refreshTimer   *time.Timer // SE/2 if we refresh, SE guard otherwise
 }
 
 func (c *sipInbound) ValidateInvite() error {
@@ -1589,12 +1763,13 @@ func (c *sipInbound) respondWithData(status sip.StatusCode, reason string, conte
 	if typ := sip.ContentTypeHeader(contentType); typ != "" {
 		r.AppendHeader(&typ)
 	}
-	r.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
+	// r.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE")) // TODO: which methods to allow?
 	if status >= 200 {
 		// For an ACK to error statuses.
 		r.AppendHeader(c.contact)
 	}
 	c.addExtraHeaders(r)
+	c.addResponseHeaders(r)
 	_ = c.inviteTx.Respond(r)
 }
 
@@ -1730,9 +1905,141 @@ func (c *sipInbound) addExtraHeaders(r *sip.Response) {
 	}
 }
 
-func (c *sipInbound) accepted(inviteOK *sip.Response) {
+func (c *sipInbound) peerSupportsTimer() bool {
+	if c.invite == nil {
+		return false
+	}
+	for _, h := range c.invite.GetHeaders("Supported") {
+		for _, tag := range strings.Split(h.Value(), ",") {
+			if strings.TrimSpace(tag) == "timer" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *sipInbound) refresherForDialog() string {
+	if h := c.invite.GetHeader("Session-Expires"); h != nil {
+		v := h.Value()
+		if strings.Contains(v, "refresher=uas") {
+			return "uas"
+		}
+		if strings.Contains(v, "refresher=uac") {
+			return "uac"
+		}
+	}
+	if !c.peerSupportsTimer() {
+		return "uas"
+	}
+	return "uac"
+}
+
+func (c *sipInbound) addResponseHeaders(r *sip.Response) {
+	if r.GetHeader("Server") == nil {
+		r.AppendHeader(sip.NewHeader("Server", sipUserAgent))
+	}
+
+	var reqMethod sip.RequestMethod
+	if cseq := r.CSeq(); cseq != nil {
+		reqMethod = cseq.MethodName
+	}
+
+	is2xx := r.StatusCode >= 200 && r.StatusCode < 300
+	isCapMethod := reqMethod == sip.INVITE || reqMethod == sip.UPDATE || reqMethod == sip.OPTIONS
+
+	if (is2xx && isCapMethod) || r.StatusCode == sip.StatusMethodNotAllowed {
+		if r.GetHeader("Allow") == nil {
+			r.AppendHeader(sip.NewHeader("Allow", sipAllowMethods))
+		}
+		if r.GetHeader("Supported") == nil {
+			r.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
+		}
+	}
+
+	if is2xx && (reqMethod == sip.INVITE || reqMethod == sip.UPDATE) &&
+		c.invite != nil && c.refreshTimer != nil {
+		if r.GetHeader("Session-Expires") == nil {
+			r.AppendHeader(sip.NewHeader("Session-Expires",
+				fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
+		}
+		if r.GetHeader("Min-SE") == nil {
+			r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
+		}
+	}
+
+	if r.StatusCode == 422 && r.GetHeader("Min-SE") == nil && c.refreshTimer != nil {
+		r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
+	}
+
+	if c.contact != nil && is2xx {
+		r.AppendHeader(c.contact)
+	}
+}
+
+func (c *sipInbound) addRequestHeaders(r *sip.Request) {
+	if r.MaxForwards() == nil {
+		maxFwd := sip.MaxForwardsHeader(70)
+		r.AppendHeader(&maxFwd)
+	}
+
+	if r.GetHeader("User-Agent") == nil {
+		r.AppendHeader(sip.NewHeader("User-Agent", sipUserAgent))
+	}
+
+	isCapMethod := r.Method == sip.INVITE || r.Method == sip.UPDATE || r.Method == sip.OPTIONS
+	if isCapMethod {
+		if r.GetHeader("Allow") == nil {
+			r.AppendHeader(sip.NewHeader("Allow", sipAllowMethods))
+		}
+		if r.GetHeader("Supported") == nil {
+			r.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
+		}
+	}
+
+	if (r.Method == sip.INVITE || r.Method == sip.UPDATE) &&
+		c.invite != nil && c.refreshTimer != nil {
+		if r.GetHeader("Session-Expires") == nil {
+			r.AppendHeader(sip.NewHeader("Session-Expires",
+				fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
+		}
+		if r.GetHeader("Min-SE") == nil {
+			r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
+		}
+	}
+}
+
+func (c *sipInbound) accepted(ctx context.Context, inviteOK *sip.Response) {
 	c.inviteOk = inviteOK
 	c.inviteTx = nil
+
+	if c.refreshTimer != nil {
+		go func() {
+			select {
+			case <-c.refreshTimer.C:
+				c.log.Warnw("Session refresh timer expired, closing call", nil)
+				c.CloseWithStatus(sip.StatusOK, "Session Timer Expired")
+				return
+			case <-ctx.Done():
+				return
+			}
+		}()
+	}
+
+	if c.refresher == "uas" {
+		go func() {
+			sleep := time.Duration(max(c.sessionExpires/2, c.minSe)) * time.Second
+			for {
+				select {
+				case <-time.After(sleep):
+					c.log.Infow("Sending session refresh UPDATE", "sessionExpires", c.sessionExpires)
+					c.sendUpdate()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 }
 
 func (c *sipInbound) AcceptAsKeepAlive(sdp []byte) {
@@ -1745,6 +2052,53 @@ func (c *sipInbound) OwnSDP() []byte {
 	return c.lastSDP
 }
 
+func (c *sipInbound) SetOwnSDP(sdp []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastSDP = sdp
+}
+
+func (c *sipInbound) setupSessionTimer() {
+	if c.peerSupportsTimer() || c.refreshTimer != nil {
+		c.refresher = c.refresherForDialog()
+
+		if c.refreshTimer == nil {
+			c.minSe = minSESecs
+			c.sessionExpires = sessionTimerSecs
+		}
+
+		if h := c.invite.GetHeader("Min-SE"); h != nil {
+			if secs, err := strconv.Atoi(strings.SplitN(h.Value(), ";", 2)[0]); err == nil && secs > 0 {
+				c.minSe = uint32(secs)
+			}
+		}
+		if h := c.invite.GetHeader("Session-Expires"); h != nil {
+			if v, err := strconv.Atoi(strings.SplitN(h.Value(), ";", 2)[0]); err == nil && v > 0 {
+				c.sessionExpires = uint32(v)
+				if c.sessionExpires > c.minSe-2 { // allow flanky devices to setup shorter timers than they say they support
+					c.minSe = c.sessionExpires - 2
+				}
+			}
+		}
+
+		if c.refreshTimer == nil {
+			c.refreshTimer = time.NewTimer(time.Duration(c.sessionExpires) * time.Second)
+		} else {
+			c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+		}
+
+		c.log.Infow("Session timer setup", "sessionExpires", c.sessionExpires, "minSe", c.minSe, "refresher", c.refresher)
+	}
+}
+
+func (c *sipInbound) resetRefreshTimer() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refreshTimer != nil {
+		c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+	}
+}
+
 func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[string]string) error {
 	ctx, span := tracer.Start(ctx, "sipInbound.Accept")
 	defer span.End()
@@ -1754,10 +2108,10 @@ func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[str
 		return errors.New("call already rejected")
 	}
 	c.lastSDP = sdpData
-	r := sip.NewResponseFromRequest(c.invite, sip.StatusOK, "OK", sdpData)
 
-	// This will effectively redirect future SIP requests to this server instance (if host address is not LB).
-	r.AppendHeader(c.contact)
+	c.setupSessionTimer()
+
+	r := sip.NewResponseFromRequest(c.invite, sip.StatusOK, "OK", sdpData)
 
 	c.addExtraHeaders(r)
 
@@ -1765,7 +2119,10 @@ func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[str
 	for k, v := range headers {
 		r.AppendHeader(sip.NewHeader(k, v))
 	}
+	c.addResponseHeaders(r)
+
 	c.stopRinging()
+
 	retryAfter := inviteOkRetryInterval
 	maxRetries := inviteOKRetryAttempts
 	if !c.s.conf.Experimental.InboundWaitACK {
@@ -1778,20 +2135,20 @@ func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[str
 		retryAfter = inviteOkRetryIntervalMax
 	}
 	var acceptErr error
+	c.log.Infow("Sending 200 OK", "sdpLen", len(sdpData), "to", r.To().String(), "from", r.From().String())
 retries:
 	for try := 1; ; try++ {
 		if err := c.inviteTx.Respond(r); err != nil {
+			c.log.Errorw("Failed to send 200 OK via inviteTx.Respond", err, "try", try)
 			return err
 		}
+		c.log.Infow("200 OK sent", "try", try)
 		if c.legTr != TransportUDP && !c.s.conf.Experimental.InboundWaitACK {
 			// Reliable transport and we are not waiting for ACK - return immediately.
 			break retries
 		}
 		t := time.NewTimer(retryAfter)
 		select {
-		case <-c.inviteTx.Acks():
-			t.Stop()
-			break retries
 		case <-c.acked.Watch():
 			t.Stop()
 			break retries
@@ -1809,7 +2166,7 @@ retries:
 		retryAfter = min(retryAfter, inviteOkRetryIntervalMax)
 	}
 	// Other side likely thinks it's accepted, so update our state accordingly, even if no ACK follows.
-	c.accepted(r)
+	c.accepted(ctx, r)
 	return acceptErr
 }
 
@@ -1817,11 +2174,130 @@ func (c *sipInbound) AcceptAck(req *sip.Request, tx sip.ServerTransaction) {
 	c.acked.Break()
 }
 
+func (c *sipInbound) AcceptUpdate(req *sip.Request, tx sip.ServerTransaction) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(req.Body()) == 0 {
+		c.handleTimerRefresh(req, tx)
+		return
+	}
+	// UPDATE with SDP = media renegotiation
+	// Option A: route through the same offer/answer code as re-INVITE
+	// Option B (minimum-viable): reject
+	r := sip.NewResponseFromRequest(req, sip.StatusNotImplemented, "Not Implemented", nil)
+	c.addResponseHeaders(r)
+	if err := tx.Respond(r); err != nil {
+		c.log.Errorw("Failed to send 501 Not Implemented", err)
+	}
+}
+
 func (c *sipInbound) AcceptBye(req *sip.Request, tx sip.ServerTransaction) {
 	_ = tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.drop() // mark as closed
+}
+
+func (c *sipInbound) handleTimerRefresh(req *sip.Request, tx sip.ServerTransaction) {
+	if c.sessionExpires == 0 {
+		// Session timer not negotiated, reject the request.
+		r := sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Session Timer Not Negotiated", nil)
+		c.addResponseHeaders(r)
+		if err := tx.Respond(r); err != nil {
+			c.log.Errorw("Failed to send 400 Bad Request for session refresh", err)
+		}
+		return
+	}
+
+	c.refreshTimer.Stop()
+
+	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
+	c.addResponseHeaders(r)
+	if err := tx.Respond(r); err != nil {
+		c.log.Errorw("Failed to send 200 OK for session refresh", err)
+		c.CloseWithStatus(sip.StatusOK, "Session Timer Refresh Failed")
+		return
+	}
+
+	c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+}
+
+func (c *sipInbound) sendUpdate() {
+	if c.inviteOk == nil {
+		return // call wasn't established
+	}
+	if c.invite == nil {
+		return // rejected or closed
+	}
+
+	c.refreshTimer.Stop()
+
+	ctx := context.Background()
+	_, span := tracer.Start(ctx, "sipInbound.sendUpdate")
+	defer span.End()
+	// This function is for clients, so we need to swap src and dest
+	req := sip.NewRequest(sip.UPDATE, c.invite.Recipient)
+	req.SipVersion = c.invite.SipVersion
+
+	sip.CopyHeaders("Via", c.invite, req)
+	req.Via().Params.Add("branch", sip.GenerateBranch())
+
+	if len(c.invite.GetHeaders("Route")) > 0 {
+		sip.CopyHeaders("Route", c.invite, req)
+	} else {
+		hdrs := c.inviteOk.GetHeaders("Record-Route")
+		for i := len(hdrs) - 1; i >= 0; i-- {
+			rrh, ok := hdrs[i].(*sip.RecordRouteHeader)
+			if ok {
+				req.AppendHeader(&sip.RouteHeader{Address: rrh.Address})
+			}
+		}
+	}
+
+	sip.CopyHeaders("Call-ID", c.invite, req)
+	sip.CopyHeaders("From", c.invite, req)
+	sip.CopyHeaders("To", c.inviteOk, req)
+
+	req.AppendHeader(c.contact)
+	req.SetBody(nil)
+
+	c.setCSeq(req)
+	c.swapSrcDst(req)
+
+	if c.setHeaders != nil {
+		for k, v := range c.setHeaders(nil) {
+			req.AppendHeader(sip.NewHeader(k, v))
+		}
+	}
+
+	tx, err := c.Transaction(req)
+	if err != nil {
+		c.log.Errorw("failed to create UPDATE transaction", err)
+		return
+	}
+	defer tx.Terminate()
+
+	ctx, cancel := context.WithTimeout(ctx, 32*time.Second)
+	defer cancel()
+
+	resp, err := sipResponse(ctx, tx, nil, nil)
+	if err != nil {
+		c.log.Errorw("UPDATE failed", err)
+		return
+	}
+
+	if resp.StatusCode == 422 {
+		if h := resp.GetHeader("Min-SE"); h != nil {
+			if v, err := strconv.Atoi(h.Value()); err == nil && uint32(v) > c.sessionExpires {
+				c.sessionExpires = uint32(v)
+			}
+		}
+		c.sendUpdate()
+		return
+	}
+
+	c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
 }
 
 func (c *sipInbound) swapSrcDst(req *sip.Request) {
@@ -1900,6 +2376,70 @@ func (c *sipInbound) sendBye() {
 	sendAndACK(ctx, c, r)
 }
 
+func (c *sipInbound) sendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
+	if c.invite == nil || c.inviteOk == nil {
+		return nil, fmt.Errorf("call not established")
+	}
+
+	_, span := tracer.Start(ctx, "sipInbound.sendReInvite")
+	defer span.End()
+
+	req := sip.NewRequest(sip.INVITE, c.invite.Recipient)
+	req.SipVersion = c.invite.SipVersion
+
+	sip.CopyHeaders("Via", c.invite, req)
+	req.Via().Params.Add("branch", sip.GenerateBranch())
+
+	if len(c.invite.GetHeaders("Route")) > 0 {
+		sip.CopyHeaders("Route", c.invite, req)
+	} else {
+		hdrs := c.inviteOk.GetHeaders("Record-Route")
+		for i := len(hdrs) - 1; i >= 0; i-- {
+			rrh, ok := hdrs[i].(*sip.RecordRouteHeader)
+			if ok {
+				req.AppendHeader(&sip.RouteHeader{Address: rrh.Address})
+			}
+		}
+	}
+
+	sip.CopyHeaders("Call-ID", c.invite, req)
+	sip.CopyHeaders("From", c.invite, req)
+	sip.CopyHeaders("To", c.inviteOk, req)
+
+	req.AppendHeader(c.contact)
+	req.AppendHeader(&contentTypeHeaderSDP)
+	req.SetBody(offerSDP)
+
+	c.setCSeq(req)
+	c.swapSrcDst(req)
+
+	if c.setHeaders != nil {
+		for k, v := range c.setHeaders(nil) {
+			req.AppendHeader(sip.NewHeader(k, v))
+		}
+	}
+
+	tx, err := c.Transaction(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create re-INVITE transaction: %w", err)
+	}
+	defer tx.Terminate()
+
+	ctx, cancel := context.WithTimeout(ctx, 32*time.Second)
+	defer cancel()
+
+	resp, err := sipResponse(ctx, tx, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("re-INVITE failed: %w", err)
+	}
+
+	if resp.StatusCode == 200 {
+		_ = c.WriteRequest(sip.NewAckRequest(req, resp, nil))
+	}
+
+	return resp, nil
+}
+
 func (c *sipInbound) sendStatus(code sip.StatusCode, status string) {
 	if c.inviteOk != nil {
 		return // call already established
@@ -1924,10 +2464,12 @@ func (c *sipInbound) sendStatus(code sip.StatusCode, status string) {
 }
 
 func (c *sipInbound) WriteRequest(req *sip.Request) error {
+	c.addRequestHeaders(req)
 	return c.s.sipSrv.TransportLayer().WriteMsg(req)
 }
 
 func (c *sipInbound) Transaction(req *sip.Request) (sip.ClientTransaction, error) {
+	c.addRequestHeaders(req)
 	return c.s.sipSrv.TransactionLayer().Request(req)
 }
 

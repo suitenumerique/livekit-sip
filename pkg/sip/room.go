@@ -191,10 +191,7 @@ type RoomConfig struct {
 }
 
 type RoomCallbacks interface {
-	WebrtcTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
-	WebrtcTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) error
-	ActiveParticipantChanged(p []lksdk.Participant) error
-	LocalParticipantReady(p *lksdk.LocalParticipant) error
+	JoinRoom(wsUrl, token string, callbacks *lksdk.RoomCallback, opts ...lksdk.ConnectOption) (*lksdk.Room, error)
 }
 
 func NewRoom(log logger.Logger, st *RoomStats) *Room {
@@ -220,12 +217,6 @@ func NewRoom(log logger.Logger, st *RoomStats) *Room {
 				resolve.Resolve("room", r.room.Name(), "roomID", r.room.SID())
 			} else {
 				resolve.Resolve()
-			}
-			cb := r.callbackHandler.Load()
-			if cb != nil {
-				if err := (*cb).LocalParticipantReady(r.room.LocalParticipant); err != nil {
-					r.log.Errorw("local participant ready callback error", err)
-				}
 			}
 		case <-r.stopped.Watch():
 			resolve.Resolve()
@@ -320,14 +311,6 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
 			r.participantLeft(rp)
 		},
-		OnActiveSpeakersChanged: func(p []lksdk.Participant) {
-			cb := r.callbackHandler.Load()
-			if cb != nil {
-				if err := (*cb).ActiveParticipantChanged(p); err != nil {
-					r.log.Errorw("active participant changed callback error", err)
-				}
-			}
-		},
 		ParticipantCallback: lksdk.ParticipantCallback{
 			OnTrackPublished: func(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 				log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
@@ -339,31 +322,15 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 				r.log.Debugw("track subscribed", "kind", pub.Kind(), "participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
-				if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
-					r.participantAudioTrackSubscribed(track, pub, rp, conf)
-					return
-				}
-				cb := r.callbackHandler.Load()
-				if cb != nil {
-					if err := (*cb).WebrtcTrackSubscribed(track, pub, rp); err != nil {
-						r.log.Errorw("track subscribed callback error", err)
-					}
-				} else {
-					r.log.Warnw("no track subscribed callback set", nil)
-				}
+				// if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
+				// 	r.participantAudioTrackSubscribed(track, pub, rp, conf)
+				// 	return
+				// }
 			},
 			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 				r.log.Debugw("track unsubscribed", "kind", pub.Kind(), "participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
 				if pub.Kind() == lksdk.TrackKindAudio && pub.Source() == livekit.TrackSource_MICROPHONE {
 					return // nothing to do
-				}
-				cb := r.callbackHandler.Load()
-				if cb != nil {
-					if err := (*cb).WebrtcTrackUnsubscribed(track, pub, rp); err != nil {
-						r.log.Errorw("track unsubscribed callback error", err)
-					}
-				} else {
-					r.log.Warnw("no track unsubscribed callback set", nil)
 				}
 			},
 			OnDataPacket: func(data lksdk.DataPacket, params lksdk.DataReceiveParams) {
@@ -412,15 +379,32 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			return err
 		}
 	}
-	room := lksdk.NewRoom(roomCallback)
-	room.SetLogger(medialogutils.NewOverrideLogger(r.log))
-	err := room.JoinWithToken(rconf.WsUrl, rconf.Token,
-		lksdk.WithAutoSubscribe(false),
-		lksdk.WithExtraAttributes(partConf.Attributes),
-	)
+
+	var room *lksdk.Room
+	var err error
+	if cb := r.callbackHandler.Load(); cb != nil {
+		room, err = (*cb).JoinRoom(rconf.WsUrl, rconf.Token, roomCallback,
+			lksdk.WithAutoSubscribe(false),
+			lksdk.WithExtraAttributes(partConf.Attributes))
+		room.SetLogger(medialogutils.NewOverrideLogger(r.log))
+	} else {
+		room = lksdk.NewRoom(roomCallback)
+		room.SetLogger(medialogutils.NewOverrideLogger(r.log))
+		err = room.JoinWithToken(rconf.WsUrl, rconf.Token,
+			lksdk.WithAutoSubscribe(false),
+			lksdk.WithExtraAttributes(partConf.Attributes),
+		)
+	}
 	if err != nil {
 		return err
 	}
+	// err = room.JoinWithToken(rconf.WsUrl, rconf.Token,
+	// 	lksdk.WithAutoSubscribe(false),
+	// 	lksdk.WithExtraAttributes(partConf.Attributes),
+	// )
+	// if err != nil {
+	// 	return err
+	// }
 	r.room = room
 	r.p.ID = r.room.LocalParticipant.SID()
 	r.p.Identity = r.room.LocalParticipant.Identity()

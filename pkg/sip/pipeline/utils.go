@@ -3,7 +3,6 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 )
 
@@ -16,42 +15,6 @@ func LinkPad(src, dst *gst.Pad) error {
 	}
 	if r := src.Link(dst); r != gst.PadLinkOK {
 		return fmt.Errorf("failed to link pads: %s", r.String())
-	}
-	return nil
-}
-
-func ReleasePad(pad *gst.Pad) {
-	if pad != nil {
-		parent := pad.GetParentElement()
-		if parent != nil {
-			parent.ReleaseRequestPad(pad)
-		}
-	}
-}
-
-func CastErr[T any](v any, err error) (T, error) {
-	var zero T
-	if err != nil {
-		return zero, err
-	}
-	casted, ok := v.(T)
-	if !ok {
-		return zero, fmt.Errorf("failed to cast value")
-	}
-	return casted, nil
-}
-
-func ValidatePad(pad *gst.Pad) error {
-	if pad == nil || pad.Instance() == nil || pad.GstObject() == nil || pad.Unsafe() == nil {
-		return fmt.Errorf("pad is nil")
-	}
-	if pad.IsA(glib.TYPE_INVALID) {
-		return fmt.Errorf("pad is not a valid gst.Pad")
-	}
-
-	parent := pad.GetParentElement()
-	if parent == nil {
-		return fmt.Errorf("pad's parent element is nil")
 	}
 	return nil
 }

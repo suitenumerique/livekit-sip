@@ -1,59 +1,125 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"os/exec"
-	"regexp"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 )
 
-var ErrPipielineNotRunning = fmt.Errorf("pipeline not running")
+func (p *Pipeline) DumpDotLoop() error {
+	ticker := time.NewTicker(500 * time.Millisecond)
 
-var runningTimeRegex = regexp.MustCompile(`running-time=\d+`)
+	dump := false
+	mu := sync.Mutex{}
+	count := 0
 
-func sanitizeDot(dot string) string {
-	return runningTimeRegex.ReplaceAllString(dot, "running-time=XXX")
-}
+	onDumpCH := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		dump = true
+	}
 
-func (p *BasePipeline) Monitor() {
-	name := p.Pipeline().GetName()
+	dumpPipeline := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if dump {
+			dump = false
+			p.Log.Debugw("Dumping pipeline state to dot file")
+			count++
+			done := make(chan struct{})
+			if _, err := glib.IdleAdd(func() {
+				data := p.Pipeline().DebugBinToDotData(gst.DebugGraphShowAll | gst.DebugGraphShowFullParams)
+				filename := fmt.Sprintf("%s/pipeline-%s-%d.dot", p.dumpDir, p.sipCallID, count)
+				if err := os.WriteFile(filename, []byte(data), 0644); err != nil {
+					p.Log.Errorw("Failed to write pipeline dot file", err, "filename", filename)
+				} else {
+					p.Log.Infow("Pipeline dot file written", "filename", filename)
+				}
+				close(done)
+			}); err != nil {
+				p.Log.Errorw("Failed to add idle function for dumping pipeline", err)
+				return
+			}
+			<-done
+			p.Log.Debugw("Pipeline state dumped to dot file")
+		}
+	}
 
-	dotFile, err := os.Create(fmt.Sprintf("%s_pipeline_live.dot", name))
-	if err != nil {
-		fmt.Printf("failed to create pipeline live log file: %v\n", err)
-		return
+	if err := p.ensureDumpDir(); err != nil {
+		p.Log.Warnw("Pipeline dumping is disabled", err, "dumpDot", p.dumpDot, "dumpDir", p.dumpDir)
+		dumpPipeline = func() {}
 	}
 
 	go func() {
-		defer dotFile.Close()
-
-		prevDot := ""
-
-		for !p.closed.IsBroken() {
-			dotData := p.Pipeline().DebugBinToDotData(gst.DebugGraphShowCapsDetails | gst.DebugGraphShowStates)
-			dotData = sanitizeDot(dotData)
-
-			if dotData != prevDot {
-				fmt.Printf("Pipeline %s changed, updating dot file\n", name)
-				prevDot = dotData
-				dotFile.Truncate(0)
-				dotFile.Seek(0, 0)
-				dotFile.WriteString(dotData)
-				dotFile.Sync()
-
-				time.Sleep(100 * time.Millisecond)
-
-				err := exec.Command("dot", "-Tsvg", fmt.Sprintf("%s_pipeline_live.dot", name), "-o", fmt.Sprintf("%s_pipeline_live.svg", name)).Run()
-				if err != nil {
-					fmt.Printf("failed to generate svg from dot: %v\n", err)
-					continue
+		for {
+			select {
+			case <-p.closed.Watch():
+				return
+			case now := <-p.dumpCH:
+				onDumpCH()
+				if now {
+					dumpPipeline()
 				}
+			case <-ticker.C:
+				dumpPipeline()
 			}
-
-			time.Sleep(500 * time.Millisecond)
 		}
 	}()
+
+	return nil
+}
+
+func (p *Pipeline) ensureDumpDir() error {
+	if !p.dumpDot {
+		return errors.New("pipeline dumping is disabled by configuration")
+	}
+	if p.dumpDir == "" {
+		return errors.New("pipeline dump directory is not configured")
+	}
+
+	p.dumpDir = os.ExpandEnv(p.dumpDir)
+
+	if strings.HasPrefix(p.dumpDir, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get user home directory for dump directory: %w", err)
+		}
+		p.dumpDir = filepath.Join(homeDir, p.dumpDir[2:])
+	}
+
+	var dir os.FileInfo
+	dir, err := os.Stat(p.dumpDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if err := os.MkdirAll(p.dumpDir, 0755); err != nil {
+				return fmt.Errorf("pipeline dump directory does not exist and failed to create it: %w", err)
+			}
+			p.Log.Infow("Dump directory created", "directory", p.dumpDir)
+			dir, err = os.Stat(p.dumpDir)
+			if err != nil {
+				return fmt.Errorf("failed to stat dump directory after creating it, disabling pipeline dumping: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to stat pipeline dump directory: %w", err)
+		}
+	}
+	if dir == nil || !dir.IsDir() {
+		return errors.New("pipeline dump directory is not a directory")
+	}
+
+	absPath, err := filepath.Abs(p.dumpDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path for dump directory: %w", err)
+	}
+	p.dumpDir = absPath
+
+	return nil
 }

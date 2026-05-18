@@ -66,20 +66,33 @@ func NewTrackAdapter(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublicatio
 }
 
 type TrackAdapter struct {
+	eof atomic.Bool
 	*webrtc.TrackRemote
 	pub *lksdk.RemoteTrackPublication
 }
 
 func (t *TrackAdapter) Read(p []byte) (n int, err error) {
+	if t.eof.Load() {
+		return 0, io.EOF
+	}
 	n, _, err = t.TrackRemote.Read(p)
 	return n, err
 }
 
 func (t *TrackAdapter) Close() error {
-	var err error
-	err = t.TrackRemote.SetReadDeadline(time.Now())
-	err = errors.Join(err, t.pub.SetSubscribed(false))
-	return err
+	if t.eof.Swap(true) {
+		return nil
+	}
+	// var err error
+	// err = t.TrackRemote.SetReadDeadline(time.Now())
+	// err = errors.Join(err, t.pub.SetSubscribed(false))
+	if err := t.pub.SetSubscribed(false); err != nil {
+		if err.Error() == "signal transport is not connected" {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 type RtcpWriter struct {
