@@ -20,8 +20,12 @@ ARG TARGETPLATFORM
 
 WORKDIR /workspace
 
-# install libopus
-RUN apt-get update && apt-get install -y pkg-config libopus-dev libopusfile-dev libsoxr-dev
+# install build dependencies (CGO needs dev headers for opus, soxr, glib, and gstreamer)
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libopus-dev libopusfile-dev libsoxr-dev \
+    libglib2.0-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
 # download go modules
 COPY go.mod .
