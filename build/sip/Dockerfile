@@ -14,18 +14,28 @@
 
 ARG GOVERSION=1.25
 
-FROM golang:$GOVERSION AS builder
+# Ubuntu 26.04 (Resolute) ships GStreamer 1.28.2, which provides the SDP API
+# (e.g. gst_sdp_media_add_media_from_structure) required by the go-gst fork.
+FROM golang:${GOVERSION} AS go-toolchain
+
+FROM ubuntu:26.04 AS builder
 
 ARG TARGETPLATFORM
+
+# bring in the Go toolchain from the official image
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:/go/bin:$PATH
+ENV GOPATH=/go
 
 WORKDIR /workspace
 
 # install build dependencies (CGO needs dev headers for opus, soxr, glib, and gstreamer)
 RUN apt-get update && apt-get install -y \
-    pkg-config \
+    build-essential pkg-config \
     libopus-dev libopusfile-dev libsoxr-dev \
     libglib2.0-dev \
-    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # download go modules
 COPY go.mod .
@@ -42,9 +52,9 @@ COPY version/ version/
 RUN if [ "$TARGETPLATFORM" = "linux/arm64" ]; then GOARCH=arm64; else GOARCH=amd64; fi && \
     CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -a -o livekit-sip ./cmd/livekit-sip
 
-FROM golang:$GOVERSION
+FROM ubuntu:26.04
 
-# install wget for health check
+# install runtime libraries (GStreamer 1.28 + opus/soxr)
 RUN apt-get update && \
     apt-get install -y \
         libopus0 libopusfile0 libsoxr0 \
