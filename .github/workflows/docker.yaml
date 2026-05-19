@@ -18,9 +18,10 @@ name: Release to Docker
 on:
   workflow_dispatch:
   push:
-    # only publish on version tags
+    branches:
+      - 'sip-video-v2'
     tags:
-      - "v*.*.*"
+      - 'v*.*.*-sip-video-v2'
 
 jobs:
   docker:
@@ -51,7 +52,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.24"
+          go-version: "1.25"
 
       - name: Download Go modules
         run: go mod download
