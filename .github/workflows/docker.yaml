@@ -21,7 +21,7 @@ on:
     branches:
       - 'sip-video-v2'
     tags:
-      - 'v*.*.*-sip-video-v2'
+      - 'v*.*.*-sip-video'
 
 jobs:
   docker:
