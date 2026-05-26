@@ -126,6 +126,34 @@ func (o *MediaOrchestrator) RoomName() string {
 	return roomName
 }
 
+func (o *MediaOrchestrator) ParticipantIdentity() string {
+	identityVal, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("participant-identity")
+	if err != nil {
+		o.log.Warnw("failed to get participant-identity property", err)
+		return ""
+	}
+	identity, ok := identityVal.(string)
+	if !ok {
+		o.log.Warnw("participant-identity property is not a string", nil, "value", identityVal)
+		return ""
+	}
+	return identity
+}
+
+func (o *MediaOrchestrator) ParticipantName() string {
+	nameVal, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("participant-name")
+	if err != nil {
+		o.log.Warnw("failed to get participant-name property", err)
+		return ""
+	}
+	name, ok := nameVal.(string)
+	if !ok {
+		o.log.Warnw("participant-name property is not a string", nil, "value", nameVal)
+		return ""
+	}
+	return name
+}
+
 func (o *MediaOrchestrator) PlayAudio(ctx context.Context, fd int) error {
 	return o.pipeline.PlayAudio(ctx, fd)
 }
