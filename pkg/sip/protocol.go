@@ -112,6 +112,15 @@ func statusName(status int) string {
 	return fmt.Sprintf("status-%d", status)
 }
 
+// Sentinel errors emitted on outbound dial failure paths so callers can match
+// them with errors.Is without depending on the human-readable message.
+var (
+	ErrSIPRequestTimeout = errors.New("sip request timed out")
+	ErrAuthMaxRetry      = errors.New("max auth retry attempts reached for SIP invite")
+	ErrAuthMissingCreds  = errors.New("sip server required auth, but no username or password was provided")
+	ErrAuthNoHeader      = errors.New("no auth header in sip invite response")
+)
+
 type setHeadersFunc func(headers map[string]string) map[string]string
 
 type Signaling interface {
@@ -169,13 +178,6 @@ func legTransportFromReq(req *sip.Request) Transport {
 		if tr, _ := to.Params.Get("transport"); tr != "" {
 			return Transport(strings.ToLower(tr))
 		}
-	}
-	return ""
-}
-
-func legCallIDFromReq(req *sip.Request) string {
-	if callID := req.CallID(); callID != nil {
-		return callID.Value()
 	}
 	return ""
 }
@@ -286,6 +288,8 @@ func NewReferRequest(inviteRequest *sip.Request, inviteResponse *sip.Response, c
 }
 
 func sendRefer(ctx context.Context, c Signaling, req *sip.Request, stop <-chan struct{}) (*sip.Response, error) {
+	ctx, span := Tracer.Start(ctx, "sip.sendRefer")
+	defer span.End()
 	tx, err := c.Transaction(req)
 	if err != nil {
 		return nil, err

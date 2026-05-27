@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/frostbyte73/core"
@@ -35,7 +36,6 @@ import (
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/protocol/utils"
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/sipgo"
 	"github.com/livekit/sipgo/sip"
@@ -46,7 +46,8 @@ import (
 )
 
 const (
-	UserAgent = "LiveKit"
+	UserAgent   = "LiveKit"
+	digestLimit = 500
 )
 
 const (
@@ -80,9 +81,14 @@ type AuthInfo struct {
 	Result       AuthResult
 	ProjectID    string
 	TrunkID      string
-	Username     string
-	Password     string
+	Auth         InboundAuth
 	ProviderInfo *livekit.ProviderInfo
+}
+
+type InboundAuth struct {
+	Username string
+	Password string
+	Realm    string
 }
 
 type DispatchResult int
@@ -90,8 +96,9 @@ type DispatchResult int
 const (
 	DispatchAccept = DispatchResult(iota)
 	DispatchRequestPin
-	DispatchNoRuleReject // reject the call with an error
-	DispatchNoRuleDrop   // silently drop the call
+	DispatchNoRuleReject       // reject the call with an error
+	DispatchNoRuleDrop         // silently drop the call
+	DispatchServiceUnavailable // dispatch rule evaluation failed at the transport level
 )
 
 type CallDispatch struct {
@@ -105,9 +112,10 @@ type CallDispatch struct {
 	IncludeHeaders      livekit.SIPHeaderOptions
 	AttributesToHeaders map[string]string
 	EnabledFeatures     []livekit.SIPFeature
+	FeatureFlags        map[string]string
 	RingingTimeout      time.Duration
 	MaxCallDuration     time.Duration
-	MediaEncryption     livekit.SIPMediaEncryption
+	MediaConfig         *livekit.SIPMediaConfig
 }
 
 type CallIdentifier struct {
@@ -117,60 +125,64 @@ type CallIdentifier struct {
 	SipCallID string
 }
 
+type MediaProcessorOpts struct {
+	InputSampleRate int
+}
+
 type Handler interface {
 	GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error)
 	DispatchCall(ctx context.Context, info *CallInfo) CallDispatch
-	GetMediaProcessor(features []livekit.SIPFeature) msdk.PCM16Processor
+	GetMediaProcessor(features []livekit.SIPFeature, featureFlags map[string]string, callID string, opts MediaProcessorOpts) msdk.PCM16Processor
 
 	RegisterTransferSIPParticipantTopic(sipCallId string) error
 	DeregisterTransferSIPParticipantTopic(sipCallId string)
 
+	OnInboundInfo(log logger.Logger, callInfo *rpc.SIPCall, headers Headers)
 	OnSessionEnd(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string)
 }
 
-type dialogKey struct {
-	sipCallID string
-	toTag     string
-	fromTag   string
-}
-
 type Server struct {
-	log                logger.Logger
-	mon                *stats.Monitor
-	region             string
-	sipSrv             *sipgo.Server
-	getIOClient        GetIOInfoClient
-	getRoom            GetRoomFunc
-	sipListeners       []io.Closer
-	sipUnhandled       RequestHandler
-	inviteTimeoutQueue utils.TimeoutQueue[dialogKey]
+	log          logger.Logger
+	mon          *stats.Monitor
+	region       string
+	sipSrv       *sipgo.Server
+	getIOClient  GetIOInfoClient
+	getRoom      GetRoomFunc
+	sipListeners []io.Closer
+	sipUnhandled RequestHandler
 
-	imu               sync.RWMutex
-	inProgressInvites map[dialogKey]*inProgressInvite
+	imu               sync.Mutex
+	inProgressInvites []*inProgressInvite
 
-	closing     core.Fuse
-	cmu         sync.RWMutex
-	byRemoteTag map[RemoteTag]*inboundCall
-	byLocalTag  map[LocalTag]*inboundCall
-	byCallID    map[string]*inboundCall
+	closing            core.Fuse
+	cmu                sync.RWMutex
+	byLocalTag         map[LocalTag]*inboundCall
+	provisionalInvites *expirable.LRU[[2]string, LocalTag]
+	rejectedInvites    *expirable.LRU[[2]string, rejectedInviteResponse]
 
 	infos struct {
 		sync.Mutex
-		byCallID *expirable.LRU[string, *inboundCallInfo]
+		byLocalTag *expirable.LRU[LocalTag, *inboundCallInfo]
 	}
 
 	handler Handler
 	conf    *config.Config
 	sconf   *ServiceConfig
 
+	cli *Client // optional, for outbound reinvite handling
+
 	res mediaRes
 }
 
 type inProgressInvite struct {
-	sipCallID   string
-	challenge   digest.Challenge
-	lkCallID    string // SCL_* LiveKit call ID assigned to this dialog
-	timeoutLink utils.TimeoutQueueItem[dialogKey]
+	sipCallID    string
+	challenge    digest.Challenge
+	authResolved atomic.Bool
+}
+
+type rejectedInviteResponse struct {
+	status sip.StatusCode
+	reason string
 }
 
 type ServerOption func(s *Server)
@@ -183,26 +195,34 @@ func WithGetRoomServer(fn GetRoomFunc) ServerOption {
 	}
 }
 
+func WithClient(cli *Client) ServerOption {
+	return func(s *Server) {
+		s.cli = cli
+	}
+}
+
 func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats.Monitor, getIOClient GetIOInfoClient, options ...ServerOption) *Server {
 	if log == nil {
 		log = logger.GetLogger()
 	}
 	s := &Server{
-		log:               log,
-		conf:              conf,
-		region:            region,
-		mon:               mon,
-		getIOClient:       getIOClient,
-		getRoom:           DefaultGetRoomFunc,
-		inProgressInvites: make(map[dialogKey]*inProgressInvite),
-		byRemoteTag:       make(map[RemoteTag]*inboundCall),
-		byLocalTag:        make(map[LocalTag]*inboundCall),
-		byCallID:          make(map[string]*inboundCall),
+		log:                log,
+		conf:               conf,
+		region:             region,
+		mon:                mon,
+		getIOClient:        getIOClient,
+		getRoom:            DefaultGetRoomFunc,
+		byLocalTag:         make(map[LocalTag]*inboundCall),
+		provisionalInvites: expirable.NewLRU[[2]string, LocalTag](maxCallCache, nil, callCacheTTL),
+	}
+	// Initialize the rejected-invite replay cache unless explicitly disabled.
+	if !conf.DisableRejectedInviteCache {
+		s.rejectedInvites = expirable.NewLRU[[2]string, rejectedInviteResponse](maxCallCache, nil, callCacheTTL)
 	}
 	for _, option := range options {
 		option(s)
 	}
-	s.infos.byCallID = expirable.NewLRU[string, *inboundCallInfo](maxCallCache, nil, callCacheTTL)
+	s.infos.byLocalTag = expirable.NewLRU[LocalTag, *inboundCallInfo](maxCallCache, nil, callCacheTTL)
 	s.initMediaRes(s.conf)
 	pipeline.SetupLogging(log, conf.Gst)
 	return s
@@ -314,7 +334,6 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	s.sipSrv.OnOptions(s.onOptions)
 	s.sipSrv.OnInvite(s.onInvite)
 	s.sipSrv.OnAck(s.onAck)
-	s.sipSrv.OnUpdate(s.onUpdate)
 	s.sipSrv.OnBye(s.onBye)
 	s.sipSrv.OnNotify(s.onNotify)
 	s.sipSrv.OnNoRoute(s.OnNoRoute)
@@ -343,20 +362,18 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 		}
 	}
 
-	// Start the cleanup task
-	go s.cleanupInvites()
-
 	return nil
 }
 
 func (s *Server) Stop() {
+	ctx := context.Background()
 	s.closing.Break()
 	s.cmu.Lock()
-	calls := maps.Values(s.byRemoteTag)
-	s.byRemoteTag = make(map[RemoteTag]*inboundCall)
+	calls := maps.Values(s.byLocalTag)
+	s.byLocalTag = make(map[LocalTag]*inboundCall)
 	s.cmu.Unlock()
 	for _, c := range calls {
-		_ = c.Close()
+		c.Shutdown(ctx)
 	}
 	if s.sipSrv != nil {
 		_ = s.sipSrv.Close()

@@ -15,6 +15,9 @@
 package errors
 
 import (
+	"errors"
+
+	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/psrpc"
 )
 
@@ -25,4 +28,15 @@ var (
 
 func ErrCouldNotParseConfig(err error) psrpc.Error {
 	return psrpc.NewErrorf(psrpc.InvalidArgument, "could not parse config: %v", err)
+}
+
+// ApplySIPStatus will apply the error code mapping to the resulting error, if the provided error wraps livekit.SIPStatus.
+func ApplySIPStatus(err error) error {
+	var sipStatus *livekit.SIPStatus
+	if !errors.As(err, &sipStatus) {
+		return err
+	}
+	code := sipStatus.GRPCStatus().Code()
+	err = psrpc.NewError(psrpc.ErrorCodeFromGRPC(code), err, sipStatus)
+	return err
 }

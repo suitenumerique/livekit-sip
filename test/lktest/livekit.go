@@ -115,12 +115,13 @@ func (lk *LiveKit) CreateSIPParticipantSync(t TB, req *livekit.CreateSIPParticip
 
 func (lk *LiveKit) Connect(t TB, room, identity string, cb *lksdk.RoomCallback) *lksdk.Room {
 	r := lksdk.NewRoom(cb)
+	// faster connection timeout since they should be in the same DC
 	err := r.Join(lk.WsUrl, lksdk.ConnectInfo{
 		APIKey:              lk.ApiKey,
 		APISecret:           lk.ApiSecret,
 		RoomName:            room,
 		ParticipantIdentity: identity,
-	})
+	}, lksdk.WithConnectTimeout(1*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +182,7 @@ func (lk *LiveKit) ConnectParticipant(t TB, room, identity string, cb *RoomParti
 	p.AudioIn = pr
 
 	var err error
-	p.mixIn, err = mixer.NewMixer(pw, rtp.DefFrameDur, nil, 1, mixer.DefaultInputBufferFrames)
+	p.mixIn, err = mixer.NewMixer(pw, rtp.DefFrameDur, 1, mixer.WithOutputChannel())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,13 +201,13 @@ func (lk *LiveKit) ConnectParticipant(t TB, room, identity string, cb *RoomParti
 		inp := p.mixIn.NewInput()
 		defer inp.Close()
 
-		odec, err := opus.Decode(inp, channels, logger.GetLogger())
+		codec, err := opus.Decode(inp, channels, logger.GetLogger())
 		if err != nil {
 			return
 		}
-		defer odec.Close()
+		defer codec.Close()
 
-		h := rtp.NewNopCloser(rtp.NewMediaStreamIn[opus.Sample](odec))
+		h := rtp.NewNopCloser(rtp.NewMediaStreamIn(codec))
 		_ = rtp.HandleLoop(track, h)
 	}
 	cb.OnParticipantConnected = func(p *lksdk.RemoteParticipant) {
@@ -263,7 +264,7 @@ func (lk *LiveKit) ConnectParticipant(t TB, room, identity string, cb *RoomParti
 		t.Fatal(err)
 	}
 	// This allows us to send silence when there's no audio generated from the test.
-	p.mixOut, err = mixer.NewMixer(track, rtp.DefFrameDur, nil, 1, mixer.DefaultInputBufferFrames)
+	p.mixOut, err = mixer.NewMixer(track, rtp.DefFrameDur, 1, mixer.WithOutputChannel())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,11 +319,7 @@ func (p *Participant) SendSignal(ctx context.Context, n int, val int) error {
 
 	ticker := time.NewTicker(rtp.DefFrameDur)
 	defer ticker.Stop()
-	i := 0
-	for {
-		if n > 0 && i >= n {
-			break
-		}
+	for i := 0; n <= 0 || i < n; i++ {
 		select {
 		case <-ctx.Done():
 			if n <= 0 {
@@ -336,7 +333,6 @@ func (p *Participant) SendSignal(ctx context.Context, n int, val int) error {
 		if err := p.AudioOut.WriteSample(signal); err != nil {
 			return err
 		}
-		i++
 	}
 	return nil
 }

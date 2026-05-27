@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/icholy/digest"
-	msdk "github.com/livekit/media-sdk"
 	"github.com/stretchr/testify/require"
+
+	msdk "github.com/livekit/media-sdk"
 
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/livekit"
@@ -21,8 +25,6 @@ import (
 	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/media-sdk/sdp"
-
-	"sync"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/stats"
@@ -47,6 +49,17 @@ func getResponseOrFail(t *testing.T, tx sip.ClientTransaction) *sip.Response {
 	return nil
 }
 
+func getFinalResponseOrFail(t *testing.T, tx sip.ClientTransaction, req *sip.Request) *sip.Response {
+	var res *sip.Response
+	for {
+		res = getResponseOrFail(t, tx)
+		if res.StatusCode >= 200 {
+			break
+		}
+	}
+	return res
+}
+
 func expectNoResponse(t *testing.T, tx sip.ClientTransaction) {
 	select {
 	case res := <-tx.Responses():
@@ -61,18 +74,35 @@ func expectNoResponse(t *testing.T, tx sip.ClientTransaction) {
 type TestHandler struct {
 	GetAuthCredentialsFunc func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error)
 	DispatchCallFunc       func(ctx context.Context, info *CallInfo) CallDispatch
+	OnInboundInfoFunc      func(log logger.Logger, call *rpc.SIPCall, headers Headers)
 	OnSessionEndFunc       func(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string)
 }
 
 func (h TestHandler) GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
-	return h.GetAuthCredentialsFunc(ctx, call)
+	if h.GetAuthCredentialsFunc != nil {
+		return h.GetAuthCredentialsFunc(ctx, call)
+	}
+	return AuthInfo{Result: AuthAccept}, nil
 }
 
 func (h TestHandler) DispatchCall(ctx context.Context, info *CallInfo) CallDispatch {
-	return h.DispatchCallFunc(ctx, info)
+	if h.DispatchCallFunc != nil {
+		return h.DispatchCallFunc(ctx, info)
+	}
+	identity := fmt.Sprintf("test-participant-%s", info.Call.SipCallId)
+	return CallDispatch{
+		Result: DispatchAccept,
+		Room: RoomConfig{
+			RoomName: "test-room",
+			Participant: ParticipantConfig{
+				Identity: identity,
+				Name:     identity,
+			},
+		},
+	}
 }
 
-func (h TestHandler) GetMediaProcessor(_ []livekit.SIPFeature) msdk.PCM16Processor {
+func (h TestHandler) GetMediaProcessor(_ []livekit.SIPFeature, _ map[string]string, _ string, _ MediaProcessorOpts) msdk.PCM16Processor {
 	return nil
 }
 
@@ -83,6 +113,12 @@ func (h TestHandler) RegisterTransferSIPParticipantTopic(sipCallId string) error
 
 func (h TestHandler) DeregisterTransferSIPParticipantTopic(sipCallId string) {
 	// no-op
+}
+
+func (h TestHandler) OnInboundInfo(log logger.Logger, call *rpc.SIPCall, headers Headers) {
+	if h.OnInboundInfoFunc != nil {
+		h.OnInboundInfoFunc(log, call, headers)
+	}
 }
 
 func (h TestHandler) OnSessionEnd(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {
@@ -126,7 +162,7 @@ func testInvite(t *testing.T, h Handler, hidden bool, from, to string, test func
 	sipClient, err := sipgo.NewClient(sipUserAgent)
 	require.NoError(t, err)
 
-	offer, err := sdp.NewOffer(localIP, 0xB0B, sdp.EncryptionNone)
+	offer, err := sdp.NewOfferWith(defaultCodecs, localIP, 0xB0B, sdp.EncryptionNone)
 	require.NoError(t, err)
 	offerData, err := offer.SDP.Marshal()
 	require.NoError(t, err)
@@ -165,6 +201,31 @@ func TestService_AuthFailure(t *testing.T) {
 	})
 }
 
+func TestService_DispatchUnavailable(t *testing.T) {
+	const (
+		expectedFromUser = "foo"
+		expectedToUser   = "bar"
+	)
+	h := &TestHandler{
+		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+			return AuthInfo{Result: AuthAccept}, nil
+		},
+		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
+			return CallDispatch{Result: DispatchServiceUnavailable}
+		},
+	}
+	testInvite(t, h, false, expectedFromUser, expectedToUser, func(tx sip.ClientTransaction) {
+		res := getResponseOrFail(t, tx)
+		require.Equal(t, sip.StatusCode(100), res.StatusCode)
+
+		res = getResponseOrFail(t, tx)
+		require.Equal(t, sip.StatusCode(180), res.StatusCode)
+
+		res = getResponseOrFail(t, tx)
+		require.Equal(t, sip.StatusCode(503), res.StatusCode)
+	})
+}
+
 func TestService_AuthDrop(t *testing.T) {
 	const (
 		expectedFromUser = "foo"
@@ -180,6 +241,99 @@ func TestService_AuthDrop(t *testing.T) {
 	testInvite(t, h, true, expectedFromUser, expectedToUser, func(tx sip.ClientTransaction) {
 		expectNoResponse(t, tx)
 	})
+}
+
+// TestService_RejectedInviteCacheReplay verifies that a second INVITE
+// reusing the same Call-ID and From-tag after a final 4xx response gets
+// the cached response replayed without invoking the auth/dispatch
+// handlers a second time. This guards the dedup that absorbs
+// provider-level retries (same Call-ID + From-tag, new SIP transaction)
+// after we've already sent a terminal rejection.
+func TestService_RejectedInviteCacheReplay(t *testing.T) {
+	const (
+		fromUser = "caller@example.com"
+		toUser   = "callee@example.com"
+		callID   = "rejected-invite-replay-test@example.com"
+		fromTag  = "fixed-from-tag-replay"
+	)
+
+	var authCalls, dispatchCalls atomic.Int32
+
+	h := &TestHandler{
+		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+			authCalls.Add(1)
+			return AuthInfo{Result: AuthAccept}, nil
+		},
+		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
+			dispatchCalls.Add(1)
+			return CallDispatch{Result: DispatchNoRuleReject}
+		},
+		OnSessionEndFunc: func(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {
+			// no-op
+		},
+	}
+
+	sipPort := rand.Intn(testPortSIPMax-testPortSIPMin) + testPortSIPMin
+	localIP, err := config.GetLocalIP()
+	require.NoError(t, err)
+	sipServerAddress := fmt.Sprintf("%s:%d", localIP, sipPort)
+
+	mon, err := stats.NewMonitor(&config.Config{MaxCpuUtilization: 0.9})
+	require.NoError(t, err)
+
+	log := logger.LogRLogger(logr.Discard())
+	s, err := NewService("", &config.Config{
+		SIPPort:       sipPort,
+		SIPPortListen: sipPort,
+		RTPPort:       rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
+	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	s.SetHandler(h)
+	require.NoError(t, s.Start())
+	t.Cleanup(s.Stop)
+
+	ua, err := sipgo.NewUA(sipgo.WithUserAgent(fromUser),
+		sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))))
+	require.NoError(t, err)
+	client, err := sipgo.NewClient(ua)
+	require.NoError(t, err)
+
+	offer, err := sdp.NewOfferWith(defaultCodecs, localIP, 0xB0B, sdp.EncryptionNone)
+	require.NoError(t, err)
+	offerData, err := offer.SDP.Marshal()
+	require.NoError(t, err)
+
+	sendInvite := func() *sip.Response {
+		recipient := sip.Uri{User: toUser, Host: sipServerAddress}
+		req := sip.NewRequest(sip.INVITE, recipient)
+		req.SetDestination(sipServerAddress)
+		req.SetBody(offerData)
+		req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+		req.AppendHeader(sip.NewHeader("Call-ID", callID))
+		req.AppendHeader(&sip.FromHeader{
+			DisplayName: fromUser,
+			Address:     sip.Uri{User: fromUser, Host: sipServerAddress},
+			Params:      sip.HeaderParams{{K: "tag", V: fromTag}},
+		})
+		tx, err := client.TransactionRequest(req)
+		require.NoError(t, err)
+		t.Cleanup(tx.Terminate)
+		return getFinalResponseOrFail(t, tx, req)
+	}
+
+	// First INVITE: full handler invocation, 404 from DispatchNoRuleReject.
+	res1 := sendInvite()
+	require.Equal(t, sip.StatusCode(404), res1.StatusCode)
+	require.Equal(t, int32(1), authCalls.Load())
+	require.Equal(t, int32(1), dispatchCalls.Load())
+
+	// Second INVITE with the same Call-ID + From-tag should be served from
+	// the cache: same 404, but handlers must NOT be invoked again.
+	res2 := sendInvite()
+	require.Equal(t, sip.StatusCode(404), res2.StatusCode)
+	require.Equal(t, int32(1), authCalls.Load(), "auth handler must not be re-invoked on replay")
+	require.Equal(t, int32(1), dispatchCalls.Load(), "dispatch handler must not be re-invoked on replay")
 }
 
 func TestService_OnSessionEnd(t *testing.T) {
@@ -299,9 +453,11 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 
 			// Return password authentication required
 			return AuthInfo{
-				Result:   AuthPassword,
-				Username: username,
-				Password: password,
+				Result: AuthPassword,
+				Auth: InboundAuth{
+					Username: username,
+					Password: password,
+				},
 			}, nil
 		},
 		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
@@ -360,12 +516,12 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create SDP offers
-	offer1, err := sdp.NewOffer(localIP, 0xB0B, sdp.EncryptionNone)
+	offer1, err := sdp.NewOfferWith(defaultCodecs, localIP, 0xB0B, sdp.EncryptionNone)
 	require.NoError(t, err)
 	offerData1, err := offer1.SDP.Marshal()
 	require.NoError(t, err)
 
-	offer2, err := sdp.NewOffer(localIP, 0xB0C, sdp.EncryptionNone)
+	offer2, err := sdp.NewOfferWith(defaultCodecs, localIP, 0xB0C, sdp.EncryptionNone)
 	require.NoError(t, err)
 	offerData2, err := offer2.SDP.Marshal()
 	require.NoError(t, err)
@@ -504,9 +660,11 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 	h := &TestHandler{
 		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
 			return AuthInfo{
-				Result:   AuthPassword,
-				Username: username,
-				Password: password,
+				Result: AuthPassword,
+				Auth: InboundAuth{
+					Username: username,
+					Password: password,
+				},
 			}, nil
 		},
 		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
@@ -554,7 +712,7 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 	sipClient, err := sipgo.NewClient(sipUserAgent)
 	require.NoError(t, err)
 
-	offer, err := sdp.NewOffer(localIP, 0xB0B, sdp.EncryptionNone)
+	offer, err := sdp.NewOfferWith(defaultCodecs, localIP, 0xB0B, sdp.EncryptionNone)
 	require.NoError(t, err)
 	offerData, err := offer.SDP.Marshal()
 	require.NoError(t, err)
@@ -614,12 +772,13 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 	// The second request should either succeed (200) or get another 407 if there are issues
 	// Let's check what response we get
 	res2 = getResponseOrFail(t, tx2)
-	if res2.StatusCode == 407 {
+	switch res2.StatusCode {
+	case 407:
 		// If we get another 407, it means authentication failed
 		t.Logf("Second request got 407 again, authentication may have failed")
-	} else if res2.StatusCode == 200 {
+	case 200:
 		t.Logf("Second request succeeded with 200 OK")
-	} else {
+	default:
 		t.Logf("Second request got status: %d", res2.StatusCode)
 	}
 }
@@ -632,54 +791,9 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 		toUser   = "callee@example.com"
 	)
 
-	// Handler that accepts calls and makes them ring (so we can cancel during ringing)
-	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
-			return AuthInfo{Result: AuthAccept}, nil
-		},
-		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
-			// Accept the call but don't complete immediately - let it ring
-			// This simulates a call that's ringing when CANCEL is received
-			return CallDispatch{
-				Result: DispatchAccept,
-				Room: RoomConfig{
-					RoomName: "test-room",
-					Participant: ParticipantConfig{
-						Identity: "test-participant",
-					},
-				},
-				RingingTimeout: 30 * time.Second, // Long timeout so call stays ringing
-			}
-		},
-		OnSessionEndFunc: func(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {
-			// No-op for tests
-		},
-	}
-
-	// Create service
-	sipPort := rand.Intn(testPortSIPMax-testPortSIPMin) + testPortSIPMin
-	localIP, err := config.GetLocalIP()
-	require.NoError(t, err)
-
-	sipServerAddress := fmt.Sprintf("%s:%d", localIP, sipPort)
-
-	mon, err := stats.NewMonitor(&config.Config{MaxCpuUtilization: 0.9})
-	require.NoError(t, err)
-
-	log := logger.LogRLogger(logr.Discard())
-	s, err := NewService("", &config.Config{
-		HideInboundPort:    false,
-		SIPPort:            sipPort,
-		SIPPortListen:      sipPort,
-		RTPPort:            rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
-		SIPRingingInterval: 1 * time.Second,
-	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
-	require.NoError(t, err)
-	require.NotNil(t, s)
-	t.Cleanup(s.Stop)
-
-	s.SetHandler(h)
-	require.NoError(t, s.Start())
+	st := NewServiceTest(t, &serviceTestConfig{GetRoom: newTestRoomConfig(&testRoomConfig{ringForever: true})})
+	loopback := netip.MustParseAddr("127.0.0.1")
+	sipServerAddress := st.Address()
 
 	// Create SIP client using sipgo
 	sipUserAgent, err := sipgo.NewUA(
@@ -691,7 +805,7 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create SDP offer
-	offer, err := sdp.NewOffer(localIP, 0xB0B, sdp.EncryptionNone)
+	offer, err := sdp.NewOfferWith(defaultCodecs, loopback, 0xB0B, sdp.EncryptionNone)
 	require.NoError(t, err)
 	offerData, err := offer.SDP.Marshal()
 	require.NoError(t, err)
@@ -730,14 +844,12 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 
 	// Collect responses until we get the final 487 or transaction completes
 	var responses []*sip.Response
-	var invite487Received bool
 
 	// Wait for responses with a timeout
 	timeout := time.After(time.Second)
-	transactionDone := false
 
 	// Collect responses until we get 487 or timeout
-	for !invite487Received && !transactionDone {
+	for {
 		select {
 		case res := <-tx.Responses():
 			responses = append(responses, res)
@@ -750,19 +862,16 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 			}
 			t.Logf("Received response: StatusCode=%d, CSeq method=%s", res.StatusCode, cseqMethod)
 
-			// Check if this is the 487 response to INVITE
-			if res.StatusCode == sip.StatusCode(487) {
-				// Verify this is for the INVITE (CSeq method should be INVITE)
-				require.NotNil(t, cseq, "487 response should have CSeq header")
-				if cseq != nil {
-					require.Equal(t, sip.INVITE, cseq.MethodName, "487 response should be for INVITE method")
-					invite487Received = true
-				}
+			if res.StatusCode < 200 {
+				continue
 			}
+			require.Equal(t, sip.StatusCode(487), res.StatusCode, "Should have received 487 Request Terminated response to INVITE when CANCEL is sent")
+			require.NotNil(t, cseq, "487 response should have CSeq header")
+			require.Equal(t, sip.INVITE, cseq.MethodName, "487 response should be for INVITE method")
+			return // Success!
 
 		case <-tx.Done():
-			// Transaction completed, check if we got the 487 response
-			transactionDone = true
+			t.Fatal("Transaction done without receiving expected 487 response")
 
 		case <-timeout:
 			// Log all received responses for debugging
@@ -778,9 +887,6 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 			t.Fatal("Timeout waiting for 487 Request Terminated response after CANCEL")
 		}
 	}
-
-	// Verify we received the critical 487 response
-	require.True(t, invite487Received, "Should have received 487 Request Terminated response to INVITE when CANCEL is sent")
 }
 
 // TestSameCallIDForAuthFlow verifies that the same LiveKit call ID is assigned to both
@@ -798,6 +904,8 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 	var capturedCallIDs []string
 	var mu sync.Mutex
 
+	log := logger.NewTestLoggerLevel(t, 1)
+
 	h := &TestHandler{
 		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
 			// Capture the LiveKit call ID from the first request
@@ -805,10 +913,14 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 			capturedCallIDs = append(capturedCallIDs, call.LkCallId)
 			mu.Unlock()
 
+			log.Infow("GetAuthCredentials called", "callID", call.LkCallId)
+
 			return AuthInfo{
-				Result:   AuthPassword,
-				Username: username,
-				Password: password,
+				Result: AuthPassword,
+				Auth: InboundAuth{
+					Username: username,
+					Password: password,
+				},
 			}, nil
 		},
 		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
@@ -832,8 +944,6 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 	mon, err := stats.NewMonitor(&config.Config{MaxCpuUtilization: 0.9})
 	require.NoError(t, err)
 
-	// Use a no-op logger to avoid panics from async logging after test completion
-	log := logger.LogRLogger(logr.Discard())
 	s, err := NewService("", &config.Config{
 		HideInboundPort: false, // Enable authentication
 		SIPPort:         sipPort,
@@ -842,10 +952,10 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
 	require.NoError(t, err)
 	require.NotNil(t, s)
-	t.Cleanup(s.Stop)
 
 	s.SetHandler(h)
 	require.NoError(t, s.Start())
+	t.Cleanup(s.Stop)
 
 	sipUserAgent, err := sipgo.NewUA(
 		sipgo.WithUserAgent(fromUser),
@@ -856,7 +966,7 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 	sipClient, err := sipgo.NewClient(sipUserAgent)
 	require.NoError(t, err)
 
-	offer, err := sdp.NewOffer(localIP, 0xB0B, sdp.EncryptionNone)
+	offer, err := sdp.NewOfferWith(defaultCodecs, localIP, 0xB0B, sdp.EncryptionNone)
 	require.NoError(t, err)
 	offerData, err := offer.SDP.Marshal()
 	require.NoError(t, err)
@@ -864,7 +974,7 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 	inviteFromHeader := sip.FromHeader{
 		DisplayName: fromUser,
 		Address:     sip.Uri{User: fromUser, Host: sipServerAddress},
-		Params:      sip.NewParams().Add("tag", fromTag), // Key bit here
+		Params:      sip.HeaderParams{{"tag", fromTag}}, // Key bit here
 	}
 
 	// Create first INVITE request (without auth)
@@ -918,7 +1028,6 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 	inviteRequest2.AppendHeader(sip.NewHeader("Call-ID", callID))
 	inviteRequest2.AppendHeader(sip.NewHeader("Proxy-Authorization", cred.String()))
 	inviteRequest2.AppendHeader(&inviteFromHeader)
-	inviteRequest2.AppendHeader(toHeader)
 
 	tx2, err := sipClient.TransactionRequest(inviteRequest2)
 	require.NoError(t, err)
@@ -941,4 +1050,183 @@ func TestSameCallIDForAuthFlow(t *testing.T) {
 
 	t.Logf("First call ID: %s", capturedCallIDs[0])
 	t.Logf("Second call ID: %s", capturedCallIDs[1])
+}
+
+// newServiceForAffinity creates a minimal Service with initialized client/server maps
+// suitable for testing CreateSIPParticipantAffinity without network setup.
+func newServiceForAffinity(conf *config.Config) *Service {
+	cli := &Client{
+		conf:        conf,
+		activeCalls: make(map[LocalTag]*outboundCall),
+	}
+	srv := &Server{
+		conf:       conf,
+		byLocalTag: make(map[LocalTag]*inboundCall),
+	}
+	return &Service{
+		conf: conf,
+		cli:  cli,
+		srv:  srv,
+	}
+}
+
+func TestCreateSIPParticipantAffinity_NoConfig_NoCalls(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{})
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 1 / (1 + 0) = 1.0
+	require.InDelta(t, float32(1.0), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_NoConfig_WithCalls(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{})
+
+	// Add 4 outbound calls
+	for i := 0; i < 4; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+	// Add 5 inbound calls
+	for i := 0; i < 5; i++ {
+		s.srv.byLocalTag[LocalTag(fmt.Sprintf("in-%d", i))] = &inboundCall{}
+	}
+
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 1 / (1 + 9) = 0.1
+	require.InDelta(t, float32(0.1), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_WithMaxCalls(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{MaxActiveCalls: 100})
+
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 0 active, max 100 => 1 - 0/100 = 1.0
+	require.InDelta(t, float32(1.0), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_WithMaxCalls_PartialLoad(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{MaxActiveCalls: 100})
+
+	// Add 25 outbound calls before first measurement
+	for i := 0; i < 25; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 25 active, max 100 => 1 - 25/100 = 0.75
+	require.InDelta(t, float32(0.75), got, 0.001)
+
+	// Add 25 more (50 total)
+	for i := 25; i < 50; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+	got = s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 50 active, max 100 => 1 - 50/100 = 0.5
+	require.InDelta(t, float32(0.5), got, 0.001)
+
+	// Add 49 more (99 total, just under capacity)
+	for i := 50; i < 99; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+	got = s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 99 active, max 100 => 1 - 99/100 = 0.01
+	require.InDelta(t, float32(0.01), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_AtCapacity(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{MaxActiveCalls: 10})
+
+	for i := 0; i < 10; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	require.Equal(t, float32(0), got)
+}
+
+func TestCreateSIPParticipantAffinity_OverCapacity(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{MaxActiveCalls: 10})
+
+	for i := 0; i < 15; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	require.Equal(t, float32(0), got)
+}
+
+func TestCreateSIPParticipantAffinity_MixedInboundOutbound(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{MaxActiveCalls: 20})
+
+	// 6 outbound + 4 inbound = 10 total
+	for i := 0; i < 6; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+	for i := 0; i < 4; i++ {
+		s.srv.byLocalTag[LocalTag(fmt.Sprintf("in-%d", i))] = &inboundCall{}
+	}
+
+	got := s.CreateSIPParticipantAffinity(context.Background(), nil)
+	// 10 active, max 20 => 1 - 10/20 = 0.5
+	require.InDelta(t, float32(0.5), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_TrunkWhitelist_Allowed(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{
+		SIPTrunkIds: []string{"trunk-a", "trunk-b"},
+	})
+
+	req := &rpc.InternalCreateSIPParticipantRequest{SipTrunkId: "trunk-a"}
+	got := s.CreateSIPParticipantAffinity(context.Background(), req)
+	// Trunk is whitelisted, 0 active calls, no max => 1/(1+0) = 1.0
+	require.InDelta(t, float32(1.0), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_TrunkWhitelist_Rejected(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{
+		SIPTrunkIds: []string{"trunk-a", "trunk-b"},
+	})
+
+	req := &rpc.InternalCreateSIPParticipantRequest{SipTrunkId: "trunk-c"}
+	got := s.CreateSIPParticipantAffinity(context.Background(), req)
+	require.Equal(t, float32(0), got)
+}
+
+func TestCreateSIPParticipantAffinity_TrunkWhitelist_EmptyTrunkId(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{
+		SIPTrunkIds: []string{"trunk-a"},
+	})
+
+	req := &rpc.InternalCreateSIPParticipantRequest{}
+	got := s.CreateSIPParticipantAffinity(context.Background(), req)
+	// Empty trunk ID is not in the whitelist
+	require.Equal(t, float32(0), got)
+}
+
+func TestCreateSIPParticipantAffinity_TrunkWhitelist_EmptyList(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{})
+
+	// No whitelist configured, any trunk ID should work
+	req := &rpc.InternalCreateSIPParticipantRequest{SipTrunkId: "any-trunk"}
+	got := s.CreateSIPParticipantAffinity(context.Background(), req)
+	require.InDelta(t, float32(1.0), got, 0.001)
+}
+
+func TestCreateSIPParticipantAffinity_TrunkWhitelist_WithMaxCalls(t *testing.T) {
+	s := newServiceForAffinity(&config.Config{
+		SIPTrunkIds:    []string{"trunk-a"},
+		MaxActiveCalls: 100,
+	})
+
+	// Add 50 calls
+	for i := 0; i < 50; i++ {
+		s.cli.activeCalls[LocalTag(fmt.Sprintf("out-%d", i))] = &outboundCall{}
+	}
+
+	// Whitelisted trunk: should get normal affinity
+	req := &rpc.InternalCreateSIPParticipantRequest{SipTrunkId: "trunk-a"}
+	got := s.CreateSIPParticipantAffinity(context.Background(), req)
+	require.InDelta(t, float32(0.5), got, 0.001)
+
+	// Non-whitelisted trunk: 0 regardless of load
+	req = &rpc.InternalCreateSIPParticipantRequest{SipTrunkId: "trunk-x"}
+	got = s.CreateSIPParticipantAffinity(context.Background(), req)
+	require.Equal(t, float32(0), got)
 }

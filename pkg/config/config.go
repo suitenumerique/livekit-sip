@@ -55,6 +55,23 @@ type TLSConfig struct {
 	ListenPort int       `yaml:"port_listen"` // SIP signaling port to listen on
 	Certs      []TLSCert `yaml:"certs"`
 	KeyLog     string    `yaml:"key_log"`
+
+	MinVersion string `yaml:"min_version"` // min TLS version, accepts: "tls1.0", "tls1.1", "tls1.2", "tls1.3"
+	MaxVersion string `yaml:"max_version"` // max TLS version, accepts: "tls1.0", "tls1.1", "tls1.2", "tls1.3"
+
+	// CipherSuites is an optional list of cipher suite names.
+	// If not provided, Go's secure defaults are used.
+	// Note: Only applies to TLS 1.0-1.2; TLS 1.3 cipher suites are not configurable.
+	CipherSuites []string `yaml:"cipher_suites"`
+
+	// ALPNProtocols is an optional list of ALPN protocol names for TLS negotiation.
+	// If not provided, defaults to ["sip"]. Set to an empty list to disable ALPN.
+	// Some providers (e.g. Meta) reject the "sip" ALPN and require it to be disabled.
+	ALPNProtocols []string `yaml:"alpn"`
+}
+
+type TCPConfig struct {
+	DialPort rtcconfig.PortRange `yaml:"dial_port"`
 }
 
 type VideoConfig struct {
@@ -82,38 +99,49 @@ type Config struct {
 	ApiSecret string             `yaml:"api_secret"` // required (env LIVEKIT_API_SECRET)
 	WsUrl     string             `yaml:"ws_url"`     // required (env LIVEKIT_WS_URL)
 
-	HealthPort         int                 `yaml:"health_port"`
-	PrometheusPort     int                 `yaml:"prometheus_port"`
-	PProfPort          int                 `yaml:"pprof_port"`
-	SIPPort            int                 `yaml:"sip_port"`        // announced SIP signaling port
-	SIPPortListen      int                 `yaml:"sip_port_listen"` // SIP signaling port to listen on
-	SIPHostname        string              `yaml:"sip_hostname"`
-	SIPRingingInterval time.Duration       `yaml:"sip_ringing_interval"` // from 1 sec up to 60 (default '1s')
-	TLS                *TLSConfig          `yaml:"tls"`
-	RTPPort            rtcconfig.PortRange `yaml:"rtp_port"`
-	Logging            logger.Config       `yaml:"logging"`
-	Gst                GstConfig           `yaml:"gst"`
-	ClusterID          string              `yaml:"cluster_id"` // cluster this instance belongs to
-	MaxCpuUtilization  float64             `yaml:"max_cpu_utilization"`
+	HealthPort           int                 `yaml:"health_port"`
+	PrometheusPort       int                 `yaml:"prometheus_port"`
+	PProfPort            int                 `yaml:"pprof_port"`
+	SIPPort              int                 `yaml:"sip_port"`        // announced SIP signaling port
+	SIPPortListen        int                 `yaml:"sip_port_listen"` // SIP signaling port to listen on
+	SIPHostname          string              `yaml:"sip_hostname"`
+	OutboundRouteHeaders []string            `yaml:"outbound_route_headers"` // Route headers prepended to outbound requests, e.g. "<sip:proxy:5060;transport=tcp;lr>"
+	SIPRingingInterval   time.Duration       `yaml:"sip_ringing_interval"`   // from 1 sec up to 60 (default '1s')
+	TCP                  *TCPConfig          `yaml:"tcp"`
+	TLS                  *TLSConfig          `yaml:"tls"`
+	RTPPort              rtcconfig.PortRange `yaml:"rtp_port"`
+	Logging              logger.Config       `yaml:"logging"`
+	Gst                  GstConfig           `yaml:"gst"`
+	ClusterID            string              `yaml:"cluster_id"` // cluster this instance belongs to
+	MaxCpuUtilization    float64             `yaml:"max_cpu_utilization"`
+	MaxActiveCalls       int                 `yaml:"max_active_calls"` // if set, used for affinity-based routing
+	SIPTrunkIds          []string            `yaml:"sip_trunk_ids"`    // if set, only accept calls for these trunk IDs
 
 	UseExternalIP bool   `yaml:"use_external_ip"`
 	LocalNet      string `yaml:"local_net"` // local IP net to use, e.g. 192.168.0.0/24
 	NAT1To1IP     string `yaml:"nat_1_to_1_ip"`
 	ListenIP      string `yaml:"listen_ip"`
 
+	UDPMaxPayload int `yaml:"udp_max_payload"`
 	// if different from signaling IP
 	MediaUseExternalIP bool   `yaml:"media_use_external_ip"`
 	MediaNAT1To1IP     string `yaml:"media_nat_1_to_1_ip"`
 
-	MediaTimeout        time.Duration      `yaml:"media_timeout"`
-	MediaTimeoutInitial time.Duration      `yaml:"media_timeout_initial"`
-	Codecs              map[string]bool    `yaml:"codecs"`
-	PublishCodecs       PublishCodecConfig `yaml:"publish_codecs"`
+	MediaTimeout         time.Duration      `yaml:"media_timeout"`
+	MediaTimeoutInitial  time.Duration      `yaml:"media_timeout_initial"`
+	SymmetricRTP         bool               `yaml:"symmetric_rtp"`
+	IgnoreLocalAddrInSDP bool               `yaml:"ignore_local_addr_in_sdp"` // enable symmetric RTP if local IP is specified in SDP
+	Codecs               map[string]bool    `yaml:"codecs"`
+	PublishCodecs        PublishCodecConfig `yaml:"publish_codecs"`
 
 	// HideInboundPort controls how SIP endpoint responds to unverified inbound requests.
 	// Setting it to true makes SIP server silently drop INVITE requests if it gets a negative Auth or Dispatch response.
 	// Doing so hides our SIP endpoint from (a low effort) port scanners.
 	HideInboundPort bool `yaml:"hide_inbound_port"`
+	// DisableRejectedInviteCache turns off the per-server cache that replays
+	// a final INVITE rejection (keyed by Call-ID + From-tag) for retries
+	// reusing the same identifiers.
+	DisableRejectedInviteCache bool `yaml:"disable_rejected_invite_cache"`
 	// AddRecordRoute forces SIP to add Record-Route headers to the responses.
 	AddRecordRoute bool `yaml:"add_record_route"`
 
@@ -126,6 +154,7 @@ type Config struct {
 	// internal
 	ServiceName           string      `yaml:"-"`
 	NodeID                string      // Do not provide, will be overwritten
+	JaegerURL             string      `yaml:"jaeger_url"` // for tracing
 	Video                 VideoConfig `yaml:"video"`
 	MaxActiveParticipants int         `yaml:"max_active_participants"`
 
@@ -230,7 +259,7 @@ func (c *Config) InitLogger(values ...interface{}) error {
 	return nil
 }
 
-// To use with zap logger
+// GetLoggerValues is used with zap logger
 func (c *Config) GetLoggerValues() []interface{} {
 	if c.NodeID == "" {
 		return nil
@@ -238,7 +267,7 @@ func (c *Config) GetLoggerValues() []interface{} {
 	return []interface{}{"nodeID", c.NodeID}
 }
 
-// To use with logrus
+// GetLoggerFields is used with logrus
 func (c *Config) GetLoggerFields() logrus.Fields {
 	fields := logrus.Fields{
 		"logger": c.ServiceName,
@@ -287,7 +316,7 @@ func GetLocalIP() (netip.Addr, error) {
 		}
 	}
 	if len(candidates) == 0 {
-		return netip.Addr{}, fmt.Errorf("No local IP found")
+		return netip.Addr{}, fmt.Errorf("no local IP found")
 	}
 	return candidates[0].Addr, nil
 }

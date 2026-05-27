@@ -26,6 +26,7 @@ import (
 
 	"github.com/frostbyte73/core"
 	msdk "github.com/livekit/media-sdk"
+	"github.com/livekit/psrpc/pkg/middleware/otelpsrpc"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/livekit/protocol/livekit"
@@ -168,7 +169,9 @@ func (s *Service) Run() error {
 	}
 
 	var err error
-	if s.rpcSIPServer, err = rpc.NewSIPInternalServer(s.psrpcServer, s.bus); err != nil {
+	if s.rpcSIPServer, err = rpc.NewSIPInternalServer(s.psrpcServer, s.bus,
+		otelpsrpc.ServerOptions(otelpsrpc.Config{}),
+	); err != nil {
 		return err
 	}
 	defer s.rpcSIPServer.Shutdown()
@@ -179,35 +182,31 @@ func (s *Service) Run() error {
 
 	s.log.Debugw("service ready")
 
-	for { // nolint: gosimple
-		select {
-		case <-s.shutdown.Watch():
-			s.log.Infow("shutting down")
-			s.DeregisterCreateSIPParticipantTopic()
+	<-s.shutdown.Watch()
+	s.log.Infow("shutting down")
+	s.DeregisterCreateSIPParticipantTopic()
 
-			if !s.killed.Load() {
-				shutdownTicker := time.NewTicker(5 * time.Second)
-				defer shutdownTicker.Stop()
+	if !s.killed.Load() {
+		shutdownTicker := time.NewTicker(5 * time.Second)
+		defer shutdownTicker.Stop()
 
-				for !s.killed.Load() {
-					st := s.sipServiceActiveCalls()
-					if st.Total() == 0 {
-						break
-					}
-					slices.Sort(st.SampleIDs)
-					s.log.Infow("waiting for calls to finish",
-						"inbound", st.Inbound,
-						"outbound", st.Outbound,
-						"sample", st.SampleIDs,
-					)
-					<-shutdownTicker.C
-				}
+		for !s.killed.Load() {
+			st := s.sipServiceActiveCalls()
+			if st.Total() == 0 {
+				break
 			}
-
-			s.sipServiceStop()
-			return nil
+			slices.Sort(st.SampleIDs)
+			s.log.Infow("waiting for calls to finish",
+				"inbound", st.Inbound,
+				"outbound", st.Outbound,
+				"sample", st.SampleIDs,
+			)
+			<-shutdownTicker.C
 		}
 	}
+
+	s.sipServiceStop()
+	return nil
 }
 
 func (s *Service) GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (sip.AuthInfo, error) {
@@ -218,7 +217,7 @@ func (s *Service) DispatchCall(ctx context.Context, info *sip.CallInfo) sip.Call
 	return DispatchCall(ctx, s.psrpcClient, s.log, info)
 }
 
-func (s *Service) GetMediaProcessor(_ []livekit.SIPFeature) msdk.PCM16Processor {
+func (s *Service) GetMediaProcessor(_ []livekit.SIPFeature, _ map[string]string, _ string, _ sip.MediaProcessorOpts) msdk.PCM16Processor {
 	return nil
 }
 
@@ -252,6 +251,10 @@ func (s *Service) DeregisterTransferSIPParticipantTopic(sipCallId string) {
 	if s.rpcSIPServer != nil {
 		s.rpcSIPServer.DeregisterTransferSIPParticipantTopic(sipCallId)
 	}
+}
+
+func (s *Service) OnInboundInfo(log logger.Logger, callInfo *rpc.SIPCall, headers sip.Headers) {
+
 }
 
 func (s *Service) OnSessionEnd(ctx context.Context, callIdentifier *sip.CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {

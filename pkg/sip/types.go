@@ -166,9 +166,6 @@ func (u URI) GetURI() *sip.Uri {
 		su.Port = int(port)
 	}
 	if u.Transport != "" {
-		if su.UriParams == nil {
-			su.UriParams = make(sip.HeaderParams)
-		}
 		su.UriParams.Add("transport", string(u.Transport))
 	}
 	return su
@@ -203,52 +200,24 @@ func (u URI) ToSIPUri() *livekit.SIPUri {
 type LocalTag string
 type RemoteTag string
 
-func getFromTag(r *sip.Request) (RemoteTag, error) {
-	from := r.From()
-	if from == nil {
-		return "", errors.New("no From on Request")
-	}
-	tag, ok := getTagFrom(from.Params)
-	if !ok {
-		return "", errors.New("no tag in From on Request")
-	}
-	return tag, nil
-}
-
-func getToTag(r *sip.Response) (RemoteTag, error) {
+func GetLocalTagUAS(r *sip.Request) (LocalTag, error) {
 	to := r.To()
 	if to == nil {
-		return "", errors.New("no To on Response")
+		return "", errors.New("no To on Request")
 	}
 	tag, ok := getTagFrom(to.Params)
 	if !ok {
-		return "", errors.New("no tag in To on Response")
+		return "", errors.New("no tag in To on Request")
 	}
-	return tag, nil
+	return LocalTag(tag), nil
 }
 
 func getTagFrom(params sip.HeaderParams) (RemoteTag, bool) {
-	tag, ok := params["tag"]
+	tag, ok := params.Get("tag")
 	if !ok {
 		return "", false
 	}
 	return RemoteTag(tag), true
-}
-
-func LoggerWithParams(log logger.Logger, c Signaling) logger.Logger {
-	if a := c.From(); a.Host != "" {
-		log = log.WithValues("fromHost", a.Host, "fromUser", a.User)
-	}
-	if a := c.To(); a.Host != "" {
-		log = log.WithValues("toHost", a.Host, "toUser", a.User)
-	}
-	if tag := c.Tag(); tag != "" {
-		log = log.WithValues("sipTag", tag)
-	}
-	if cid := c.SIPCallID(); cid != "" {
-		log = log.WithValues("sipCallID", cid)
-	}
-	return log
 }
 
 func LoggerWithHeaders(log logger.Logger, c Signaling) logger.Logger {
@@ -328,8 +297,8 @@ func AttrsToHeaders(attrs, attrToHdr, headers map[string]string) map[string]stri
 	return headers
 }
 
-func sdpEncryption(e livekit.SIPMediaEncryption) (sdp.Encryption, error) {
-	switch e {
+func sdpEncryption(e *livekit.SIPMediaEncryption) (sdp.Encryption, error) {
+	switch e.Deref() {
 	case livekit.SIPMediaEncryption_SIP_MEDIA_ENCRYPT_DISABLE:
 		return sdp.EncryptionNone, nil
 	case livekit.SIPMediaEncryption_SIP_MEDIA_ENCRYPT_ALLOW:
