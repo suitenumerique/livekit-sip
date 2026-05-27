@@ -2025,10 +2025,12 @@ func (c *sipInbound) sendReInvite(ctx context.Context, offerSDP []byte) (*sip.Re
 	c.setCSeq(req)
 	c.swapSrcDst(req)
 
-	// REVIEW: v2's sendReInvite applied dynamic attribute->header mapping via a
-	// sipInbound.setHeaders callback. main's sipInbound has no such field (it maps
-	// attrs->headers on the inboundCall side). Dynamic headers are omitted on the
-	// re-INVITE here; wire main's header mechanism if they are required.
+	// Apply dynamic attribute->header mapping (the equivalent of v2's setHeaders callback).
+	// main maps room/orchestrator attributes to SIP headers via sipInbound.fillHeaders, the
+	// same mechanism used by sendBye/sendStatus.
+	for k, v := range c.fillHeaders(nil) {
+		req.AppendHeader(sip.NewHeader(k, v))
+	}
 
 	tx, err := c.Transaction(req)
 	if err != nil {
