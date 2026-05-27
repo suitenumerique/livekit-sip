@@ -545,7 +545,7 @@ func (s *Server) onAck(log *slog.Logger, req *sip.Request, tx sip.ServerTransact
 		return
 	}
 	c.log().Infow("ACK from remote")
-	c.cc.AcceptAck(req, tx)
+	c.AcceptAck(req, tx)
 }
 
 func (s *Server) onBye(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
@@ -1498,6 +1498,21 @@ func (c *inboundCall) transferCall(ctx context.Context, transferTo string, heade
 
 	return nil
 
+}
+
+// AcceptAck handles an incoming ACK for this call. It forwards the ACK's SDP to the
+// media orchestrator (sipbin) BEFORE breaking the ACK fuse, because the orchestrator
+// needs every ACK for the dialog (e.g. a re-INVITE's ACK carrying a renegotiated
+// answer), not just the first one. The fuse (c.cc.AcceptAck) is idempotent, so calling
+// it on every ACK is safe.
+func (c *inboundCall) AcceptAck(req *sip.Request, tx sip.ServerTransaction) {
+	if c.medias != nil {
+		c.log().Debugw("Forwarding ACK SDP to media orchestrator")
+		if err := c.medias.AckSDP(req, tx); err != nil {
+			c.log().Errorw("failed to forward ACK SDP", err)
+		}
+	}
+	c.cc.AcceptAck(req, tx)
 }
 
 func (s *Server) newInbound(invite *sip.Request, inviteTx sip.ServerTransaction, src netip.AddrPort) (*sipInbound, error) {
