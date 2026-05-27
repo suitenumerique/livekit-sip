@@ -374,7 +374,24 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	s.cmu.RUnlock()
 	if existing != nil && existing.cc.InviteCSeq() < cc.InviteCSeq() {
 		existing.log().Infow("reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
-		cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+		// v2: forward the re-INVITE offer to the existing call's media orchestrator so it can
+		// renegotiate (e.g. screenshare/video upgrade). The new answer is stored on the existing
+		// dialog and returned in the 200 OK on this (re-INVITE) transaction. A re-INVITE with no
+		// body, no orchestrator, or a renegotiation failure falls back to a keep-alive with the
+		// previously negotiated SDP (main's audio-only behaviour).
+		offerData := req.Body()
+		if existing.medias != nil && len(offerData) > 0 {
+			answerData, err := existing.medias.AnswerSDP(offerData)
+			if err != nil {
+				existing.log().Errorw("Cannot create SDP answer for re-INVITE", err)
+				cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+			} else {
+				existing.cc.SetOwnSDP(answerData)
+				cc.AcceptAsKeepAlive(answerData)
+			}
+		} else {
+			cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+		}
 		return nil
 	}
 	if s.cli != nil { // Process reinvite for existing outbound calls
@@ -1833,6 +1850,12 @@ func (c *sipInbound) OwnSDP() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lastSDP
+}
+
+func (c *sipInbound) SetOwnSDP(sdp []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastSDP = sdp
 }
 
 func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[string]string) error {
