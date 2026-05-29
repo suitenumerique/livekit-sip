@@ -174,6 +174,17 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 		offerCaps[i] = e.normalizeEncodingName(self, kind, offerCaps[i])
 	}
 
+	// Map each offered payload type to its caps for the receive path.
+	for _, caps := range offerCaps {
+		for i := range caps.GetSize() {
+			pt, err := caps.GetStructureAt(i).GetInt("payload")
+			if err != nil || pt < 0 || pt > 127 {
+				continue
+			}
+			e.PtMap[kind][uint8(pt)] = caps.Copy()
+		}
+	}
+
 	if ret := gstsdp.MediaSetFromCaps(offerCaps[0], media); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to set media from caps: %v", ret)
 	}

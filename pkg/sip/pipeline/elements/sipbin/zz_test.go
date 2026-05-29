@@ -2158,6 +2158,106 @@ func TestRequestPad_ScreenShare(t *testing.T) {
 	f.close()
 }
 
+// TestMediaFlow_LateOffer_AsymmetricVideoPT checks inbound video flows when the
+// remote sends on the gateway's offered PT while the answer advertises a different PT.
+func TestMediaFlow_LateOffer_AsymmetricVideoPT(t *testing.T) {
+	f := newFixture(t, []*gst.Caps{pcmuCaps(), h264Caps()})
+
+	// Delayed offer: the gateway becomes the offerer and assigns the receive PTs.
+	offer := f.emitOffer(t, "")
+	if offer == "" {
+		t.Fatal("expected non-empty offer from late offer path")
+	}
+	msg := parseAnswer(t, offer)
+
+	// Locate the gateway's main-video m-line: the port it listens on and the H264
+	// payload type it offered (the PT the remote will send back on).
+	var videoPort uint
+	offeredVideoPT := -1
+	for _, m := range msg.Medias() {
+		if m.GetMedia() != "video" || m.GetAttributeVal("content") == "slides" {
+			continue
+		}
+		videoPort = m.GetPort()
+		for _, fmtStr := range m.Formats() {
+			pt, err := strconv.Atoi(fmtStr)
+			if err != nil {
+				continue
+			}
+			caps, err := m.GetCaps(pt)
+			if err != nil || caps.GetSize() == 0 {
+				continue
+			}
+			if enc, _ := caps.GetStructureAt(0).GetString("encoding-name"); strings.EqualFold(enc, "H264") {
+				offeredVideoPT = pt
+				break
+			}
+		}
+		break
+	}
+	if videoPort == 0 || offeredVideoPT < 0 {
+		t.Fatalf("could not find offered video port/PT in offer:\n%s", offer)
+	}
+
+	// Answer advertises a different video PT (126) than the gateway offered.
+	answer := makeSDP("127.0.0.1",
+		"m=audio 6000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000",
+		"m=video 6002 RTP/AVP 126\r\na=rtpmap:126 H264/90000\r\na=content:main",
+		"m=video 0 RTP/AVP 126\r\na=rtpmap:126 H264/90000\r\na=content:slides",
+		"m=application 0 UDP/BFCP *",
+	)
+	f.emitAckWithSDP(t, answer)
+
+	// Fakesink on the CAMERA receive path.
+	videoSink, err := gst.NewElementWithProperties("fakesink", map[string]any{"sync": false, "async": false})
+	if err != nil {
+		t.Fatal("failed to create fakesink:", err)
+	}
+	if err := f.pipeline.Add(videoSink); err != nil {
+		t.Fatal("failed to add fakesink:", err)
+	}
+	videoCount := addBufferProbe(t, videoSink)
+
+	videoPrefix := fmt.Sprintf("recv_rtp_src_%d_", livekit.TrackSource_CAMERA)
+	wvideoSink := glib.WeakRefInit(videoSink)
+	f.sipbin.Connect("pad-added", func(_ *gst.Element, pad *gst.Pad) {
+		if !strings.HasPrefix(pad.GetName(), videoPrefix) {
+			return
+		}
+		s := gst.ToElement(wvideoSink.Get())
+		if s == nil {
+			return
+		}
+		if !s.SyncStateWithParent() {
+			t.Logf("warning: failed to sync video fakesink state")
+		}
+		if ret := pad.Link(s.GetStaticPad("sink")); ret != gst.PadLinkOK {
+			t.Logf("warning: failed to link video src pad: %v", ret)
+		}
+	})
+
+	// Remote sends H264 to the gateway's listening port using the OFFERED PT.
+	newH264RTPSourceToUDP(t, f.pipeline, "127.0.0.1", videoPort, offeredVideoPT)
+
+	if err := f.pipeline.SetState(gst.StatePlaying); err != nil {
+		t.Fatal("failed to set pipeline to PLAYING:", err)
+	}
+
+	time.Sleep(4 * time.Second)
+	dumpDot(t, f.pipeline, "late_offer_asymmetric_video_pt")
+
+	if err := f.pipeline.SetState(gst.StateNull); err != nil {
+		t.Fatal("failed to set pipeline to NULL:", err)
+	}
+
+	if vc := videoCount.Load(); vc <= 0 {
+		t.Fatalf("no video buffers received on CAMERA recv path: inbound RTP on the gateway's offered PT %d was dropped (PtMap missing the offered receive PT)", offeredVideoPT)
+	}
+
+	f.pipeline = nil
+	f.sipbin = nil
+}
+
 // --- Media Flow Helpers ---
 
 func addBufferProbe(t *testing.T, element *gst.Element) *atomic.Int32 {
