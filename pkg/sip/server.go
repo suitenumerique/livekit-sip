@@ -334,6 +334,7 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	s.sipSrv.OnOptions(s.onOptions)
 	s.sipSrv.OnInvite(s.onInvite)
 	s.sipSrv.OnAck(s.onAck)
+	s.sipSrv.OnUpdate(s.onUpdate)
 	s.sipSrv.OnBye(s.onBye)
 	s.sipSrv.OnNotify(s.onNotify)
 	s.sipSrv.OnNoRoute(s.OnNoRoute)
