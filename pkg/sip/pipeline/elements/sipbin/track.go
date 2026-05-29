@@ -97,10 +97,9 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 	rtpSink, err := gst.NewElementWithProperties("udpsink", map[string]interface{}{
 		"socket":       grtpSocket,
 		"close-socket": false,
-		// "clients":      "",
-		"async": false,
-		"sync":  false,
-		"qos":   false,
+		"async":        false,
+		"sync":         false,
+		"qos":          false,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RTP sink element: %w", err)
@@ -109,10 +108,9 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 	rtcpSink, err := gst.NewElementWithProperties("udpsink", map[string]interface{}{
 		"socket":       grtcpSocket,
 		"close-socket": false,
-		// "clients":      "",
-		"async": false,
-		"sync":  false,
-		"qos":   false,
+		"async":        false,
+		"sync":         false,
+		"qos":          false,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RTCP sink element: %w", err)
@@ -125,6 +123,14 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 
 	if err := self.AddMany(rtpSrc, rtcpSrc, rtpSink, rtcpSink, rtpFilter); err != nil {
 		return nil, fmt.Errorf("failed to add track elements to bin: %w", err)
+	}
+
+	// Lock the udpsinks so the pipeline's state changes skip them until Init()
+	// sets the remote host/port and unlocks them.
+	for _, sink := range [](*gst.Element){rtpSink, rtcpSink} {
+		if err := sink.SetLockedState(true); err != nil {
+			return nil, fmt.Errorf("failed to lock sink element state: %w", err)
+		}
 	}
 
 	return &SipTrack{
@@ -228,6 +234,14 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	}
 	if ret := sendRtcpSrc.Link(t.RtcpSink.GetStaticPad("sink")); ret != gst.PadLinkOK {
 		return fmt.Errorf("failed to link RTCP source to RTCP sink: %v", ret)
+	}
+
+	// Unlock the udpsinks locked in NewTrack so SyncStateWithParent below
+	// brings them up to the pipeline's state.
+	for _, sink := range [](*gst.Element){t.RtpSink, t.RtcpSink} {
+		if err := sink.SetLockedState(false); err != nil {
+			return fmt.Errorf("failed to unlock sink element %s: %w", sink.GetName(), err)
+		}
 	}
 
 	var errs []error

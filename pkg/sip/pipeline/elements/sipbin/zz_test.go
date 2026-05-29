@@ -2719,6 +2719,97 @@ func TestMediaFlow_FullDuplex(t *testing.T) {
 // Late offer: INVITE with no SDP body → sipbin generates the offer (200 OK),
 // remote sends answer in ACK.
 
+// sipbinUDPSinks returns the udpsink child elements of the sipbin — the per-track
+// RTP/RTCP sinks created in NewTrack.
+func sipbinUDPSinks(t *testing.T, sipbin *gst.Element) []*gst.Element {
+	t.Helper()
+	bin := gst.ToGstBin(sipbin)
+	if bin == nil {
+		t.Fatal("sipbin element is not a bin")
+	}
+	elems, err := bin.GetElements()
+	if err != nil {
+		t.Fatalf("failed to get sipbin child elements: %v", err)
+	}
+	var sinks []*gst.Element
+	for _, e := range elems {
+		if strings.HasPrefix(e.GetName(), "udpsink") {
+			sinks = append(sinks, e)
+		}
+	}
+	return sinks
+}
+
+// TestLateOffer_ReachesPlaying guards the delayed-offer (no-SDP) media path: the
+// pipeline must reach PLAYING even though no answer — and therefore no remote RTP
+// destination — is known yet. The per-track udpsinks are locked in NewTrack so the
+// state change skips them; once the answer arrives, Init() sets the real remote
+// host/port, unlocks, and brings them up. Regression test for the
+// "gst_multiudpsink_configure_client: Invalid address family (got 10)" failure.
+func TestLateOffer_ReachesPlaying(t *testing.T) {
+	f := newFixture(t, []*gst.Caps{pcmuCaps(), h264Caps()})
+
+	// Empty offer drives buildOfferSdp; no answer/remote known yet.
+	offer := f.emitOffer(t, "")
+	if offer == "" {
+		t.Fatal("expected non-empty offer from late offer path")
+	}
+	if msg := parseAnswer(t, offer); msg.MediasLen() != 4 {
+		t.Fatalf("expected 4 medias in late offer, got %d", msg.MediasLen())
+	}
+
+	// The pipeline must reach PLAYING without the udpsinks failing the state
+	// change on their default (IPv6-resolving) destination.
+	if err := f.pipeline.SetState(gst.StatePlaying); err != nil {
+		t.Fatalf("failed to set pipeline to PLAYING on late-offer path: %v", err)
+	}
+	if cr, s := f.pipeline.GetState(gst.StatePlaying, gst.ClockTime(5*time.Second)); cr != gst.StateChangeSuccess || s != gst.StatePlaying {
+		t.Fatalf("pipeline did not reach PLAYING: ret=%s state=%s", cr.String(), s.String())
+	}
+
+	// Before any answer the sinks are deferred (locked) at NULL.
+	sinks := sipbinUDPSinks(t, f.sipbin)
+	if len(sinks) != 6 {
+		t.Fatalf("expected 6 udpsinks (3 tracks x RTP+RTCP), got %d", len(sinks))
+	}
+	for _, sink := range sinks {
+		if st := sink.GetCurrentState(); st != gst.StateNull {
+			t.Errorf("udpsink %s should be deferred at NULL before answer, got %s", sink.GetName(), st.String())
+		}
+	}
+
+	// Answer accepts all media with a real IPv4 remote (192.168.1.1).
+	answer := makeSDP("192.168.1.1",
+		"m=audio 6000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000",
+		"m=video 6002 RTP/AVP 120\r\na=rtpmap:120 H264/90000\r\na=content:main",
+		"m=video 6004 RTP/AVP 121\r\na=rtpmap:121 H264/90000\r\na=content:slides",
+		"m=application 6006 UDP/BFCP *\r\na=floorctrl:c-s\r\na=confid:1\r\na=userid:2\r\na=bfcpver:1",
+	)
+	f.emitAckWithSDP(t, answer)
+
+	// Let the state changes triggered by Init() settle.
+	if cr, s := f.pipeline.GetState(gst.StatePlaying, gst.ClockTime(5*time.Second)); cr != gst.StateChangeSuccess || s != gst.StatePlaying {
+		t.Fatalf("pipeline not PLAYING after answer: ret=%s state=%s", cr.String(), s.String())
+	}
+
+	// Once the answer is applied, every sink targets the real IPv4 remote and is live.
+	for _, sink := range sipbinUDPSinks(t, f.sipbin) {
+		hostVal, err := sink.GetProperty("host")
+		if err != nil {
+			t.Fatalf("failed to read host of %s: %v", sink.GetName(), err)
+		}
+		if host, _ := hostVal.(string); host != "192.168.1.1" {
+			t.Errorf("udpsink %s host = %q, want 192.168.1.1 (answer remote)", sink.GetName(), host)
+		}
+		if st := sink.GetCurrentState(); st != gst.StatePlaying {
+			t.Errorf("udpsink %s should be PLAYING after answer, got %s", sink.GetName(), st.String())
+		}
+	}
+
+	dumpDot(t, f.pipeline, "late_offer_reaches_playing")
+	f.close()
+}
+
 func TestLateOffer_Basic(t *testing.T) {
 	defer testutils.AssertNoLeaks(t)
 
