@@ -9,3 +9,5 @@ test/*/*.mkv
 *_test.dot
 *.bak
 testdata/
+
+build/sip/*.deb

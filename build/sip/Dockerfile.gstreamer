@@ -1,0 +1,161 @@
+# Build GStreamer self-contained under /opt/gst-1.28 and package it as a .deb.
+#
+# Usage (with BuildKit, which is the default on modern Docker):
+#
+#   docker buildx build \
+#       --build-arg GSTREAMER_VERSION=1.28.3 \
+#       --target export \
+#       --output type=local,dest=./out \
+#       -f build/sip/Dockerfile.gstreamer .
+#
+# Result: ./out/gstreamer-1.28-opt_<version>-1_amd64.deb
+#
+# This deb is consumed by build/sip/Dockerfile via the `gst` build context;
+# it is also what DevOps installs on the VM (provides /opt/gst-1.28). Bumping
+# versions: change the default below OR pass --build-arg. The same value is
+# used for both the gstreamer monorepo tag and the gst-plugins-rs tag (they
+# release in lockstep).
+
+ARG GSTREAMER_VERSION=1.28.3
+ARG DEB_REVISION=1
+
+FROM ubuntu:24.04 AS builder
+
+ARG GSTREAMER_VERSION
+ARG DEB_REVISION
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# Phase 1 + 2 + 4 — build tools and -dev libs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ninja-build \
+        pkg-config \
+        flex \
+        bison \
+        python3 \
+        python3-pip \
+        python3-setuptools \
+        git \
+        ca-certificates \
+        rsync \
+        patchelf \
+        ruby \
+        ruby-dev \
+        curl \
+        nasm \
+        libaom-dev \
+        libdav1d-dev \
+        libudev-dev \
+        libspandsp-dev \
+        libssl-dev \
+        libunwind-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Newer meson than apt ships on 24.04 (1.3.2 is too old; we need >= 1.4).
+RUN pip3 install --break-system-packages 'meson>=1.11,<2.0'
+
+# fpm for the final .deb. Pinned to a known-good major.
+RUN gem install --no-document fpm -v '~> 1.15'
+
+# Rust toolchain + cargo-c for the sidecar plugins (fallbackswitch, dav1ddec).
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal \
+    && cargo install cargo-c --locked
+
+# Phase 3 — source. Shallow clones at the tag to save bandwidth.
+RUN git clone --depth 1 --branch ${GSTREAMER_VERSION} \
+        https://gitlab.freedesktop.org/gstreamer/gstreamer.git /build/gstreamer \
+    && cd /build/gstreamer \
+    && git submodule update --init --recursive --depth 1
+
+RUN git clone --depth 1 --branch gstreamer-${GSTREAMER_VERSION} \
+        https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs.git /build/gst-plugins-rs
+
+# Phase 4/5 — meson configure. buildtype=release (deb is for production);
+# flip to debugoptimized for a symbolized rebuild.
+WORKDIR /build/gstreamer
+RUN meson setup builddir \
+        --prefix=/opt/gst-1.28 \
+        --libdir=lib \
+        --sysconfdir=/opt/gst-1.28/etc \
+        --localstatedir=/opt/gst-1.28/var \
+        --buildtype=release \
+        -Dgpl=enabled \
+        -Dexamples=disabled \
+        -Dtests=disabled \
+        -Dgst-examples=disabled \
+        -Ddoc=disabled \
+        -Dintrospection=disabled \
+        -Dpython=disabled \
+        -Dges=disabled \
+        -Dsharp=disabled \
+        -Drs=disabled \
+        -Ddevtools=disabled \
+        -Drtsp_server=disabled \
+        -Dglib:sysprof=disabled \
+        -Dpackage-origin=https://vopenia.io/livekit-sip
+
+# Phase 6 — build + DESTDIR install into /staging.
+RUN ninja -C builddir
+RUN DESTDIR=/staging ninja -C builddir install
+
+# Phase 7 — Rust sidecar. cargo-c needs to find gstreamer's .pc files; the
+# simplest robust path is to mirror /staging into /opt so the prefix paths
+# baked into the .pc files resolve correctly during the rust build.
+RUN rsync -a /staging/opt/gst-1.28/ /opt/gst-1.28/
+
+WORKDIR /build/gst-plugins-rs
+RUN PKG_CONFIG_PATH=/opt/gst-1.28/lib/pkgconfig \
+    cargo cinstall --release \
+        --prefix=/opt/gst-1.28 \
+        --libdir=/opt/gst-1.28/lib \
+        --destdir=/staging \
+        -p gst-plugin-fallbackswitch \
+        -p gst-plugin-dav1d
+
+# Phase 6.5 — patchelf RPATH on the whole staging tree so binaries find
+# /opt/gst-1.28/lib at runtime instead of the system 1.24.
+RUN find /staging/opt/gst-1.28/bin /staging/opt/gst-1.28/libexec \
+        -type f -executable \
+        -exec patchelf --set-rpath /opt/gst-1.28/lib '{}' \; 2>/dev/null || true \
+    && find /staging/opt/gst-1.28/lib -name '*.so*' -type f \
+        -exec patchelf --set-rpath /opt/gst-1.28/lib '{}' \;
+
+# Sanity check: at least one binary and one .so must carry RUNPATH.
+RUN readelf -d /staging/opt/gst-1.28/bin/gst-inspect-1.0 \
+        | grep -E "RUNPATH.*\[/opt/gst-1\.28/lib\]" \
+    && readelf -d /staging/opt/gst-1.28/lib/libgstreamer-1.0.so.0 \
+        | grep -E "RUNPATH.*\[/opt/gst-1\.28/lib\]"
+
+# Phase 9 — package.
+WORKDIR /staging
+RUN mkdir -p /out && fpm -s dir -t deb \
+        -n gstreamer-1.28-opt \
+        -v "${GSTREAMER_VERSION}-${DEB_REVISION}" \
+        --architecture amd64 \
+        --license LGPL-2.1 \
+        --maintainer "bsenard@vopenia.io" \
+        --description "GStreamer ${GSTREAMER_VERSION} + selected Rust plugins, installed under /opt/gst-1.28 for the LiveKit SIP gateway." \
+        --url "https://gstreamer.freedesktop.org" \
+        --depends libaom3 --depends libc6 --depends libcap2 \
+        --depends libdav1d7 --depends libdeflate0 --depends libgcc-s1 \
+        --depends libjbig0 --depends libjpeg-turbo8 --depends liblerc4 \
+        --depends liblzma5 --depends libogg0 --depends libopus0 \
+        --depends libsharpyuv0 --depends libspandsp2t64 --depends libssl3t64 \
+        --depends libstdc++6 --depends libtiff6 --depends libudev1 \
+        --depends libunwind8 --depends libwebp7 --depends libwebpmux3 \
+        --depends libzstd1 --depends zlib1g \
+        --deb-no-default-config-files \
+        --package /out/ \
+        -C /staging \
+        opt
+
+# Final stage: bare image holding only the .deb. Allows
+# --output type=local,dest=./out to extract it cleanly.
+FROM scratch AS export
+COPY --from=builder /out/*.deb /

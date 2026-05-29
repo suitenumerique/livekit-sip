@@ -29,16 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/go/bin
-            ~/bin/protoc
-            ~/.cache
-          key: ${{ runner.os }}-sip-${{ hashFiles('**/go.sum') }}
-          restore-keys: ${{ runner.os }}-sip
-
       - name: Docker metadata
         id: docker-md
         uses: docker/metadata-action@v5
@@ -51,19 +41,18 @@ jobs:
             type=ref,event=branch
             type=sha
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25"
-
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Build GStreamer 1.28.3 deb
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./build/sip/Dockerfile.gstreamer
+          target: export
+          outputs: type=local,dest=./gstout
+          cache-from: type=gha,scope=gstreamer-1.28
+          cache-to: type=gha,mode=max,scope=gstreamer-1.28
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -71,12 +60,16 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USER }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
-      - name: Build and push
+      - name: Build and push livekit-sip
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./build/sip/Dockerfile
+          build-contexts: |
+            gst=./gstout
           push: true
           platforms: linux/amd64
           tags: ${{ steps.docker-md.outputs.tags }}
           labels: ${{ steps.docker-md.outputs.labels }}
+          cache-from: type=gha,scope=livekit-sip
+          cache-to: type=gha,mode=max,scope=livekit-sip
