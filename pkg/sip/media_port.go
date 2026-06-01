@@ -328,7 +328,7 @@ type MediaOptions struct {
 	IgnorePreanswerData  bool
 	LogSignalChanges     bool
 
-	// v2 media orchestrator / gstreamer pipeline options
+	// Media orchestrator / GStreamer pipeline options
 	IPLocal               netip.Addr // Local IP for binding (may differ from IP which is advertised in SDP)
 	VideoWidth            uint
 	VideoHeight           uint

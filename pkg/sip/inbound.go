@@ -700,7 +700,7 @@ type inboundCall struct {
 	closeReason atomic.Pointer[ReasonHeader]
 	call        *rpc.SIPCall
 	mmu         sync.Mutex
-	medias      *MediaOrchestrator // v2 GStreamer media+room orchestrator (replaces MediaPort+Room for inbound)
+	medias      *MediaOrchestrator // GStreamer media+room orchestrator
 	dtmf        chan dtmf.Event    // buffered
 	callDur     func() time.Duration
 	joinDur     func() time.Duration
@@ -740,8 +740,6 @@ func (s *Server) newInboundCall(
 		projectID:  "", // Will be set in handleInvite when available
 	}
 	c.setLog(log.WithValues("jitterBuf", c.jitterBuf))
-	// v2: the MediaOrchestrator (c.medias) is created in runMediaConn once we have the offer;
-	// it owns the audio mixer / room, so no early room creation is needed here.
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	s.cmu.Lock()
 	s.byLocalTag[cc.ID()] = c
@@ -953,8 +951,6 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			// Start this timer right after the Accept.
 			ackTimeout = time.After(inviteOkAckLateTimeout)
 		}
-		// v2: the orchestrator manages RTP in/out and timeouts internally; no MediaPort
-		// enable/timeout toggling is needed here.
 		if ok, err := c.waitMedia(ctx); !ok {
 			return false, err
 		}
@@ -1007,9 +1003,6 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	if err := c.joinRoom(ctx, disp.Room, status); err != nil {
 		return errors.Wrap(err, "failed joining room")
 	}
-	// v2: joinRoom -> c.medias.Connect() already published the SIP participant's track and
-	// (depending on pipeline state) subscribes to room tracks via livekitbin. No explicit
-	// publishTrack()/Subscribe() is needed.
 	if !pinPrompt {
 		c.log().Infow("Waiting for track subscription(s)")
 		// For dispatches without pin, we first wait for LK participant to become available,
@@ -1062,11 +1055,8 @@ func (c *inboundCall) waitForCallEnd(ctx context.Context, ackReceived <-chan str
 			c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 				info.DisconnectReason = livekit.DisconnectReason_CLIENT_INITIATED
 			})
-			// REVIEW: the orchestrator does not expose a room-disconnect reason like the old
-			// Room did; using a generic client-error termination here.
 			c.close(ctx, callDropped, stats.ClientError("room-disconnected"))
 			return nil
-		// v2: no MediaPort media-timeout; the orchestrator relies on SIP session-expiration instead.
 		case <-ackReceived:
 			ackTimeout = nil // all good, disable timeout
 			ackReceived = nil
@@ -1083,11 +1073,6 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, mconf *sipM
 	c.mon.SDPSize(len(offerData), true)
 	c.log().Debugw("SDP offer", "sdp", string(offerData))
 
-	// v2: the GStreamer MediaOrchestrator replaces MediaPort. It owns media + room and
-	// negotiates the SIP side via sipbin (which produces the SDP answer for this offer).
-	// REVIEW: encryption (mconf.Encryption) and explicit codec/jitter/signal-logging
-	// selection (mconf.Codecs, featureFlags) are handled inside the pipeline and not yet
-	// wired here; the orchestrator path does not support SRTP yet.
 	opts := &MediaOptions{
 		IP:                    c.s.sconf.MediaIP,
 		IPLocal:               c.s.sconf.MediaIPLocal,
@@ -1148,8 +1133,6 @@ func (c *inboundCall) waitMedia(ctx context.Context) (bool, error) {
 	case <-c.medias.Closed():
 		c.closeWithHangup(ctx)
 		return false, psrpc.NewErrorf(psrpc.Canceled, "room closed")
-	// v2: the orchestrator has no MediaPort-style media-timeout / first-packet-received signal;
-	// bridge audio after a fixed max delay (REVIEW: could wait on a pipeline-ready event instead).
 	case <-delay.C:
 	}
 	return true, nil
@@ -1199,7 +1182,6 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 		case <-ctx.Done():
 			c.closeWithHangup(ctx)
 			return disp, false, nil
-		// v2: no MediaPort media-timeout during pin entry.
 		case b, ok := <-c.dtmf:
 			if !ok {
 				c.Close()
@@ -1265,8 +1247,6 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 }
 
 func (c *inboundCall) printStats(log logger.Logger, medias *MediaOrchestrator) {
-	// v2: the old c.stats (MediaPort Port/Room counters) is no longer fed by the media layer.
-	// Call statistics now come from the GStreamer orchestrator's per-stream RTP stats.
 	if medias == nil {
 		log.Warnw("call stats not available", nil)
 		return
@@ -1434,7 +1414,6 @@ func (c *inboundCall) closeMedia() {
 	c.mmu.Lock()
 	defer c.mmu.Unlock()
 	if c.medias != nil {
-		// v2: the orchestrator owns both media and the room; Close() tears down both.
 		_ = c.medias.Close()
 		c.medias = nil
 	}
@@ -1448,7 +1427,6 @@ func (c *inboundCall) setStatus(v CallStatus) {
 	if c.medias == nil {
 		return
 	}
-	// v2: participant attributes are set through the orchestrator (livekitbin owns the room).
 	if err := c.medias.SetAttributes(map[string]string{
 		livekit.AttrSIPCallStatus: attr,
 	}); err != nil {
@@ -1482,21 +1460,15 @@ func (c *inboundCall) createLiveKitParticipant(ctx context.Context, rconf RoomCo
 	}
 
 	tconn := c.mon.StageDurTimer("lk-connect")
-	// v2: the orchestrator (livekitbin) joins the room AND publishes the SIP participant's track.
-	// Order per v2: negotiate (AnswerSDP) -> Connect -> Start.
 	err = c.medias.Connect(c.s.conf, rconf)
 	tconn()
 	if err != nil {
 		return err
 	}
-	// REVIEW: main called registerSignalingRPC(c.lkRoom, c.cc) here to expose signaling RPCs
-	// (e.g. remote-header retrieval) on the LiveKit room. With the orchestrator the room is
-	// internal; if those RPCs are still needed they must be wired through the orchestrator.
 	return nil
 }
 
 func (c *inboundCall) publishTrack() error {
-	// v2: the SIP participant's track is published by c.medias.Connect() (livekitbin).
 	return nil
 }
 
@@ -1531,8 +1503,6 @@ func (c *inboundCall) playAudio(ctx context.Context, fd int) {
 
 func (c *inboundCall) handleDTMF(tone dtmf.Event) {
 	if c.forwardDTMF.Load() {
-		// REVIEW: forwarding DTMF to the room (SipDTMF data message) was done via the old Room.
-		// The orchestrator/livekitbin should forward DTMF to the room — wire this if needed.
 		return
 	}
 	// We should have enough buffer here.
@@ -1551,9 +1521,6 @@ func (c *inboundCall) transferCall(ctx context.Context, transferTo string, heade
 	}()
 
 	if dialtone && c.started.IsBroken() && !c.done.Load() {
-		// REVIEW: playing a dial-tone during transfer used the old Room/MediaPort audio path
-		// (SwapOutput + MediaPort audio writer). The orchestrator does not expose those
-		// low-level hooks; transfer dial-tone is disabled until wired through the pipeline.
 		c.log().Debugw("transfer dial-tone not supported on orchestrator media path")
 	}
 
@@ -2291,7 +2258,7 @@ func (c *sipInbound) setCSeq(req *sip.Request) {
 }
 
 // sendReInvite sends a re-INVITE with the given SDP offer and waits for the response.
-// Ported from v2; used by the MediaOrchestrator to renegotiate media (e.g. video upgrade).
+// Used by the MediaOrchestrator to renegotiate media (e.g. video upgrade).
 func (c *sipInbound) sendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
 	if c.invite == nil || c.inviteOk == nil {
 		return nil, fmt.Errorf("call not established")
@@ -2328,9 +2295,8 @@ func (c *sipInbound) sendReInvite(ctx context.Context, offerSDP []byte) (*sip.Re
 
 	c.addSessionTimerRequestHeaders(req)
 
-	// Apply dynamic attribute->header mapping (the equivalent of v2's setHeaders callback).
-	// main maps room/orchestrator attributes to SIP headers via sipInbound.fillHeaders, the
-	// same mechanism used by sendBye/sendStatus.
+	// Apply dynamic attribute->header mapping via fillHeaders, the same mechanism used by
+	// sendBye/sendStatus.
 	for k, v := range c.fillHeaders(nil) {
 		req.AppendHeader(sip.NewHeader(k, v))
 	}
