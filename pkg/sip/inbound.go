@@ -707,7 +707,6 @@ type inboundCall struct {
 	forwardDTMF atomic.Bool
 	done        atomic.Bool
 	started     core.Fuse
-	stats       Stats
 	sigTs       SignalingTimestamps
 	jitterBuf   bool
 	projectID   string
@@ -740,7 +739,6 @@ func (s *Server) newInboundCall(
 		jitterBuf:  SelectValueBool(s.conf.EnableJitterBuffer, s.conf.EnableJitterBufferProb),
 		projectID:  "", // Will be set in handleInvite when available
 	}
-	c.stats.Update()
 	c.setLog(log.WithValues("jitterBuf", c.jitterBuf))
 	// v2: the MediaOrchestrator (c.medias) is created in runMediaConn once we have the offer;
 	// it owns the audio mixer / room, so no early room creation is needed here.
@@ -1050,8 +1048,10 @@ func (c *inboundCall) waitForCallEnd(ctx context.Context, ackReceived <-chan str
 	for {
 		select {
 		case <-statsTicker.C:
-			c.stats.Update()
-			c.printStats(c.log())
+			if c.medias != nil {
+				c.medias.UpdateStats()
+			}
+			c.printStats(c.log(), c.medias)
 		case <-ticker.C:
 			c.log().Debugw("sending keep-alive")
 			c.state.ForceFlush(ctx)
@@ -1264,8 +1264,27 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	}
 }
 
-func (c *inboundCall) printStats(log logger.Logger) {
-	c.stats.Log(log, c.callStart)
+func (c *inboundCall) printStats(log logger.Logger, medias *MediaOrchestrator) {
+	// v2: the old c.stats (MediaPort Port/Room counters) is no longer fed by the media layer.
+	// Call statistics now come from the GStreamer orchestrator's per-stream RTP stats.
+	if medias == nil {
+		log.Warnw("call stats not available", nil)
+		return
+	}
+	stats := medias.Stats()
+	if stats == nil {
+		log.Warnw("call stats not available", nil)
+		return
+	}
+	log.Infow("call statistics",
+		"durMin", int(time.Since(c.callStart).Minutes()),
+		"microphone", stats.Microphone,
+		"microphone-pt-caps", stats.MicrophonePtCaps,
+		"camera", stats.Camera,
+		"camera-pt-caps", stats.CameraPtCaps,
+		"screen-share", stats.ScreenShare,
+		"screen-share-pt-caps", stats.ScreenSharePtCaps,
+	)
 }
 
 // close should only be called from handleInvite.
@@ -1287,14 +1306,13 @@ func (c *inboundCall) close(ctx context.Context, status CallStatus, t stats.Term
 		return
 	}
 	defer c.mon.StageDurTimer("close")
-	c.stats.Closed.Store(true)
 	sipCode, sipStatus := status.SIPStatus()
 	log := c.log().WithValues("status", sipCode, "result", string(t.Result), "reason", t.Reason)
-	defer func() {
-		c.stats.Update()
-		c.printStats(log)
-		c.sigTs.Log(log)
-	}()
+	if c.medias != nil {
+		c.medias.UpdateStats()
+	}
+	defer c.printStats(log, c.medias)
+	defer c.sigTs.Log(log)
 	c.setStatus(status)
 	c.mon.CallTerminate(t)
 	isWarn := t.Result == stats.ResultServerError || status == callHangupMedia
