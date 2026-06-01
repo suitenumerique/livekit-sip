@@ -28,10 +28,10 @@ import (
 	"time"
 
 	"github.com/frostbyte73/core"
+	"github.com/go-gst/go-gst/gst"
 	"github.com/icholy/digest"
 	"github.com/pkg/errors"
 
-	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
 	"github.com/livekit/media-sdk/sdp"
 	"github.com/livekit/protocol/livekit"
@@ -43,6 +43,7 @@ import (
 	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
+	"github.com/livekit/sip/pkg/i18n"
 	"github.com/livekit/sip/pkg/stats"
 )
 
@@ -1183,11 +1184,14 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	defer span.End()
 	c.log().Infow("Requesting Pin for SIP call")
 	const pinLimit = 16
+	p := i18n.Printer(c.s.conf.Lang)
 
-	go c.playAudio(ctx, c.s.res.enterPin)
+	defer c.medias.HideMessage()
+	go c.playAudio(ctx, c.s.res.enterPinFd)
 	pin := ""
 	noPin := false
 	for {
+		c.medias.ShowMessage(p.Sprintf("Please enter your PIN followed by # (use * to delete)\nEntered: %s", strings.Repeat("*", len(pin))), gst.LevelInfo)
 		select {
 		case <-c.cc.Cancelled():
 			c.closeWithCancelled(ctx)
@@ -1203,6 +1207,13 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 			}
 			if b.Digit == 0 {
 				continue // unrecognized
+			}
+			if b.Digit == '*' {
+				// Backspace — delete the last entered digit.
+				if len(pin) > 0 {
+					pin = pin[:len(pin)-1]
+				}
+				continue
 			}
 			if b.Digit == '#' {
 				// End of the pin
@@ -1232,17 +1243,20 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				}
 				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
 					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
-					c.playAudio(ctx, c.s.res.wrongPin)
+					c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
+					c.playAudio(ctx, c.s.res.wrongPinFd)
 					c.close(ctx, callDropped, stats.ClientError("wrong-pin"))
 					return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
 				}
-				c.playAudio(ctx, c.s.res.roomJoin)
+				c.medias.ShowMessage(p.Sprintf("PIN accepted, joining the call..."), gst.LevelInfo)
+				c.playAudio(ctx, c.s.res.roomJoinFd)
 				return disp, true, nil
 			}
 			// Gather pin numbers
 			pin += string(b.Digit)
 			if len(pin) > pinLimit {
-				c.playAudio(ctx, c.s.res.wrongPin)
+				c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
+				c.playAudio(ctx, c.s.res.wrongPinFd)
 				c.close(ctx, callDropped, stats.ClientError("wrong-pin"))
 				return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
 			}
@@ -1488,13 +1502,13 @@ func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status Cal
 	return nil
 }
 
-func (c *inboundCall) playAudio(ctx context.Context, frames []msdk.PCM16Sample) {
-	// REVIEW: pin-prompt audio playback used the old Room track + PCM frames (c.s.res.*).
-	// The orchestrator exposes PlayAudio(ctx, fd) / ShowMessage instead, with a different
-	// prompt-storage model. Pin prompts are out of scope for the first-offer path; wire this
-	// through the orchestrator when re-enabling pin prompts.
-	_ = ctx
-	_ = frames
+func (c *inboundCall) playAudio(ctx context.Context, fd int) {
+	if c.medias == nil {
+		return
+	}
+	if err := c.medias.PlayAudio(ctx, fd); err != nil {
+		c.log().Errorw("Cannot play audio", err)
+	}
 }
 
 func (c *inboundCall) handleDTMF(tone dtmf.Event) {
