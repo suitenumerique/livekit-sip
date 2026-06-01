@@ -230,6 +230,13 @@ func (e *SipBin) mediaAddBfcpLabel(bfcpMedia *gstsdp.Media, media *gstsdp.Media,
 	if ret := bfcpMedia.AddAttribute("floorid", floorID); ret != gstsdp.SDPResultOk {
 		return fmt.Errorf("failed to add floorid attribute to BFCP media: %v", ret)
 	}
+	for i := 0; ; i += 1 {
+		if l := media.GetAttributeValN("label", i); l == "" {
+			break
+		} else if l == label {
+			return nil
+		}
+	}
 	if ret := media.AddAttribute("label", label); ret != gstsdp.SDPResultOk {
 		return fmt.Errorf("failed to add label attribute to media: %v", ret)
 	}
