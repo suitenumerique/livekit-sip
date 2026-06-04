@@ -259,6 +259,10 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 		return
 	}
 
+	if pub == nil || pub.TrackRemote() == nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Remote track is nil for publication %s of participant %s", pub.SID(), participant.Identity()))
+		return
+	}
 	ssrc := pub.TrackRemote().SSRC()
 
 	e.wg.Add(1)
@@ -295,6 +299,10 @@ func (e *LivekitBin) OnTrackUnmuted(publication lksdk.TrackPublication, particip
 		return
 	}
 
+	if pub == nil || pub.TrackRemote() == nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Remote track is nil for publication %s of participant %s", pub.SID(), participant.Identity()))
+		return
+	}
 	ssrc := pub.TrackRemote().SSRC()
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Unmuted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
