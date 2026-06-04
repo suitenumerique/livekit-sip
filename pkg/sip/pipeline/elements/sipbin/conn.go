@@ -69,6 +69,10 @@ func listenUDPWithReusePort(ip net.IP, port int) (*net.UDPConn, error) {
 }
 
 func NewUDPConnPair(portMin, portMax uint16, ip net.IP) (*net.UDPConn, *net.UDPConn, error) {
+	if ip.To4() == nil {
+		return nil, nil, fmt.Errorf("only IPv4 addresses are supported")
+	}
+
 	if portMin == 0 && portMax == 0 {
 		portMin = 1024
 		portMax = 0xFFFF

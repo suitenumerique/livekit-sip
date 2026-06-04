@@ -202,10 +202,20 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 		}
 	}
 
+	host := conn.Address()
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			host = v4.String()
+		} else {
+			return fmt.Errorf("media %d (kind %d): remote media address %q (sdp addrtype %q) is IPv6; the SIP media stack is IPv4-only", t.Idx, t.Kind, conn.Address(), conn.Addrtype())
+		}
+	}
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("track %d kind=%d remote media addr=%s rtp=%d rtcp=%d (sdp addrtype=%s address=%s)", t.Idx, t.Kind, host, media.GetPort(), rtcpPort, conn.Addrtype(), conn.Address()))
+
 	if err := errors.Join(
-		t.RtpSink.SetProperty("host", conn.Address()),
+		t.RtpSink.SetProperty("host", host),
 		t.RtpSink.SetProperty("port", int(media.GetPort())),
-		t.RtcpSink.SetProperty("host", conn.Address()),
+		t.RtcpSink.SetProperty("host", host),
 		t.RtcpSink.SetProperty("port", int(rtcpPort)),
 		t.RtpFilter.SetProperty("caps", caps),
 	); err != nil {
@@ -256,21 +266,26 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 
 	t.initialized = true
 
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Initialized track %d (kind %d) with remote media address %s and ports RTP=%d RTCP=%d send=%t recv=%t", t.Idx, t.Kind, host, media.GetPort(), rtcpPort, t.send, t.recv))
+
 	return nil
 }
 
 func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 	var errs []error
-	if track.initialized {
-		for _, elem := range [](*gst.Element){track.RtpSrc, track.RtcpSrc, track.RtpSink, track.RtcpSink, track.RtpFilter} {
-			if err := elem.SetState(gst.StateNull); err != nil {
-				errs = append(errs, fmt.Errorf("failed to set state of element %s to null: %w", elem.GetName(), err))
-			}
-
-			if err := self.Remove(elem); err != nil {
-				errs = append(errs, fmt.Errorf("failed to remove element %s from bin: %w", elem.GetName(), err))
-			}
+	for _, elem := range [](*gst.Element){track.RtpSrc, track.RtcpSrc, track.RtpSink, track.RtcpSink, track.RtpFilter} {
+		if elem == nil {
+			continue
 		}
+		if err := elem.SetState(gst.StateNull); err != nil {
+			errs = append(errs, fmt.Errorf("failed to set state of element %s to null: %w", elem.GetName(), err))
+		}
+
+		if err := self.Remove(elem); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove element %s from bin: %w", elem.GetName(), err))
+		}
+	}
+	if track.initialized {
 		sendRtpSink := e.RtpBin.GetStaticPad(fmt.Sprintf("recv_rtp_sink_%d", track.Kind))
 		if sendRtpSink != nil {
 			e.RtpBin.ReleaseRequestPad(sendRtpSink)
