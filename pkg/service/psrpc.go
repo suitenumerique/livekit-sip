@@ -94,6 +94,10 @@ func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.
 		return sip.CallDispatch{Result: sip.DispatchServiceUnavailable}
 	}
 	resp.Upgrade()
+	if info.Call.GetFrom().GetUser() == "" && info.Call.SourceIp != "" {
+		resp.ParticipantIdentity += info.Call.SourceIp
+		resp.ParticipantName += info.Call.SourceIp
+	}
 	switch resp.Result {
 	default:
 		log.Errorw("SIP handle dispatch rule error", fmt.Errorf("unexpected dispatch result: %v", resp.Result))
