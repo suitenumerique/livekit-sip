@@ -1876,7 +1876,11 @@ func (c *sipInbound) accepted(ctx context.Context, inviteOK *sip.Response) {
 		select {
 		case <-c.refreshTimer.C:
 			c.log.Warnw("session refresh timer expired, closing call", nil)
-			c.CloseWithStatus(ctx, sip.StatusOK, "Session Timer Expired")
+			if c.call != nil {
+				c.call.Close()
+			} else {
+				c.CloseWithStatus(ctx, sip.StatusOK, "Session Timer Expired")
+			}
 		case <-ctx.Done():
 		}
 	}()
