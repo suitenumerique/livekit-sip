@@ -2,18 +2,15 @@ package sipcompositor
 
 import (
 	"fmt"
-	"math"
-	"sync/atomic"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 )
 
 type SipCompositorScreenshare struct {
-	FallbackSwitch *gst.Element
-	Filter         *gst.Element
-	priority       atomic.Int64
-	gpad           *gst.GhostPad
+	InputSelector *gst.Element
+	Filter        *gst.Element
+	gpad          *gst.GhostPad
 }
 
 func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
@@ -24,10 +21,8 @@ func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
 	self.Log(CAT, gst.LevelInfo, "Initializing screenshare compositor")
 	e.SipCompositorScreenshare = &SipCompositorScreenshare{}
 
-	e.SipCompositorScreenshare.priority.Store(math.MaxInt64)
-
 	var err error
-	e.SipCompositorScreenshare.FallbackSwitch, err = gst.NewElementWithProperties("fallbackswitch", map[string]interface{}{})
+	e.SipCompositorScreenshare.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{})
 	if err != nil {
 		return err
 	}
@@ -39,12 +34,12 @@ func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
 		return err
 	}
 
-	if err := self.AddMany(e.SipCompositorScreenshare.FallbackSwitch, e.SipCompositorScreenshare.Filter); err != nil {
+	if err := self.AddMany(e.SipCompositorScreenshare.InputSelector, e.SipCompositorScreenshare.Filter); err != nil {
 		return fmt.Errorf("failed to add elements to bin: %w", err)
 	}
 
-	if err := e.SipCompositorScreenshare.FallbackSwitch.Link(e.SipCompositorScreenshare.Filter); err != nil {
-		return fmt.Errorf("failed to link fallbackswitch and capsfilter: %w", err)
+	if err := e.SipCompositorScreenshare.InputSelector.Link(e.SipCompositorScreenshare.Filter); err != nil {
+		return fmt.Errorf("failed to link input-selector and capsfilter: %w", err)
 	}
 
 	class := gst.ToElementClass(self.Class())
@@ -60,8 +55,8 @@ func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
 		return fmt.Errorf("failed to add ghost pad for screenshare source to bin")
 	}
 
-	if !e.SipCompositorScreenshare.FallbackSwitch.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync state of fallbackswitch with parent")
+	if !e.SipCompositorScreenshare.InputSelector.SyncStateWithParent() {
+		self.Log(CAT, gst.LevelWarning, "Failed to sync state of input-selector with parent")
 	}
 	if !e.SipCompositorScreenshare.Filter.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, "Failed to sync state of capsfilter with parent")
@@ -76,13 +71,13 @@ func (e *SipCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.P
 		return nil
 	}
 
-	sink := e.SipCompositorScreenshare.FallbackSwitch.GetRequestPad("sink_%u")
+	sink := e.SipCompositorScreenshare.InputSelector.GetRequestPad("sink_%u")
 	if sink == nil {
-		self.Log(CAT, gst.LevelError, "Failed to request new sink pad from fallbackswitch")
+		self.Log(CAT, gst.LevelError, "Failed to get request pad from input-selector for new screenshare sink")
 		return nil
 	}
-	if err := sink.SetProperty("priority", uint(e.SipCompositorScreenshare.priority.Add(-1))); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set priority property on new screenshare sink pad: %v", err))
+	if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", sink); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new screenshare sink: %v", err))
 	}
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
@@ -116,21 +111,25 @@ func (e *SipCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.Ghost
 		return
 	}
 
-	e.SipCompositorScreenshare.FallbackSwitch.ReleaseRequestPad(target)
+	e.SipCompositorScreenshare.InputSelector.ReleaseRequestPad(target)
 	if !self.RemovePad(gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for screenshare sink from bin")
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released screenshare sink pad %s", gpad.GetName()))
 
-	sinks, err := e.SipCompositorScreenshare.FallbackSwitch.GetSinkPads()
+	sinks, err := e.SipCompositorScreenshare.InputSelector.GetSinkPads()
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from fallbackswitch: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from input-selector: %v", err))
 		return
 	}
 	if len(sinks) == 0 {
 		self.Log(CAT, gst.LevelInfo, "No more active screenshare sink pads, disabling screenshare")
 		e.cleanupScreenshare(self)
+	} else {
+		if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", sinks[len(sinks)-1]); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing screenshare sink pad: %v", err))
+		}
 	}
 }
 
@@ -139,14 +138,14 @@ func (e *SipCompositor) cleanupScreenshare(self *gst.Bin) {
 		return
 	}
 
-	if err := e.SipCompositorScreenshare.FallbackSwitch.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set fallbackswitch to null state after releasing last screenshare sink pad: %v", err))
+	if err := e.SipCompositorScreenshare.InputSelector.SetState(gst.StateNull); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set input-selector to null state after releasing last screenshare sink pad: %v", err))
 	}
 	if err := e.SipCompositorScreenshare.Filter.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to null state after releasing last screenshare sink pad: %v", err))
 	}
-	if err := self.RemoveMany(e.SipCompositorScreenshare.FallbackSwitch, e.SipCompositorScreenshare.Filter); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove fallbackswitch from bin after releasing last screenshare sink pad: %v", err))
+	if err := self.RemoveMany(e.SipCompositorScreenshare.InputSelector, e.SipCompositorScreenshare.Filter); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove input-selector from bin after releasing last screenshare sink pad: %v", err))
 	}
 	if !self.RemovePad(e.SipCompositorScreenshare.gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for screenshare source from bin after releasing last screenshare sink pad")

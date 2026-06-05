@@ -2,16 +2,13 @@ package sipcompositor
 
 import (
 	"fmt"
-	"math"
-	"sync/atomic"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 )
 
 type SipCompositorMicrophone struct {
-	FallbackSwitch *gst.Element
-	priority       atomic.Int64
+	InputSelector *gst.Element
 }
 
 func (e *SipCompositor) initMicrophone(self *gst.Bin) error {
@@ -21,20 +18,19 @@ func (e *SipCompositor) initMicrophone(self *gst.Bin) error {
 
 	self.Log(CAT, gst.LevelInfo, "Initializing microphone compositor")
 	e.SipCompositorMicrophone = &SipCompositorMicrophone{}
-	e.SipCompositorMicrophone.priority.Store(math.MaxUint32)
 
 	var err error
-	e.SipCompositorMicrophone.FallbackSwitch, err = gst.NewElementWithProperties("fallbackswitch", map[string]interface{}{})
+	e.SipCompositorMicrophone.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{})
 	if err != nil {
 		return err
 	}
 
-	if err := self.Add(e.SipCompositorMicrophone.FallbackSwitch); err != nil {
-		return fmt.Errorf("failed to add fallbackswitch to bin: %w", err)
+	if err := self.Add(e.SipCompositorMicrophone.InputSelector); err != nil {
+		return fmt.Errorf("failed to add input-selector to bin: %w", err)
 	}
 
 	class := gst.ToElementClass(self.Class())
-	gpad := gst.NewGhostPadFromTemplate(fmt.Sprintf("src_%d", livekit.TrackSource_MICROPHONE), e.SipCompositorMicrophone.FallbackSwitch.GetStaticPad("src"), class.GetPadTemplate("src_%u"))
+	gpad := gst.NewGhostPadFromTemplate(fmt.Sprintf("src_%d", livekit.TrackSource_MICROPHONE), e.SipCompositorMicrophone.InputSelector.GetStaticPad("src"), class.GetPadTemplate("src_%u"))
 	if gpad == nil {
 		return fmt.Errorf("failed to create ghost pad for microphone source")
 	}
@@ -45,8 +41,8 @@ func (e *SipCompositor) initMicrophone(self *gst.Bin) error {
 		return fmt.Errorf("failed to add ghost pad for microphone source to bin")
 	}
 
-	if !e.SipCompositorMicrophone.FallbackSwitch.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync state of fallbackswitch with parent")
+	if !e.SipCompositorMicrophone.InputSelector.SyncStateWithParent() {
+		self.Log(CAT, gst.LevelWarning, "Failed to sync state of input-selector with parent")
 	}
 
 	return nil
@@ -58,13 +54,13 @@ func (e *SipCompositor) requestNewMicrophoneSinkPad(self *gst.Bin, templ *gst.Pa
 		return nil
 	}
 
-	sink := e.SipCompositorMicrophone.FallbackSwitch.GetRequestPad("sink_%u")
+	sink := e.SipCompositorMicrophone.InputSelector.GetRequestPad("sink_%u")
 	if sink == nil {
-		self.Log(CAT, gst.LevelError, "Failed to request new sink pad from fallbackswitch for microphone")
+		self.Log(CAT, gst.LevelError, "Failed to get request pad from input-selector for new microphone sink")
 		return nil
 	}
-	if err := sink.SetProperty("priority", uint(e.SipCompositorMicrophone.priority.Add(-1))); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set priority for microphone sink pad %s: %v", name, err))
+	if err := e.SipCompositorMicrophone.InputSelector.SetProperty("active-pad", sink); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new microphone sink: %v", err))
 	}
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
@@ -98,21 +94,25 @@ func (e *SipCompositor) releaseMicrophoneSinkPad(self *gst.Bin, gpad *gst.GhostP
 		return
 	}
 
-	e.SipCompositorMicrophone.FallbackSwitch.ReleaseRequestPad(target)
+	e.SipCompositorMicrophone.InputSelector.ReleaseRequestPad(target)
 	if !self.RemovePad(gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for microphone sink from bin")
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released microphone sink pad %s", gpad.GetName()))
 
-	sinks, err := e.SipCompositorMicrophone.FallbackSwitch.GetSinkPads()
+	sinks, err := e.SipCompositorMicrophone.InputSelector.GetSinkPads()
 	if err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get sink pads from fallbackswitch: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from input-selector: %v", err))
 		return
 	}
-	if len(sinks) <= 0 {
-		self.Log(CAT, gst.LevelInfo, "No more sink pads on fallbackswitch, cleaning up microphone compositor")
+	if len(sinks) == 0 {
+		self.Log(CAT, gst.LevelInfo, "No more active microphone sink pads, disabling microphone")
 		e.cleanupMicrophone(self)
+	} else {
+		if err := e.SipCompositorMicrophone.InputSelector.SetProperty("active-pad", sinks[len(sinks)-1]); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing microphone sink pad: %v", err))
+		}
 	}
 }
 
@@ -121,11 +121,11 @@ func (e *SipCompositor) cleanupMicrophone(self *gst.Bin) {
 		return
 	}
 
-	if err := e.SipCompositorMicrophone.FallbackSwitch.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set state of fallbackswitch to NULL during microphone cleanup: %v", err))
+	if err := e.SipCompositorMicrophone.InputSelector.SetState(gst.StateNull); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set state of input-selector to NULL during microphone cleanup: %v", err))
 	}
-	if err := self.Remove(e.SipCompositorMicrophone.FallbackSwitch); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove fallbackswitch from bin during microphone cleanup: %v", err))
+	if err := self.Remove(e.SipCompositorMicrophone.InputSelector); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove input-selector from bin during microphone cleanup: %v", err))
 	}
 
 	gpad := self.GetStaticPad(fmt.Sprintf("src_%d", livekit.TrackSource_MICROPHONE))
