@@ -56,6 +56,11 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 
 	// self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Published camera track with SID %s", pub.SID()))
 
+	queue, err := gst.NewElementWithProperties("queue", map[string]interface{}{})
+	if err != nil {
+		return fmt.Errorf("failed to create track queue element: %w", err)
+	}
+
 	element, err := gst.NewElementWithProperties("livekitbin_sinktrack", map[string]interface{}{
 		"track": glib.ArbitraryValue{Data: track},
 		// "pub":   glib.ArbitraryValue{Data: pub},
@@ -68,18 +73,27 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	if err != nil {
 		return fmt.Errorf("failed to create sink track element: %w", err)
 	}
-	if err := self.Add(element); err != nil {
+	if err := self.AddMany(queue, element); err != nil {
 		return fmt.Errorf("failed to add sink track element to bin: %w", err)
+	}
+
+	if err := queue.Link(element); err != nil {
+		return fmt.Errorf("failed to link track queue to sink track element: %w", err)
+	}
+
+	if !queue.SyncStateWithParent() {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state with parent for sink track queue element: %v", err))
 	}
 
 	if !element.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state with parent for sink track element: %v", err))
 	}
 
-	if ret := pad.Link(element.GetStaticPad("sink")); ret != gst.PadLinkOK {
+	if ret := pad.Link(queue.GetStaticPad("sink")); ret != gst.PadLinkOK {
 		return fmt.Errorf("failed to link pad to sink track element: %v", ret)
 	}
 
+	p.TrackQueue = queue
 	p.TrackSink = element
 	p.initialized = true
 
@@ -726,11 +740,14 @@ func (e *LivekitBin) onRtpBinPadRemovedSendRtp(self *gst.Bin, pad *gst.Pad, pnam
 		return
 	}
 
+	if err := pub.TrackQueue.SetState(gst.StateNull); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error setting track queue element to NULL for track source %s when removing pad name %s: %v", kind.String(), pname, err))
+	}
 	if err := pub.TrackSink.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error setting track sink element to NULL for track source %s when removing pad name %s: %v", kind.String(), pname, err))
 	}
 
-	if err := self.Remove(pub.TrackSink); err != nil {
+	if err := self.RemoveMany(pub.TrackQueue, pub.TrackSink); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error removing track sink element from bin for track source %s when removing pad name %s: %v", kind.String(), pname, err))
 	}
 

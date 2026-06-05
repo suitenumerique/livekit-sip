@@ -53,6 +53,7 @@ type LivekitBinTrack struct {
 type LivekitBinPublication struct {
 	initialized  bool
 	probeID      uint64
+	TrackQueue   *gst.Element
 	TrackSink    *gst.Element
 	FormatFilter *gst.Element
 	Track        *webrtc.TrackLocalStaticRTP
