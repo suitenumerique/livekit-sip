@@ -1959,7 +1959,7 @@ func (c *sipInbound) setupSessionTimer() {
 	}
 	if h := c.invite.GetHeader("Session-Expires"); h != nil {
 		if v, err := strconv.Atoi(strings.SplitN(h.Value(), ";", 2)[0]); err == nil && v > 0 {
-			c.sessionExpires = max(uint32(v), c.minSe)
+			c.sessionExpires = max(min(c.sessionExpires, uint32(v)), c.minSe)
 		}
 	}
 
