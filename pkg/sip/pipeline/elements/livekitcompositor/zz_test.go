@@ -336,13 +336,9 @@ func attachCameraParticipant(t *testing.T, pipeline *gst.Pipeline, compositor *g
 // a signal-handler deadlock fails the test instead of hanging.
 func emitActiveSpeakers(t *testing.T, compositor *gst.Element, sids ...string) {
 	t.Helper()
-	levels := make([]float32, len(sids))
-	for i := range levels {
-		levels[i] = 0.5
-	}
 	info := livekittracks.ActiveSpeakerChangeInfo{
 		ParticipantsSID:   sids,
-		AudioLevels:       levels,
+		AudioLevels:       make(map[string]float64),
 		ParticipantTracks: make(map[string][]string),
 	}
 	structure := info.Structure()

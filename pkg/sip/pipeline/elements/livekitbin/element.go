@@ -131,6 +131,22 @@ func (e *LivekitBin) ClassInit(klass *glib.ObjectClass) {
 		gst.TypeStructure, // TrackSourceInfo
 	)
 
+	gst.SignalNew(
+		class.Type(),
+		"participant-join",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		gst.TypeStructure, // ParticipantInfo
+	)
+
+	gst.SignalNew(
+		class.Type(),
+		"participant-left",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		gst.TypeStructure, // ParticipantInfo
+	)
+
 	// action signals
 	gst.SignalNew(
 		class.Type(),

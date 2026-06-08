@@ -1,19 +1,30 @@
 package livekitcompositor
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"math"
+	"sync/atomic"
+	"time"
+	"weak"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
 	"github.com/samber/lo"
+	"github.com/vopenia-io/go-pangocairo/cairo"
 )
 
 type LivekitCompositorCamera struct {
+	ticker *time.Ticker
+
 	Compositor *gst.Element
+	Overlay    *gst.Element
 	Filter     *gst.Element
+
+	overlayCache atomic.Pointer[overlayCache]
 }
 
 func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
@@ -23,6 +34,8 @@ func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
 
 	e.LivekitCompositorCamera = &LivekitCompositorCamera{}
 
+	eweak := weak.Make(e)
+	wself := glib.WeakRefInit(self)
 	var err error
 
 	e.LivekitCompositorCamera.Compositor, err = gst.NewElementWithProperties("compositor", map[string]interface{}{
@@ -34,8 +47,22 @@ func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
 		return err
 	}
 
+	e.LivekitCompositorCamera.Overlay, err = gst.NewElementWithProperties("cairooverlay", map[string]interface{}{})
+	if err != nil {
+		return err
+	}
+	e.LivekitCompositorCamera.Overlay.Connect("draw", func(overlay *gst.Element, cr *cairo.Context, timestamp gst.ClockTime) {
+		e := eweak.Value()
+		self := gst.ToGstBin(wself.Get())
+		if e == nil || self == nil {
+			return
+		}
+
+		e.cameraOverlayDrawCallback(self, overlay, cr, timestamp)
+	})
+
 	e.LivekitCompositorCamera.Filter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw, width=%d, height=%d, framerate=%d/1", e.videoWidth, e.videoHeight, e.videoFramerate)),
+		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw, format=BGRx, colorimetry=sRGB, width=%d, height=%d, framerate=%d/1", e.videoWidth, e.videoHeight, e.videoFramerate)),
 	})
 	if err != nil {
 		return err
@@ -43,11 +70,15 @@ func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
 
 	if err := self.AddMany(
 		e.LivekitCompositorCamera.Compositor,
+		e.LivekitCompositorCamera.Overlay,
 		e.LivekitCompositorCamera.Filter); err != nil {
 		return err
 	}
 
-	if err := gst.ElementLinkMany(e.LivekitCompositorCamera.Compositor, e.LivekitCompositorCamera.Filter); err != nil {
+	if err := gst.ElementLinkMany(
+		e.LivekitCompositorCamera.Compositor,
+		e.LivekitCompositorCamera.Overlay,
+		e.LivekitCompositorCamera.Filter); err != nil {
 		return err
 	}
 
@@ -66,9 +97,31 @@ func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
 	if !e.LivekitCompositorCamera.Compositor.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, "Failed to sync state of compositor with parent")
 	}
+	if !e.LivekitCompositorCamera.Overlay.SyncStateWithParent() {
+		self.Log(CAT, gst.LevelWarning, "Failed to sync state of overlay with parent")
+	}
 	if !e.LivekitCompositorCamera.Filter.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, "Failed to sync state of filter with parent")
 	}
+
+	e.LivekitCompositorCamera.ticker = time.NewTicker(100 * time.Millisecond)
+	ticker := e.LivekitCompositorCamera.ticker
+	go func() {
+		for {
+			select {
+			case <-e.ctx.Done():
+				return
+			case <-ticker.C:
+				e := eweak.Value()
+				if e == nil {
+					return
+				}
+				e.mu.Lock()
+				e.refreshOverlayCache()
+				e.mu.Unlock()
+			}
+		}
+	}()
 
 	return nil
 }
@@ -105,6 +158,7 @@ func (e *LivekitCompositor) requestNewCameraSinkPad(self *gst.Bin, templ *gst.Pa
 		sink.SetProperty("repeat-after-eos", true),
 		sink.SetProperty("sizing-policy", int(1)), // keep-aspect-ratio
 		sink.SetProperty("alpha", float64(0)),
+		sink.SetProperty("zorder", uint(1)),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set position and size for camera sink pad: %v", err))
 		return nil
@@ -126,6 +180,8 @@ func (e *LivekitCompositor) requestNewCameraSinkPad(self *gst.Bin, templ *gst.Pa
 	}
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new camera sink pad %s", gpad.GetName()))
+
+	e.refreshOverlayCache()
 
 	return gpad.Pad
 }
@@ -157,6 +213,8 @@ func (e *LivekitCompositor) releaseCameraSinkPad(self *gst.Bin, gpad *gst.GhostP
 	}
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released camera sink pad %s", gpad.GetName()))
+
+	e.refreshOverlayCache()
 
 	e.cleanupCamera(self)
 }
@@ -213,6 +271,8 @@ func (e *LivekitCompositor) applyCameraLayout(self *gst.Bin, layout []string) {
 		}
 
 		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Activated camera path for participant SID %s at layout position %d", participantSID, i))
+
+		e.refreshOverlayCache()
 	}
 }
 
@@ -234,6 +294,8 @@ func (e *LivekitCompositor) hideCameraTrack(self *gst.Bin, pad *gst.Pad) {
 }
 
 func cameraComputeSize(videoWidth, videoHeight int, idx int, nTrack int) (width, height, x, y int) {
+	const border = 5
+
 	cols := int(math.Ceil(math.Sqrt(float64(nTrack))))
 	rows := int(math.Ceil(float64(nTrack) / float64(cols)))
 
@@ -242,6 +304,11 @@ func cameraComputeSize(videoWidth, videoHeight int, idx int, nTrack int) (width,
 
 	x = (idx % cols) * width
 	y = (idx / cols) * height
+
+	width -= border * 2
+	height -= border * 2
+	x += border
+	y += border
 
 	return
 }
@@ -286,17 +353,23 @@ func (e *LivekitCompositor) cleanupCamera(self *gst.Bin) {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get sink pads while handling pad-removed signal: %v", err))
 		return
 	}
-	if len(sinks) > 0 {
+	if len(sinks) > 1 {
 		return
 	}
 
 	if err := e.LivekitCompositorCamera.Compositor.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set camera compositor state to null during cleanup: %v", err))
 	}
+	if err := e.LivekitCompositorCamera.Overlay.SetState(gst.StateNull); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set camera overlay state to null during cleanup: %v", err))
+	}
 	if err := e.LivekitCompositorCamera.Filter.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set camera filter state to null during cleanup: %v", err))
 	}
-	if err := self.RemoveMany(e.LivekitCompositorCamera.Compositor, e.LivekitCompositorCamera.Filter); err != nil {
+	if err := self.RemoveMany(
+		e.LivekitCompositorCamera.Compositor,
+		e.LivekitCompositorCamera.Overlay,
+		e.LivekitCompositorCamera.Filter); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove camera compositor and filter from bin during cleanup: %v", err))
 	}
 
@@ -305,6 +378,8 @@ func (e *LivekitCompositor) cleanupCamera(self *gst.Bin) {
 			self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for camera source from bin during cleanup")
 		}
 	}
+
+	e.LivekitCompositorCamera.ticker.Stop()
 
 	e.LivekitCompositorCamera = nil
 	self.Log(CAT, gst.LevelInfo, "Cleaned up camera compositor")

@@ -1,0 +1,583 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  SIPp scenario: Simulate trunk SBC (comu.minint.fr) calling Kamailio
+  Reproduces the exact delayed-offer flow with BFCP, session refresh UPDATE,
+  and re-INVITE that triggers Kamailio TCP routing failures.
+
+  Flow:
+    1. INVITE without SDP (delayed offer)
+    2. 100/180/200 OK (200 OK contains SDP offer from LiveKit-SIP)
+    3. ACK with SDP answer (Cisco/Tandberg terminal format)
+    4. DTMF INFO for PIN digits (0744593870)
+    5. Pause (call established)
+    6. UPDATE (session refresh timer, triggers 15-min bug)
+    7. re-INVITE (screenshare, triggers 1-min bug)
+    8. BYE
+
+  Usage:
+    sipp -sf trunk_delayed_offer.xml \
+         -s 999 \
+         -t t1 \
+         -i <sipp_local_ip> \
+         -p 5072 \
+         <kamailio_ip>:5060 \
+         -m 1 \
+         -l 1 \
+         -key pin 0744593870 \
+         -key from_user 75421 \
+         -key from_domain comu.minint.fr \
+         -key pause_before_update 900000 \
+         -key pause_before_reinvite 5000
+
+  For quick test (no long wait):
+    -key pause_before_update 10000 -key pause_before_reinvite 5000
+-->
+
+<scenario name="Trunk Delayed Offer with UPDATE and re-INVITE">
+
+  <!-- ============================================================ -->
+  <!-- STEP 1: INVITE without SDP (delayed offer) via TCP           -->
+  <!-- ============================================================ -->
+  <send retrans="500">
+    <![CDATA[
+      INVITE sip:[service]@[remote_ip]:[remote_port];transport=tcp SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      To: <sip:[service]@[remote_ip]>
+      Call-ID: [call_id]
+      CSeq: [cseq] INVITE
+      Contact: <sip:[key_from_user]@[local_ip]:[local_port];transport=tcp>
+      Max-Forwards: 70
+      Session-Expires: 900;refresher=uac
+      Min-SE: 900
+      Supported: timer,replaces
+      Allow: INVITE,ACK,CANCEL,BYE,UPDATE,INFO,OPTIONS,REFER,NOTIFY
+      User-Agent: OCSBC-E-CZ8.4.0
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- ============================================================ -->
+  <!-- STEP 2: Receive 100 Trying                                   -->
+  <!-- ============================================================ -->
+  <recv response="100" optional="true" timeout="5000">
+  </recv>
+
+  <!-- ============================================================ -->
+  <!-- STEP 3: Receive 180 Ringing                                  -->
+  <!-- ============================================================ -->
+  <recv response="180" optional="true" timeout="30000">
+  </recv>
+
+  <!-- ============================================================ -->
+  <!-- STEP 4: Receive 200 OK with SDP offer (from LiveKit-SIP)     -->
+  <!-- Save the SDP, To tag, Record-Route, Contact for dialog       -->
+  <!-- ============================================================ -->
+  <recv response="200" rrs="true" timeout="60000">
+    <action>
+      <ereg regexp="(.*)" search_in="body" check_it="true" assign_to="remote_sdp"/>
+      <ereg regexp="m=audio ([0-9]+)" search_in="body" check_it="true" assign_to="dummy,remote_audio_port"/>
+      <ereg regexp="c=IN IP4 ([0-9.]+)" search_in="body" check_it="true" assign_to="dummy,remote_media_ip"/>
+    </action>
+  </recv>
+
+  <!-- ============================================================ -->
+  <!-- STEP 5: ACK with SDP answer (Cisco/Tandberg terminal format) -->
+  <!-- This is the delayed offer answer                             -->
+  <!-- ============================================================ -->
+  <send>
+    <![CDATA[
+      ACK [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] ACK
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=tandberg 0 1 IN IP4 [local_ip]
+      s=-
+      b=AS:2048
+      t=0 0
+      a=cisco-mari-rate
+      a=cisco-mari:v1
+      m=audio 16384 RTP/AVP 9 0 8 101
+      c=IN IP4 [local_ip]
+      a=rtpmap:9 G722/8000
+      a=rtpmap:0 PCMU/8000
+      a=rtpmap:8 PCMA/8000
+      a=rtpmap:101 telephone-event/8000
+      a=fmtp:101 0-15
+      a=sendrecv
+      a=rtcp:16385
+      a=ptime:20
+      m=video 16386 RTP/AVP 97 126
+      c=IN IP4 [local_ip]
+      b=TIAS:1984000
+      a=rtpmap:97 H264/90000
+      a=fmtp:97 profile-level-id=428016;max-mbps=490000;max-fs=8160;max-cpb=200;max-dpb=16320;max-br=5000;max-smbps=490000;max-fps=6000;packetization-mode=0
+      a=rtpmap:126 H264/90000
+      a=fmtp:126 profile-level-id=428016;max-mbps=490000;max-fs=8160;max-cpb=200;max-dpb=16320;max-br=5000;max-smbps=490000;max-fps=6000;packetization-mode=1
+      a=rtcp-fb:* ccm pan
+      a=rtcp-fb:* nack pli
+      a=label:11
+      a=sendrecv
+      a=rtcp:16387
+      a=ptime:20
+      m=application 16388 UDP/BFCP *
+      c=IN IP4 [local_ip]
+      a=floorctrl:c-only
+      m=video 16390 RTP/AVP 97 126
+      c=IN IP4 [local_ip]
+      b=TIAS:1984000
+      a=rtpmap:97 H264/90000
+      a=fmtp:97 profile-level-id=428016;max-mbps=259200;max-fs=32400;max-cpb=200;max-dpb=64800;max-br=5000;max-smbps=259200;max-fps=6000;packetization-mode=0
+      a=rtpmap:126 H264/90000
+      a=fmtp:126 profile-level-id=428016;max-mbps=259200;max-fs=32400;max-cpb=200;max-dpb=64800;max-br=5000;max-smbps=259200;max-fps=6000;packetization-mode=1
+      a=rtcp-fb:* nack pli
+      a=content:slides
+      a=label:12
+      a=recvonly
+      a=rtcp:16391
+      a=ptime:20
+      m=application 0 RTP/AVP 0
+      c=IN IP4 0.0.0.0
+
+    ]]>
+  </send>
+
+  <!-- ============================================================ -->
+  <!-- STEP 6: Send DTMF via INFO for PIN (0744593870)              -->
+  <!-- Each digit sent as application/dtmf-relay                    -->
+  <!-- ============================================================ -->
+
+  <!-- Small pause before sending PIN -->
+  <pause milliseconds="2000"/>
+
+  <!-- Digit: 0 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=0
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 7 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=7
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 4 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=4
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 4 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=4
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 5 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=5
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 9 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=9
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 3 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=3
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 8 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=8
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 7 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=7
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <pause milliseconds="300"/>
+
+  <!-- Digit: 0 -->
+  <send>
+    <![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=0
+      Duration=160
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <!-- ============================================================ -->
+  <!-- STEP 7: Call established, wait before sending UPDATE          -->
+  <!-- Default: 900s (15 min). Use -key pause_before_update 10000   -->
+  <!-- for quick testing                                            -->
+  <!-- ============================================================ -->
+  <pause milliseconds="10000"/>
+
+  <!-- ============================================================ -->
+  <!-- STEP 8: Send UPDATE (session refresh, like the trunk SBC)    -->
+  <!-- This is what triggers the 15-minute disconnect               -->
+  <!-- ============================================================ -->
+  <send retrans="500">
+    <![CDATA[
+      UPDATE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] UPDATE
+      [routes]
+      Contact: <sip:[key_from_user]@[local_ip]:[local_port];transport=tcp>
+      Max-Forwards: 70
+      Session-Expires: 900;refresher=uac
+      Min-SE: 900
+      Supported: timer
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Expect 200 OK for UPDATE - if this times out, the TCP bug is confirmed -->
+  <recv response="200" timeout="32000" ontimeout="update_timeout">
+  </recv>
+
+  <pause milliseconds="5000"/>
+
+  <!-- ============================================================ -->
+  <!-- STEP 9: Send re-INVITE (simulating screenshare/media change) -->
+  <!-- This is what triggers the 1-minute disconnect                -->
+  <!-- ============================================================ -->
+  <send retrans="500">
+    <![CDATA[
+      INVITE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INVITE
+      [routes]
+      Contact: <sip:[key_from_user]@[local_ip]:[local_port];transport=tcp>
+      Max-Forwards: 70
+      Session-Expires: 900;refresher=uac
+      Supported: timer
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=tandberg 0 2 IN IP4 [local_ip]
+      s=-
+      b=AS:2048
+      t=0 0
+      m=audio 16384 RTP/AVP 9 0 8 101
+      c=IN IP4 [local_ip]
+      a=rtpmap:9 G722/8000
+      a=rtpmap:0 PCMU/8000
+      a=rtpmap:8 PCMA/8000
+      a=rtpmap:101 telephone-event/8000
+      a=fmtp:101 0-15
+      a=sendrecv
+      a=rtcp:16385
+      a=ptime:20
+      m=video 16386 RTP/AVP 97 126
+      c=IN IP4 [local_ip]
+      b=TIAS:1984000
+      a=rtpmap:97 H264/90000
+      a=fmtp:97 profile-level-id=428016;max-mbps=490000;max-fs=8160;packetization-mode=0
+      a=rtpmap:126 H264/90000
+      a=fmtp:126 profile-level-id=428016;max-mbps=490000;max-fs=8160;packetization-mode=1
+      a=sendrecv
+      a=rtcp:16387
+      a=ptime:20
+      m=application 16388 UDP/BFCP *
+      c=IN IP4 [local_ip]
+      a=floorctrl:c-only
+      m=video 16390 RTP/AVP 97 126
+      c=IN IP4 [local_ip]
+      b=TIAS:1984000
+      a=rtpmap:97 H264/90000
+      a=fmtp:97 profile-level-id=428016;max-mbps=259200;max-fs=32400;packetization-mode=0
+      a=rtpmap:126 H264/90000
+      a=fmtp:126 profile-level-id=428016;max-mbps=259200;max-fs=32400;packetization-mode=1
+      a=content:slides
+      a=label:12
+      a=recvonly
+      a=rtcp:16391
+      a=ptime:20
+      m=application 0 RTP/AVP 0
+      c=IN IP4 0.0.0.0
+
+    ]]>
+  </send>
+
+  <!-- Expect 200 OK for re-INVITE -->
+  <recv response="200" timeout="32000" ontimeout="reinvite_timeout">
+  </recv>
+
+  <!-- ACK the 200 OK for re-INVITE -->
+  <send>
+    <![CDATA[
+      ACK [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] ACK
+      [routes]
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Wait a bit then hang up normally -->
+  <pause milliseconds="5000"/>
+
+  <!-- ============================================================ -->
+  <!-- STEP 10: BYE (normal hangup)                                 -->
+  <!-- ============================================================ -->
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] BYE
+      [routes]
+      Max-Forwards: 70
+      Reason: SIP ;cause=200;text="Normal call clearing"
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200" timeout="5000"/>
+
+  <!-- ============================================================ -->
+  <!-- LABELS for timeout handling                                  -->
+  <!-- ============================================================ -->
+
+  <!-- UPDATE timeout: reproduce the exact trunk behavior -->
+  <label id="update_timeout"/>
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] BYE
+      [routes]
+      Max-Forwards: 70
+      Reason: SIP ;cause=408;text="Failed to send out mid-dialog request due to a transaction timeout"
+      Content-Length: 0
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000" optional="true"/>
+
+  <!-- re-INVITE timeout -->
+  <label id="reinvite_timeout"/>
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:[key_from_user]@[key_from_domain]>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] BYE
+      [routes]
+      Max-Forwards: 70
+      Reason: SIP ;cause=408;text="re-INVITE timeout - screenshare failure"
+      Content-Length: 0
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000" optional="true"/>
+
+  <ResponseTimeRepartition value="100, 200, 500, 1000, 5000, 10000, 30000"/>
+  <CallLengthRepartition value="10, 60, 300, 600, 900, 1200"/>
+
+</scenario>

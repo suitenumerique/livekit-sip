@@ -123,23 +123,22 @@ func (e *LivekitCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.G
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released screenshare sink pad %s", gpad.GetName()))
 
+	e.cleanupScreenshare(self)
+}
+
+func (e *LivekitCompositor) applyScreenshareLayout(self *gst.Bin, layout []string) {}
+
+func (e *LivekitCompositor) cleanupScreenshare(self *gst.Bin) {
+	if e.LivekitCompositorScreenshare == nil {
+		return
+	}
+
 	sinks, err := e.LivekitCompositorScreenshare.FallbackSwitch.GetSinkPads()
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from fallbackswitch: %v", err))
 		return
 	}
-	if len(sinks) == 0 {
-		self.Log(CAT, gst.LevelInfo, "No more active screenshare sink pads, disabling screenshare")
-		e.cleanupScreenshare(self)
-	}
-}
-
-func (e *LivekitCompositor) applyScreenshareLayout(self *gst.Bin, layout []string) {
-	return
-}
-
-func (e *LivekitCompositor) cleanupScreenshare(self *gst.Bin) {
-	if e.LivekitCompositorScreenshare == nil {
+	if len(sinks) > 0 {
 		return
 	}
 

@@ -134,3 +134,10 @@ func (p *Pipeline) PlayAudio(ctx context.Context, fd int) error {
 		return PlayErr
 	}
 }
+
+func (p *Pipeline) SetContext(ctx *gst.Context) {
+	if p == nil || p.pipeline == nil {
+		return
+	}
+	p.pipeline.SetContext(ctx)
+}

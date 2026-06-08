@@ -226,6 +226,7 @@ type MediaOptions struct {
 	VideoWidth            uint
 	VideoHeight           uint
 	Framerate             uint
+	Lang                  string
 	MaxActiveParticipants int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig

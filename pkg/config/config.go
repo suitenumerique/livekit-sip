@@ -118,7 +118,7 @@ type Config struct {
 	AddRecordRoute bool `yaml:"add_record_route"`
 
 	// AudioDTMF forces SIP to generate audio DTMF tones in addition to digital.
-	AudioLanguage          string  `yaml:"audio_language"` // currently only supports "en" (English) and "fr" (French)
+	Lang                   string  `yaml:"lang"` // currently only supports "en" (English) and "fr" (French)
 	AudioDTMF              bool    `yaml:"audio_dtmf"`
 	EnableJitterBuffer     bool    `yaml:"enable_jitter_buffer"`
 	EnableJitterBufferProb float64 `yaml:"enable_jitter_buffer_prob"`
@@ -183,10 +183,10 @@ func (c *Config) Init() error {
 		c.MaxCpuUtilization = 0.9
 	}
 
-	if c.AudioLanguage == "" {
-		c.AudioLanguage = "en"
+	if c.Lang == "" {
+		c.Lang = "en"
 	}
-	c.AudioLanguage = strings.ToLower(c.AudioLanguage)
+	c.Lang = strings.ToLower(c.Lang)
 
 	if c.Video.Width == 0 || c.Video.Height == 0 {
 		c.Video.Width = 1280

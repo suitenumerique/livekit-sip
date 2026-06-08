@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/frostbyte73/core"
+	"github.com/go-gst/go-gst/gst"
 	"github.com/icholy/digest"
 	"github.com/pkg/errors"
 
@@ -45,6 +46,7 @@ import (
 	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
+	"github.com/livekit/sip/pkg/i18n"
 	"github.com/livekit/sip/pkg/stats"
 )
 
@@ -875,6 +877,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		VideoWidth:            uint(c.s.conf.Video.Width),
 		VideoHeight:           uint(c.s.conf.Video.Height),
 		Framerate:             uint(c.s.conf.Video.Framerate),
+		Lang:                  c.s.conf.Lang,
 		MaxActiveParticipants: c.s.conf.MaxActiveParticipants,
 		Gst:                   c.s.conf.Gst,
 		PublishCodecs:         c.s.conf.PublishCodecs,
@@ -1277,10 +1280,14 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	defer span.End()
 	c.log().Infow("Requesting Pin for SIP call")
 	const pinLimit = 16
-	c.playAudio(ctx, c.s.res.enterPinFd)
+	p := i18n.Printer(c.s.conf.Lang)
+
+	defer c.medias.HideMessage()
+	go c.playAudio(ctx, c.s.res.enterPinFd)
 	pin := ""
 	noPin := false
 	for {
+		c.medias.ShowMessage(p.Sprintf("Please enter your PIN followed by # (use * to delete)\nEntered: %s", strings.Repeat("*", len(pin))), gst.LevelInfo)
 		select {
 		case <-c.cc.Cancelled():
 			c.closeWithCancelled()
@@ -1297,6 +1304,12 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 			}
 			if b.Digit == 0 {
 				continue // unrecognized
+			}
+			if b.Digit == '*' {
+				if len(pin) > 0 {
+					pin = pin[:len(pin)-1]
+				}
+				continue
 			}
 			if b.Digit == '#' {
 				// End of the pin
@@ -1321,16 +1334,19 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				}
 				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
 					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
+					c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
 					c.playAudio(ctx, c.s.res.wrongPinFd)
 					c.close(false, callDropped, "wrong-pin")
 					return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
 				}
+				c.medias.ShowMessage(p.Sprintf("PIN accepted, joining the call..."), gst.LevelInfo)
 				c.playAudio(ctx, c.s.res.roomJoinFd)
 				return disp, true, nil
 			}
 			// Gather pin numbers
 			pin += string(b.Digit)
 			if len(pin) > pinLimit {
+				c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
 				c.playAudio(ctx, c.s.res.wrongPinFd)
 				c.close(false, callDropped, "wrong-pin")
 				return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
@@ -1381,15 +1397,12 @@ func (c *inboundCall) close(error bool, status CallStatus, reason string) {
 		defer log.Infow("Inbound call closed")
 	}
 
-	c.closeMedia()
-	if c.medias != nil {
-		log.Debugw("Closing media orchestrator")
-		if err := c.medias.Close(); err != nil {
-			log.Errorw("Cannot close media orchestrator", err)
-		}
-		c.medias = nil
-		log.Debugw("Media orchestrator closed")
+	log.Debugw("Closing media orchestrator")
+	if err := c.medias.Close(); err != nil {
+		log.Errorw("Cannot close media orchestrator", err)
 	}
+	c.medias = nil
+	log.Debugw("Media orchestrator closed")
 	c.cc.CloseWithStatus(sipCode, sipStatus)
 	if c.callDur != nil {
 		c.callDur()

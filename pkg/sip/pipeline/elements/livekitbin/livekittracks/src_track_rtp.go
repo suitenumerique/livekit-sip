@@ -246,6 +246,12 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 		self.Error("Failed to read from io.Reader", err)
 		return gst.FlowError
 	}
+	if s.Pub.IsMuted() {
+		for i := range data[:n] {
+			data[i] = 0
+		}
+		n = 0
+	}
 
 	if uint(n) < length {
 		buffer.SetSize(int64(n))

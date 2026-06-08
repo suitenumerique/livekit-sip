@@ -32,6 +32,7 @@ type SipOpt struct {
 	VideoWidth            uint
 	VideoHeight           uint
 	Framerate             uint
+	Lang                  string
 	MaxActiveParticipants int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig
@@ -303,6 +304,15 @@ func (sio *SipIo) onAvailableMedia(camera, microphone, screenshare, screenshareA
 		sio.pipeline.WebrtcIo.LivekitBin.SetProperty("screenshare-audio", screenshareAudio),
 	); err != nil {
 		sio.log.Errorw("Failed to set available media properties on LiveKit bin", err, "camera", camera, "microphone", microphone, "screenshare", screenshare, "screenshareAudio", screenshareAudio)
+	}
+
+	if err := errors.Join(
+		sio.pipeline.IOManager.LivekitController.SetProperty("microphone", microphone),
+		sio.pipeline.IOManager.LivekitController.SetProperty("camera", camera),
+		sio.pipeline.IOManager.LivekitController.SetProperty("screenshare", screenshare),
+		// sio.pipeline.IOManager.LivekitController.SetProperty("screenshare-audio", screenshareAudio),
+	); err != nil {
+		sio.log.Errorw("Failed to set available media properties on LiveKit controller", err, "camera", camera, "microphone", microphone, "screenshare", screenshare, "screenshareAudio", screenshareAudio)
 	}
 }
 

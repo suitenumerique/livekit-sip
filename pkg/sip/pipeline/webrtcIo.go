@@ -94,6 +94,28 @@ func (wio *WebrtcIo) Create() error {
 		return fmt.Errorf("failed to connect to livekitbin active-speakers-changed signal: %w", err)
 	}
 
+	if _, err := wio.LivekitBin.Connect("participant-join", func(_ *gst.Element, structure *gst.Structure) {
+		ptr := wiow.Value()
+		if ptr != nil {
+			if _, err := ptr.pipeline.LivekitController.Emit("participant-join", structure); err != nil {
+				ptr.log.Errorw("Failed to emit participant-join signal from livekitbin to io manager", err)
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to connect to livekitbin participant-join signal: %w", err)
+	}
+
+	if _, err := wio.LivekitBin.Connect("participant-left", func(_ *gst.Element, structure *gst.Structure) {
+		ptr := wiow.Value()
+		if ptr != nil {
+			if _, err := ptr.pipeline.LivekitController.Emit("participant-left", structure); err != nil {
+				ptr.log.Errorw("Failed to emit participant-left signal from livekitbin to io manager", err)
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to connect to livekitbin participant-left signal: %w", err)
+	}
+
 	return nil
 }
 

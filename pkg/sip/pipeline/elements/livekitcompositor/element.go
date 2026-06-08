@@ -1,6 +1,7 @@
 package livekitcompositor
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"weak"
@@ -9,7 +10,6 @@ import (
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
-	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitcompositor/patchbay"
 	"github.com/samber/lo"
 )
 
@@ -21,21 +21,15 @@ var CAT = gst.NewDebugCategory(
 
 const NbTracks = int(livekit.TrackSource_SCREEN_SHARE_AUDIO) + 1
 
-func init() {
-	patchbay.CAT = CAT
-}
-
-type ParticipantInfo struct {
-	SID  string
-	Name string
-}
-
 type LivekitCompositor struct {
-	mu sync.Mutex
+	mu     sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	videoWidth     uint
 	videoHeight    uint
 	videoFramerate uint
+	lang           string
 	microphone     bool
 	camera         bool
 	screenshare    bool
@@ -44,10 +38,12 @@ type LivekitCompositor struct {
 	*LivekitCompositorCamera
 	*LivekitCompositorScreenshare
 
-	participants map[string]ParticipantInfo                         // key is participant SID
+	participants map[string]livekittracks.ParticipantInfo           // key is participant SID
 	tracks       [NbTracks]map[string]livekittracks.TrackSourceInfo // key is participant SID, indexed by livekit.TrackSource
 
 	currentLayout []string
+
+	overlayMessage overlayMessage
 }
 
 func (e *LivekitCompositor) New() glib.GoObjectSubclass {
@@ -69,6 +65,22 @@ func (e *LivekitCompositor) ClassInit(klass *glib.ObjectClass) {
 		gst.SignalRunLast,
 		glib.TYPE_NONE,
 		gst.TypeStructure,
+	)
+
+	gst.SignalNew(
+		class.Type(),
+		"participant-join",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		gst.TypeStructure, // livekittracks.ParticipantInfo
+	)
+
+	gst.SignalNew(
+		class.Type(),
+		"participant-left",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		gst.TypeStructure, // livekittracks.ParticipantInfo
 	)
 
 	class.AddPadTemplate(gst.NewPadTemplate(
@@ -96,13 +108,16 @@ func (e *LivekitCompositor) ClassInit(klass *glib.ObjectClass) {
 }
 
 func (e *LivekitCompositor) InstanceInit(instance *glib.Object) {
-	e.participants = make(map[string]ParticipantInfo)
+	e.ctx, e.cancel = context.WithCancel(context.Background())
+
+	e.participants = make(map[string]livekittracks.ParticipantInfo)
 	for i := 0; i < NbTracks; i++ {
 		e.tracks[i] = make(map[string]livekittracks.TrackSourceInfo)
 	}
 	e.videoWidth = 1280
 	e.videoHeight = 720
 	e.videoFramerate = 24
+	e.lang = "en"
 }
 
 func (e *LivekitCompositor) Constructed(instance *glib.Object) {
@@ -118,6 +133,28 @@ func (e *LivekitCompositor) Constructed(instance *glib.Object) {
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect active-speakers-changed signal: %v", err))
 		self.Error("Failed to connect active-speakers-changed signal", err)
+	}
+
+	if _, err := self.Connect("participant-join", func(instance *gst.Element, structure *gst.Structure) {
+		ptr := eweak.Value()
+		if ptr == nil {
+			return
+		}
+		ptr.onParticipantJoin(instance, structure)
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect participant-join signal: %v", err))
+		self.Error("Failed to connect participant-join signal", err)
+	}
+
+	if _, err := self.Connect("participant-left", func(instance *gst.Element, structure *gst.Structure) {
+		ptr := eweak.Value()
+		if ptr == nil {
+			return
+		}
+		ptr.onParticipantLeft(instance, structure)
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect participant-left signal: %v", err))
+		self.Error("Failed to connect participant-left signal", err)
 	}
 }
 
@@ -197,10 +234,11 @@ func (e *LivekitCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTempl
 			return
 		}
 
-		e.participants[info.ParticipantSID] = ParticipantInfo{
-			SID:  info.ParticipantSID,
-			Name: info.ParticipantName,
+		if _, exist := e.participants[info.ParticipantSID]; !exist {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from track source info not found in participants map: %s", info.ParticipantSID))
+			return
 		}
+
 		if ssrc != int(info.SSRC) || session != int(info.Source) || pt != int(info.PT) {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track source info does not match pad name: %s (info: session=%d, ssrc=%d, pt=%d)", pad.GetName(), info.Source, info.SSRC, info.PT))
 			info.SSRC = uint(ssrc)
@@ -255,6 +293,8 @@ func (e *LivekitCompositor) releaseSinkPad(self *gst.Bin, gpad *gst.GhostPad) {
 		return
 	}
 
+	info, infoErr := livekittracks.PadGetTrackSourceInfo(gpad.Pad)
+
 	kind := livekit.TrackSource(session)
 	switch kind {
 	case livekit.TrackSource_MICROPHONE:
@@ -269,11 +309,24 @@ func (e *LivekitCompositor) releaseSinkPad(self *gst.Bin, gpad *gst.GhostPad) {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in released pad name: %s", gpad.GetName()))
 		return
 	}
+
+	if infoErr != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get track source info for released pad: %s, error: %v", gpad.GetName(), infoErr))
+		return
+	}
+
+	if _, exist := e.participants[info.ParticipantSID]; !exist {
+		return
+	}
+
+	delete(e.tracks[info.Source], info.ParticipantSID)
 }
 
 func (e *LivekitCompositor) Finalize(instance *glib.Object) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	e.cancel()
 
 	e.participants = nil
 	for i := 0; i < NbTracks; i++ {

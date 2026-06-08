@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  QUICK TEST: Delayed offer + PIN + UPDATE only
+  Tests the Kamailio TCP routing bug with session refresh.
+  
+  Usage (quick, 10s before UPDATE):
+    sipp -sf trunk_update_only.xml -s 999 -t t1 \
+         -i <local_ip> -p 5072 <kamailio_ip>:5060 \
+         -m 1 -l 1 -trace_err -trace_msg
+
+  Usage (real 15-min timer):
+    sipp -sf trunk_update_only.xml -s 999 -t t1 \
+         -i <local_ip> -p 5072 <kamailio_ip>:5060 \
+         -m 1 -l 1 -key wait_ms 900000
+-->
+
+<scenario name="Trunk Delayed Offer + UPDATE test">
+
+  <!-- INVITE without SDP -->
+  <send retrans="500">
+    <![CDATA[
+      INVITE sip:[service]@[remote_ip]:[remote_port];transport=tcp SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      To: <sip:[service]@[remote_ip]>
+      Call-ID: [call_id]
+      CSeq: [cseq] INVITE
+      Contact: <sip:75421@[local_ip]:[local_port];transport=tcp>
+      Max-Forwards: 70
+      Session-Expires: 900;refresher=uac
+      Min-SE: 900
+      Supported: timer,replaces
+      Allow: INVITE,ACK,CANCEL,BYE,UPDATE,INFO,OPTIONS
+      User-Agent: SIPp-TrunkSimulator/1.0
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"/>
+  <recv response="180" optional="true" timeout="30000"/>
+
+  <!-- 200 OK with SDP offer from LiveKit-SIP -->
+  <recv response="200" rrs="true" timeout="60000"/>
+
+  <!-- ACK with Cisco/Tandberg SDP answer -->
+  <send>
+    <![CDATA[
+      ACK [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] ACK
+      [routes]
+      Max-Forwards: 70
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=tandberg 0 1 IN IP4 [local_ip]
+      s=-
+      b=AS:2048
+      t=0 0
+      m=audio 16384 RTP/AVP 9 0 8 101
+      c=IN IP4 [local_ip]
+      a=rtpmap:9 G722/8000
+      a=rtpmap:0 PCMU/8000
+      a=rtpmap:8 PCMA/8000
+      a=rtpmap:101 telephone-event/8000
+      a=fmtp:101 0-15
+      a=sendrecv
+      a=ptime:20
+      m=video 16386 RTP/AVP 97 126
+      c=IN IP4 [local_ip]
+      b=TIAS:1984000
+      a=rtpmap:97 H264/90000
+      a=fmtp:97 profile-level-id=428016;max-mbps=490000;max-fs=8160;packetization-mode=0
+      a=rtpmap:126 H264/90000
+      a=fmtp:126 profile-level-id=428016;max-mbps=490000;max-fs=8160;packetization-mode=1
+      a=sendrecv
+      a=ptime:20
+      m=application 16388 UDP/BFCP *
+      c=IN IP4 [local_ip]
+      a=floorctrl:c-only
+      m=video 16390 RTP/AVP 97 126
+      c=IN IP4 [local_ip]
+      b=TIAS:1984000
+      a=rtpmap:97 H264/90000
+      a=fmtp:97 profile-level-id=428016;max-mbps=259200;max-fs=32400;packetization-mode=0
+      a=rtpmap:126 H264/90000
+      a=fmtp:126 profile-level-id=428016;max-mbps=259200;max-fs=32400;packetization-mode=1
+      a=content:slides
+      a=label:12
+      a=recvonly
+      a=ptime:20
+      m=application 0 RTP/AVP 0
+      c=IN IP4 0.0.0.0
+
+    ]]>
+  </send>
+
+  <!-- Send PIN digits via INFO: 0744593870 -->
+  <pause milliseconds="2000"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=0
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=7
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=4
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=4
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=5
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=9
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=3
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=8
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=7
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+  <pause milliseconds="250"/>
+
+  <send><![CDATA[
+      INFO [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] INFO
+      [routes]
+      Content-Type: application/dtmf-relay
+      Content-Length: [len]
+
+      Signal=0
+      Duration=160
+
+  ]]></send>
+  <recv response="200" timeout="5000"/>
+
+  <!-- ================================================ -->
+  <!-- WAIT then send UPDATE (session refresh)          -->
+  <!-- Default 10s, use -key wait_ms 900000 for 15 min  -->
+  <!-- ================================================ -->
+  <pause milliseconds="10000"/>
+
+  <send retrans="500">
+    <![CDATA[
+      UPDATE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] UPDATE
+      [routes]
+      Contact: <sip:75421@[local_ip]:[local_port];transport=tcp>
+      Max-Forwards: 70
+      Session-Expires: 900;refresher=uac
+      Min-SE: 900
+      Supported: timer
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- 200 OK for UPDATE: if timeout → TCP bug confirmed! -->
+  <recv response="200" timeout="32000" ontimeout="update_failed">
+  </recv>
+
+  <!-- UPDATE succeeded → clean BYE -->
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] BYE
+      [routes]
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+
+  <!-- ================================================ -->
+  <!-- UPDATE TIMEOUT → BYE with cause=408              -->
+  <!-- (exact reproduction of trunk SBC behavior)       -->
+  <!-- ================================================ -->
+  <label id="update_failed"/>
+
+  <send retrans="500">
+    <![CDATA[
+      BYE [next_url] SIP/2.0
+      Via: SIP/2.0/TCP [local_ip]:[local_port];branch=[branch]
+      From: <sip:75421@comu.minint.fr>;tag=[call_number][pid]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [cseq] BYE
+      [routes]
+      Max-Forwards: 70
+      Reason: SIP ;cause=408;text="Failed to send out mid-dialog request due to a transaction timeout"
+      Content-Length: 0
+
+    ]]>
+  </send>
+  <recv response="200" timeout="5000" optional="true"/>
+
+</scenario>

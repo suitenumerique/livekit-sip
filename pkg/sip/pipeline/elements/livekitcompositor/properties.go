@@ -22,7 +22,7 @@ var properties = []*glib.ParamSpec{
 		1,
 		8192,
 		1280,
-		glib.ParameterWritable|glib.ParameterConstructOnly,
+		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
 	glib.NewUintParam(
 		"video-height",
@@ -31,7 +31,7 @@ var properties = []*glib.ParamSpec{
 		1,
 		8192,
 		720,
-		glib.ParameterWritable|glib.ParameterConstructOnly,
+		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
 	glib.NewUintParam(
 		"framerate",
@@ -40,7 +40,35 @@ var properties = []*glib.ParamSpec{
 		1,
 		500,
 		24,
-		glib.ParameterWritable|glib.ParameterConstructOnly,
+		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewStringParam(
+		"lang",
+		"Language",
+		"Language code for localized overlay text (e.g. en, fr)",
+		nil,
+		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewBoolParam(
+		"microphone",
+		"Microphone",
+		"Whether to subscribe to microphone tracks",
+		false,
+		glib.ParameterReadable|glib.ParameterWritable,
+	),
+	glib.NewBoolParam(
+		"camera",
+		"Camera",
+		"Whether to subscribe to camera tracks",
+		false,
+		glib.ParameterReadable|glib.ParameterWritable,
+	),
+	glib.NewBoolParam(
+		"screenshare",
+		"Screen Share",
+		"Whether to subscribe to screenshare tracks",
+		false,
+		glib.ParameterReadable|glib.ParameterWritable,
 	),
 }
 
@@ -96,6 +124,60 @@ func (e *LivekitCompositor) SetProperty(instance *glib.Object, id uint, value *g
 			return
 		}
 		e.videoFramerate = val
+	case "lang":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting lang property value: %v", err))
+			return
+		}
+		val, ok := gv.(string)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for lang property")
+			return
+		}
+		if val != "" {
+			e.lang = val
+		}
+	case "microphone":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting microphone property value: %v", err))
+			return
+		}
+		val, ok := gv.(bool)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for microphone property")
+			return
+		}
+		if val {
+			if err := e.initMicrophone(self); err != nil {
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Error initializing microphone: %v", err))
+				return
+			}
+		} else {
+			e.cleanupMicrophone(self)
+		}
+	case "camera":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting camera property value: %v", err))
+			return
+		}
+		val, ok := gv.(bool)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for camera property")
+			return
+		}
+		if val {
+			if err := e.initCamera(self); err != nil {
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Error initializing camera: %v", err))
+				return
+			}
+		} else {
+			e.cleanupCamera(self)
+		}
+	case "screenshare":
+		// unlike microphone and camera, screenshare is initialized and cleaned up on demand when sink pads are requested, so we don't need to do anything here
 	default:
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
 	}
@@ -118,6 +200,48 @@ func (e *LivekitCompositor) GetProperty(instance *glib.Object, id uint) *glib.Va
 		value, err := glib.GValue(e.videoFramerate)
 		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value: %v", err))
+			return nil
+		}
+		return value
+	case "video-width":
+		value, err := glib.GValue(e.videoWidth)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			return nil
+		}
+		return value
+	case "video-height":
+		value, err := glib.GValue(e.videoHeight)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			return nil
+		}
+		return value
+	case "lang":
+		value, err := glib.GValue(e.lang)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting lang property value: %v", err))
+			return nil
+		}
+		return value
+	case "microphone":
+		value, err := glib.GValue(e.LivekitCompositorMicrophone != nil)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting microphone property value: %v", err))
+			return nil
+		}
+		return value
+	case "camera":
+		value, err := glib.GValue(e.LivekitCompositorCamera != nil)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting camera property value: %v", err))
+			return nil
+		}
+		return value
+	case "screenshare":
+		value, err := glib.GValue(e.LivekitCompositorScreenshare != nil)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare property value: %v", err))
 			return nil
 		}
 		return value

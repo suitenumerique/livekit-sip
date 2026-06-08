@@ -27,6 +27,7 @@ type IoManagerLivekit struct {
 	videoWidth     uint
 	videoHeight    uint
 	videoFramerate uint
+	lang           string
 
 	AudioIn  map[string]*AudioInTranscode
 	AudioOut *AudioOutTranscode
@@ -117,6 +118,34 @@ var properties = []*glib.ParamSpec{
 		24,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewStringParam(
+		"lang",
+		"Language",
+		"Language code for localized overlay text (e.g. en, fr)",
+		nil,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewBoolParam(
+		"microphone",
+		"Microphone",
+		"Whether to subscribe to microphone tracks",
+		false,
+		glib.ParameterWritable,
+	),
+	glib.NewBoolParam(
+		"camera",
+		"Camera",
+		"Whether to subscribe to camera tracks",
+		false,
+		glib.ParameterWritable,
+	),
+	glib.NewBoolParam(
+		"screenshare",
+		"Screen Share",
+		"Whether to subscribe to screenshare tracks",
+		false,
+		glib.ParameterWritable,
+	),
 }
 
 func (e *IoManagerLivekit) New() glib.GoObjectSubclass {
@@ -138,6 +167,22 @@ func (e *IoManagerLivekit) ClassInit(klass *glib.ObjectClass) {
 		gst.SignalRunLast,
 		glib.TYPE_NONE,
 		gst.TypeStructure, // TrackSourceInfo
+	)
+
+	gst.SignalNew(
+		class.Type(),
+		"participant-join",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		gst.TypeStructure, // livekittracks.ParticipantInfo
+	)
+
+	gst.SignalNew(
+		class.Type(),
+		"participant-left",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		gst.TypeStructure, // livekittracks.ParticipantInfo
 	)
 
 	gst.SignalNew(
@@ -182,6 +227,7 @@ func (e *IoManagerLivekit) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
 	e.videoFramerate = 24
+	e.lang = "en"
 }
 
 func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
@@ -194,6 +240,7 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		"video-width":  e.videoWidth,
 		"video-height": e.videoHeight,
 		"framerate":    e.videoFramerate,
+		"lang":         e.lang,
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create livekit_compositor element: %v", err))
@@ -241,6 +288,36 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to active-speakers-changed signal: %v", err))
 		self.Error("Failed to connect to active-speakers-changed signal", err)
+		return
+	}
+
+	if _, err := self.Connect("participant-join", func(instance *gst.Element, structure *gst.Structure) {
+		e := eweak.Value()
+		if e != nil && e.Compositor != nil {
+			if _, err := e.Compositor.Emit("participant-join", structure); err != nil {
+				self := gst.ToGstBin(instance)
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward participant-join signal from SIP IO element to compositor: %v", err))
+				self.Error("Failed to forward participant-join signal from SIP IO element to compositor", err)
+			}
+		}
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to participant-join signal: %v", err))
+		self.Error("Failed to connect to participant-join signal", err)
+		return
+	}
+
+	if _, err := self.Connect("participant-left", func(instance *gst.Element, structure *gst.Structure) {
+		e := eweak.Value()
+		if e != nil && e.Compositor != nil {
+			if _, err := e.Compositor.Emit("participant-left", structure); err != nil {
+				self := gst.ToGstBin(instance)
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward participant-left signal from SIP IO element to compositor: %v", err))
+				self.Error("Failed to forward participant-left signal from SIP IO element to compositor", err)
+			}
+		}
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to participant-left signal: %v", err))
+		self.Error("Failed to connect to participant-left signal", err)
 		return
 	}
 
@@ -322,6 +399,32 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 			return
 		}
 		e.videoFramerate = val
+	case "lang":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting lang property value: %v", err))
+			return
+		}
+		val, ok := gv.(string)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for lang property")
+			return
+		}
+		if val != "" {
+			e.lang = val
+		}
+	case "microphone":
+		if err := e.Compositor.SetProperty("microphone", value); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set microphone property on compositor: %v", err))
+		}
+	case "camera":
+		if err := e.Compositor.SetProperty("camera", value); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set camera property on compositor: %v", err))
+		}
+	case "screenshare":
+		if err := e.Compositor.SetProperty("screenshare", value); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set screenshare property on compositor: %v", err))
+		}
 	default:
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property ID %d", id))
 	}

@@ -188,17 +188,16 @@ func PadOnTrackSourceInfo(pad *gst.Pad, callback func(pad *gst.Pad, info TrackSo
 
 type ActiveSpeakerChangeInfo struct {
 	ParticipantsSID   []string
-	AudioLevels       []float32
+	AudioLevels       map[string]float64
 	ParticipantTracks map[string][]string
 }
 
 func NewActiveSpeakerChangeInfo(activeParticipants []lksdk.Participant) ActiveSpeakerChangeInfo {
 	participantSIDs := make([]string, len(activeParticipants))
-	audioLevels := make([]float32, len(activeParticipants))
+	audioLevels := make(map[string]float64)
 	participantTracks := make(map[string][]string)
 	for i, participant := range activeParticipants {
 		participantSIDs[i] = participant.SID()
-		audioLevels[i] = participant.AudioLevel()
 		rp, ok := participant.(*lksdk.RemoteParticipant)
 		if !ok {
 			// can be local participant when we are speaking
@@ -210,6 +209,7 @@ func NewActiveSpeakerChangeInfo(activeParticipants []lksdk.Participant) ActiveSp
 			trackSIDs[j] = track.SID()
 		}
 		participantTracks[participant.SID()] = trackSIDs
+		audioLevels[participant.SID()] = float64(participant.AudioLevel())
 	}
 	return ActiveSpeakerChangeInfo{
 		ParticipantsSID:   participantSIDs,
@@ -225,11 +225,15 @@ func newArrayT[T any](items []T) (*glib.Array, error) {
 func (a ActiveSpeakerChangeInfo) Structure() *gst.Structure {
 	s := gst.NewStructure(EventActiveSpeakerChange)
 	lo.Must0(s.SetValue("participants-sid", lo.Must(newArrayT(a.ParticipantsSID))))
-	lo.Must0(s.SetValue("audio-levels", lo.Must(newArrayT(a.AudioLevels))))
+	audioLevels := gst.NewStructure("audio-levels")
+	for participantSID, audioLevel := range a.AudioLevels {
+		lo.Must0(audioLevels.SetDouble(participantSID, audioLevel))
+	}
 	tracks := gst.NewStructure("participant-tracks")
 	for participantSID, trackSIDs := range a.ParticipantTracks {
 		lo.Must0(tracks.SetValue(participantSID, lo.Must(newArrayT(trackSIDs))))
 	}
+	lo.Must0(s.SetValue("audio-levels", audioLevels))
 	lo.Must0(s.SetValue("participant-tracks", tracks))
 	return s
 }
@@ -264,21 +268,17 @@ func ActiveSpeakerChangeInfoFromStructure(s *gst.Structure) (ActiveSpeakerChange
 	if err != nil {
 		return ActiveSpeakerChangeInfo{}, err
 	}
-	audioLevelsArr, ok := audioLevelsVal.(*glib.Array)
+	audioLevelsStruct, ok := audioLevelsVal.(*gst.Structure)
 	if !ok {
-		return ActiveSpeakerChangeInfo{}, fmt.Errorf("invalid audio-levels value: expected array, got %T", audioLevelsVal)
+		return ActiveSpeakerChangeInfo{}, fmt.Errorf("invalid audio-levels value: expected structure, got %T", audioLevelsVal)
 	}
-	audioLevelVals, err := audioLevelsArr.Values()
-	if err != nil {
-		return ActiveSpeakerChangeInfo{}, err
-	}
-	audioLevels := make([]float32, len(audioLevelVals))
-	for i, val := range audioLevelVals {
-		level, ok := val.(float32)
+	audioLevels := make(map[string]float64)
+	for k, val := range audioLevelsStruct.Values() {
+		level, ok := val.(float64)
 		if !ok {
-			return ActiveSpeakerChangeInfo{}, fmt.Errorf("invalid audio-levels array value: expected float32, got %T", val)
+			return ActiveSpeakerChangeInfo{}, fmt.Errorf("invalid audio-levels structure value: expected float64, got %T", val)
 		}
-		audioLevels[i] = level
+		audioLevels[k] = level
 	}
 
 	participantTracksVal, err := s.GetValue("participant-tracks")
@@ -314,5 +314,58 @@ func ActiveSpeakerChangeInfoFromStructure(s *gst.Structure) (ActiveSpeakerChange
 		ParticipantsSID:   participantsSIDs,
 		AudioLevels:       audioLevels,
 		ParticipantTracks: participantTracks,
+	}, nil
+}
+
+type ParticipantInfo struct {
+	SID      string
+	Name     string
+	Identity string
+	Level    float64
+}
+
+func NewParticipantInfo(participant lksdk.Participant) ParticipantInfo {
+	return ParticipantInfo{
+		SID:      participant.SID(),
+		Name:     participant.Name(),
+		Identity: participant.Identity(),
+		Level:    float64(participant.AudioLevel()),
+	}
+}
+
+func (p ParticipantInfo) Structure() *gst.Structure {
+	s := gst.NewStructure("livekitbin_participant_info")
+	lo.Must0(s.SetValue("sid", p.SID))
+	lo.Must0(s.SetValue("name", p.Name))
+	lo.Must0(s.SetValue("identity", p.Identity))
+	lo.Must0(s.SetValue("level", p.Level))
+	return s
+}
+
+func ParticipantInfoFromStructure(s *gst.Structure) (ParticipantInfo, error) {
+	if s.Name() != "livekitbin_participant_info" {
+		return ParticipantInfo{}, fmt.Errorf("invalid structure name: expected livekitbin_participant_info, got %s", s.Name())
+	}
+	sidVal, err := s.GetString("sid")
+	if err != nil {
+		return ParticipantInfo{}, fmt.Errorf("invalid sid value: %v", err)
+	}
+	nameVal, err := s.GetString("name")
+	if err != nil {
+		return ParticipantInfo{}, fmt.Errorf("invalid name value: %v", err)
+	}
+	identityVal, err := s.GetString("identity")
+	if err != nil {
+		return ParticipantInfo{}, fmt.Errorf("invalid identity value: %v", err)
+	}
+	levelVal, err := s.GetDouble("level")
+	if err != nil {
+		return ParticipantInfo{}, fmt.Errorf("invalid level value: %v", err)
+	}
+	return ParticipantInfo{
+		SID:      sidVal,
+		Name:     nameVal,
+		Identity: identityVal,
+		Level:    levelVal,
 	}, nil
 }

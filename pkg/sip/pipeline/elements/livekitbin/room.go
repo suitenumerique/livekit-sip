@@ -3,7 +3,7 @@ package livekitbin
 import (
 	"fmt"
 	"runtime"
-	"slices"
+	"time"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
@@ -213,12 +213,12 @@ func (e *LivekitBin) OnParticipantConnected(rp *lksdk.RemoteParticipant) {
 		return
 	}
 
-	// self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Participant connected: %s", rp.SID()))
-	// if _, err := self.Emit("participant-join", rp.SID()); err != nil {
-	// 	self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-join signal: %v", err))
-	// 	self.Error("Error emitting participant-join signal", err)
-	// 	return
-	// }
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Participant connected: %s", rp.SID()))
+	if _, err := self.Emit("participant-join", livekittracks.NewParticipantInfo(rp).Structure()); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-join signal: %v", err))
+		self.Error("Error emitting participant-join signal", err)
+		return
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -239,12 +239,12 @@ func (e *LivekitBin) OnParticipantDisconnected(rp *lksdk.RemoteParticipant) {
 		return p.SID() != rp.SID()
 	}))
 
-	// self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Participant disconnected: %s", rp.SID()))
-	// if _, err := self.Emit("participant-left", rp.SID()); err != nil {
-	// 	self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-left signal: %v", err))
-	// 	self.Error("Error emitting participant-left signal", err)
-	// 	return
-	// }
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant disconnected: %s", rp.SID()))
+	if _, err := self.Emit("participant-left", livekittracks.NewParticipantInfo(rp).Structure()); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-left signal: %v", err))
+		self.Error("Error emitting participant-left signal", err)
+		return
+	}
 }
 
 func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participant lksdk.Participant) {
@@ -261,13 +261,26 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 
 	ssrc := pub.TrackRemote().SSRC()
 
-	if _, err := e.RtpBin.Emit("clear-ssrc", uint32(pub.Source()), uint(ssrc)); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal for track %s of participant %s: %v", pub.SID(), participant.SID(), err))
-		self.Error(fmt.Sprintf("Error emitting clear-ssrc signal for track %s of participant %s", pub.SID(), participant.SID()), err)
-		return
-	}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		time.Sleep(100 * time.Millisecond)
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Muted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
+		e.mu.Lock()
+		defer e.mu.Unlock()
+
+		if !publication.IsMuted() {
+			return
+		}
+
+		if _, err := e.RtpBin.Emit("clear-ssrc", uint32(pub.Source()), uint(ssrc)); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal for track %s of participant %s: %v", pub.SID(), participant.SID(), err))
+			self.Error(fmt.Sprintf("Error emitting clear-ssrc signal for track %s of participant %s", pub.SID(), participant.SID()), err)
+			return
+		}
+
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Muted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
+	}()
 }
 
 func (e *LivekitBin) OnTrackUnmuted(publication lksdk.TrackPublication, participant lksdk.Participant) {
@@ -284,7 +297,7 @@ func (e *LivekitBin) OnTrackUnmuted(publication lksdk.TrackPublication, particip
 
 	ssrc := pub.TrackRemote().SSRC()
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Unmuted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Unmuted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
 }
 
 func (e *LivekitBin) getCurrentActiveSpeakers() []lksdk.Participant {
@@ -304,12 +317,17 @@ func (e *LivekitBin) updateActiveSpeakers(self *gst.Bin, p []lksdk.Participant) 
 	activeSpeakers := lo.Map(p, func(part lksdk.Participant, i int) string { return part.SID() })
 	activeSpeakers = lo.Uniq(activeSpeakers)
 
-	rp := e.room.GetRemoteParticipants()
+	rp := lo.Map(p, func(part lksdk.Participant, i int) *lksdk.RemoteParticipant {
+		return part.(*lksdk.RemoteParticipant)
+	})
+	rp = append(rp, e.room.GetRemoteParticipants()...)
+	rp = lo.UniqBy(rp, func(part *lksdk.RemoteParticipant) string {
+		return part.SID()
+	})
 	activeSpeakers = lo.Filter(activeSpeakers, func(sid string, i int) bool {
 		if !lo.ContainsBy(rp, func(part *lksdk.RemoteParticipant) bool {
 			return part.SID() == sid
 		}) {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Active speaker with SID %s not found among remote participants", sid))
 			return false
 		}
 		return true
@@ -324,19 +342,30 @@ func (e *LivekitBin) updateActiveSpeakers(self *gst.Bin, p []lksdk.Participant) 
 		activeSpeakers = activeSpeakers[:maxActive]
 	}
 
-	if slices.Equal(e.activeSpeakers, activeSpeakers) {
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers unchanged: %v", activeSpeakers))
-		return
+	if len(activeSpeakers) < maxActive {
+		for _, part := range rp {
+			if len(activeSpeakers) >= maxActive {
+				break
+			}
+			if lo.Contains(activeSpeakers, part.SID()) {
+				continue
+			}
+			activeSpeakers = append(activeSpeakers, part.SID())
+		}
 	}
+
 	e.activeSpeakers = activeSpeakers
+
+	p = lo.Filter(lo.Map(rp, func(part *lksdk.RemoteParticipant, _ int) lksdk.Participant {
+		return part
+	}), func(part lksdk.Participant, i int) bool {
+		return lo.Contains(e.activeSpeakers, part.SID())
+	})
 
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers updated: %v", activeSpeakers))
 
 	structure := livekittracks.NewActiveSpeakerChangeInfo(p).Structure()
-	runtime.SetFinalizer(structure, nil)
-
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers changed: %v", activeSpeakers))
-	if _, err := self.Emit("active-speakers-changed", structure); err != nil {
+	if _, err := self.Emit("active-speakers-changed", structure.Transfer()); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting active-speakers-changed signal: %v", err))
 		self.Error("Error emitting active-speakers-changed signal", err)
 		return

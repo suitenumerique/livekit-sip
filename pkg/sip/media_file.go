@@ -39,7 +39,7 @@ func (s *Server) initMediaRes(conf *config.Config) {
 	s.res.roomJoin = res.ReadOggAudioFile(res.RoomJoinOgg)
 	s.res.wrongPin = res.ReadOggAudioFile(res.WrongPinOgg)
 
-	lang := conf.AudioLanguage
+	lang := conf.Lang
 
 	medias := []struct {
 		name  string

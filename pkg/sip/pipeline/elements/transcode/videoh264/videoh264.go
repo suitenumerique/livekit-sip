@@ -130,7 +130,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 	e.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
 		"speed-preset":     int(1),  // ultrafast
 		"tune":             uint(4), // zerolatency
-		"key-int-max":      uint(12),
+		"key-int-max":      uint(1),
 		"bframes":          uint(0),
 		"vbv-buf-capacity": uint(2000),
 		"bitrate":          uint(defaultBitrate),

@@ -44,6 +44,7 @@ func (c *IOManager) Create() error {
 		"video-width":  c.pipeline.videoWidth,
 		"video-height": c.pipeline.videoHeight,
 		"framerate":    c.pipeline.videoFramerate,
+		"lang":         c.pipeline.lang,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IO Manager LiveKit element: %w", err)

@@ -4,16 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/media-sdk/dtmf"
-	sdpv2 "github.com/livekit/media-sdk/sdp/v2"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/sip/pkg/sip/pipeline"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitcompositor"
 	"github.com/livekit/sipgo/sip"
 )
 
@@ -24,18 +24,6 @@ var (
 const (
 	ScreenshareMSTreamID = 2
 )
-
-type AudioInfo interface {
-	Port() uint16
-	Codec() *sdpv2.Codec
-	AvailableCodecs() []*sdpv2.Codec
-	SetMedia(media *sdpv2.SDPMedia)
-}
-
-type dispatchOperation struct {
-	fn   func() error
-	done chan error
-}
 
 type MediaState int
 
@@ -72,45 +60,40 @@ type MediaOrchestrator struct {
 	opts    *MediaOptions
 	inbound *sipInbound
 
-	dispatchCH chan dispatchOperation
-	dispatchOK atomic.Bool
-	wg         sync.WaitGroup
+	closed atomic.Bool
 
 	pipeline *pipeline.Pipeline
 
 	stats atomic.Pointer[pipeline.CallStats]
 
 	state MediaState
+	wg    sync.WaitGroup
+
+	dtmfHandler func(ev dtmf.Event)
 }
 
 func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipInbound, opts *MediaOptions) (*MediaOrchestrator, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	o := &MediaOrchestrator{
-		ctx:        ctx,
-		cancel:     cancel,
-		log:        log,
-		opts:       opts,
-		inbound:    inbound,
-		dispatchCH: make(chan dispatchOperation, 1),
-		state:      MediaStateNew,
+		ctx:     ctx,
+		cancel:  cancel,
+		log:     log,
+		opts:    opts,
+		inbound: inbound,
+		state:   MediaStateNew,
 	}
 
-	o.wg.Add(1)
-	go o.dispatchLoop()
-	for !o.dispatchOK.Load() {
-		runtime.Gosched() // wait for dispatch loop to start
-	}
-
-	if err := o.dispatch(func() error {
-		return o.init()
-	}); err != nil {
+	if err := o.init(); err != nil {
 		return nil, err
 	}
-
 	return o, nil
+
 }
 
 func (o *MediaOrchestrator) init() error {
+
+	fmt.Println("Initializing media orchestrator")
+
 	if err := o.okStates(MediaStateNew); err != nil {
 		return err
 	}
@@ -122,6 +105,7 @@ func (o *MediaOrchestrator) init() error {
 		VideoWidth:            o.opts.VideoWidth,
 		VideoHeight:           o.opts.VideoHeight,
 		Framerate:             o.opts.Framerate,
+		Lang:                  o.opts.Lang,
 		MaxActiveParticipants: o.opts.MaxActiveParticipants,
 		Gst:                   o.opts.Gst,
 		PublishCodecs:         o.opts.PublishCodecs,
@@ -130,14 +114,11 @@ func (o *MediaOrchestrator) init() error {
 		return fmt.Errorf("could not create pipeline: %w", err)
 	}
 	o.pipeline = p
-	o.pipeline.OnStats(func(stats *pipeline.CallStats) {
-		o.stats.Store(stats)
-	})
 
 	o.wg.Add(1)
-	go o.sendOfferLoop()
+	go o.loopEvents()
 
-	if err := o.pipeline.SetStateWait(gst.StateReady); err != nil {
+	if err := o.pipeline.SetState(gst.StateReady); err != nil {
 		return fmt.Errorf("failed to set pipeline to ready state: %w", err)
 	}
 
@@ -147,144 +128,68 @@ func (o *MediaOrchestrator) init() error {
 }
 
 func (o *MediaOrchestrator) UpdateStats() {
-	if o.pipeline != nil && o.pipeline.Pipeline().GetCurrentState() == gst.StatePlaying {
-		o.pipeline.GetStats()
+	if o.pipeline != nil {
+		stats, err := o.pipeline.GetStats()
+		if err != nil {
+			o.log.Errorw("failed to get pipeline stats", err)
+			return
+		}
+		if stats == nil {
+			return
+		}
+		o.stats.Store(stats)
 	}
 }
 
 func (o *MediaOrchestrator) Stats() *pipeline.CallStats {
-	return o.stats.Load()
+	stats := o.stats.Load()
+	if stats == nil {
+		o.UpdateStats()
+		stats = o.stats.Load()
+	}
+	return stats
 }
 
 func (o *MediaOrchestrator) okStates(allowed ...MediaState) error {
-	for _, state := range allowed {
-		if o.state == state {
-			return nil
-		}
+	if slices.Contains(allowed, o.state) {
+		return nil
 	}
 	return fmt.Errorf("invalid state: %s, expected one of %v: %w", o.state, allowed, ErrWrongState)
 }
 
-const DispatchTimeout = 200 * time.Second
-
-func (o *MediaOrchestrator) dispatch(fn func() error) error {
-	if !o.dispatchOK.Load() {
-		return ErrWrongState
-	}
-
-	done := make(chan error)
-	op := dispatchOperation{
-		fn:   fn,
-		done: done,
-	}
-
-	timeout := time.After(DispatchTimeout)
-
-	select {
-	case o.dispatchCH <- op:
-		break
-	case <-o.ctx.Done():
-		return context.Canceled
-	case <-timeout:
-		o.log.Errorw("media orchestrator dispatch operation timed out", nil, "timeout", DispatchTimeout)
-		return fmt.Errorf("media orchestrator dispatch operation timed out after %v: %w", DispatchTimeout, context.DeadlineExceeded)
-	}
-
-	select {
-	case err := <-done:
-		return err
-	case <-o.ctx.Done():
-		return context.Canceled
-	case <-timeout:
-		o.log.Errorw("media orchestrator dispatch operation timed out", nil, "timeout", DispatchTimeout)
-		return fmt.Errorf("media orchestrator dispatch operation timed out after %v: %w", DispatchTimeout, context.DeadlineExceeded)
-	}
-}
-
-func (o *MediaOrchestrator) dispatchLoop() {
-	o.dispatchOK.Store(true)
-	defer o.dispatchOK.Store(false)
-	defer o.wg.Done()
-	defer o.log.Debugw("media orchestrator dispatch loop exited")
-
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	mu := sync.Mutex{}
-
-	for {
-		select {
-		case <-o.ctx.Done():
-			mu.Lock()
-			o.log.Debugw("media orchestrator dispatch loop exiting")
-			if err := o.close(); err != nil {
-				o.log.Errorw("error closing media orchestrator", err)
-			}
-			mu.Unlock()
-			return
-		case op := <-o.dispatchCH:
-			mu.Lock()
-			err := op.fn()
-			op.done <- err
-			mu.Unlock()
+func (o *MediaOrchestrator) close() {
+	o.wg.Go(func() {
+		if err := o.pipeline.Close(); err != nil {
+			o.log.Errorw("failed to close pipeline", err)
 		}
-	}
-}
-
-func (o *MediaOrchestrator) close() error {
-	var bfcpErr error
-	// if o.bfcp != nil {
-	// 	bfcpErr = o.bfcp.Close()
-	// }
-	err := errors.Join(
-		o.pipeline.Close(),
-		bfcpErr,
-	)
-	o.cancel()
-
-	return err
+	})
 }
 
 func (o *MediaOrchestrator) Close() error {
 	o.cancel()
-	o.wg.Wait()
 
-	log := o.log
-	o.pipeline = nil
-	// *o = MediaOrchestrator{}
-	pipeline.ForceMemoryRelease()
-	log.Debugw("media orchestrator closed")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		o.wg.Wait()
+	}()
 
-	return nil
+	select {
+	case <-done:
+		pipeline.ForceMemoryRelease()
+		o.log.Debugw("media orchestrator closed")
+		return nil
+	case <-time.After(2 * time.Minute):
+		o.log.Warnw("timeout waiting for media orchestrator to close", nil)
+		return fmt.Errorf("timeout waiting for media orchestrator to close")
+	}
 }
-
-// // GetRoom implements [RoomCallbacks].
-// func (o *MediaOrchestrator) JoinRoom(wsUrl, token string, callbacks *lksdk.RoomCallback, opts ...lksdk.ConnectOption) (*lksdk.Room, error) {
-// 	var errs []error
-// 	room, err := o.pipeline.GetRoom()
-// 	if err != nil || room == nil {
-// 		return nil, fmt.Errorf("could not get room from pipeline: %w", err)
-// 	}
-// 	errs = append(errs, err)
-// 	errs = append(errs, o.pipeline.SetRoomCallbacks(callbacks))
-// 	errs = append(errs, o.pipeline.SetRoomOptions(wsUrl, token, opts...))
-// 	if err := errors.Join(errs...); err != nil {
-// 		return nil, fmt.Errorf("could not join room: %w", err)
-// 	}
-// 	return room, nil
-// }
 
 func (o *MediaOrchestrator) AnswerSDP(offer []byte) (answer []byte, err error) {
 	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return nil, err
 	}
-	if err := o.dispatch(func() error {
-		answer, err = o.answerSDP(offer)
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	return answer, nil
+	return o.answerSDP(offer)
 }
 
 func (o *MediaOrchestrator) answerSDP(offerData []byte) ([]byte, error) {
@@ -307,12 +212,11 @@ func (o *MediaOrchestrator) AckSDP(req *sip.Request, tx sip.ServerTransaction) e
 	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return err
 	}
-	return o.dispatch(func() error {
-		return o.ackSDP(req, tx)
-	})
+
+	return o.ackSDP(req, tx)
 }
 
-func (o *MediaOrchestrator) ackSDP(req *sip.Request, tx sip.ServerTransaction) error {
+func (o *MediaOrchestrator) ackSDP(req *sip.Request, _ sip.ServerTransaction) error {
 	sdp := req.Body()
 	if sdp == nil {
 		sdp = []byte{}
@@ -328,16 +232,35 @@ func (o *MediaOrchestrator) ackSDP(req *sip.Request, tx sip.ServerTransaction) e
 	return nil
 }
 
-func (o *MediaOrchestrator) sendOfferLoop() {
+func (o *MediaOrchestrator) loopEvents() {
 	defer o.wg.Done()
 	for {
 		select {
 		case <-o.ctx.Done():
+			o.close()
 			return
 		case offer := <-o.pipeline.SendOfferCh():
 			if err := o.handleSendOffer(offer); err != nil {
 				o.log.Errorw("failed to handle send-offer-sdp", err)
 			}
+		case nb, ok := <-o.pipeline.DTMF():
+			if !ok {
+				continue
+			}
+			digit, ok := dtmfMap[nb]
+			if !ok {
+				o.log.Warnw("Received invalid DTMF number", nil, "number", nb)
+				continue
+			}
+			if o.dtmfHandler == nil {
+				continue
+			}
+			// TODO: do we need to set the other fields?
+			o.dtmfHandler(dtmf.Event{
+				Code:  byte(nb),
+				Digit: digit,
+			})
+
 		}
 	}
 }
@@ -384,26 +307,7 @@ func (o *MediaOrchestrator) Start() (err error) {
 	if err := o.okStates(MediaStateReady); err != nil {
 		return err
 	}
-	if err := o.dispatch(func() error {
-		return o.start()
-	}); err != nil {
-		return err
-	}
-
-	// o.wg.Add(1)
-	// go func() {
-	// 	defer o.wg.Done()
-	// 	for {
-	// 		select {
-	// 		case <-o.ctx.Done():
-	// 			return
-	// 		case <-time.After(10 * time.Second):
-	// 			o.pipeline.GetStats()
-	// 		}
-	// 	}
-	// }()
-
-	return nil
+	return o.start()
 }
 
 var dtmfMap = map[int]byte{
@@ -422,26 +326,17 @@ var dtmfMap = map[int]byte{
 }
 
 func (o *MediaOrchestrator) DtmfHandler(h func(ev dtmf.Event)) {
-	go func() {
-		for {
-			select {
-			case <-o.ctx.Done():
-				return
-			case nb, ok := <-o.pipeline.DTMF():
-				if !ok {
-					return
-				}
-				digit, ok := dtmfMap[nb]
-				if !ok {
-					o.log.Warnw("Received invalid DTMF number", nil, "number", nb)
-					continue
-				}
-				// TODO: do we need to set the other fields?
-				h(dtmf.Event{
-					Code:  byte(nb),
-					Digit: digit,
-				})
-			}
-		}
-	}()
+	o.dtmfHandler = h
+}
+
+func (o *MediaOrchestrator) ShowMessage(message string, level gst.DebugLevel) {
+	if o.pipeline != nil {
+		o.pipeline.SetContext(livekitcompositor.NewContextOverlayMessage(message, level, true))
+	}
+}
+
+func (o *MediaOrchestrator) HideMessage() {
+	if o.pipeline != nil {
+		o.pipeline.SetContext(livekitcompositor.NewContextOverlayMessage("", 0, false))
+	}
 }

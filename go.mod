@@ -1,6 +1,6 @@
 module github.com/livekit/sip
 
-go 1.25.0
+go 1.26.1
 
 require (
 	github.com/at-wat/ebml-go v0.17.1
@@ -28,6 +28,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.1
 	github.com/vopenia-io/bfcp v0.0.0-20260428104619-de0bcc21f650
+	github.com/vopenia-io/go-pangocairo v0.0.0-20260526081257-c40a5ac7c67c
 	golang.org/x/exp v0.0.0-20260212183809-81e46e3db34a
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
@@ -144,7 +145,7 @@ require (
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.42.0
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.34.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260209200024-4cfbd4190f57 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260209200024-4cfbd4190f57 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
@@ -152,6 +153,6 @@ require (
 
 replace github.com/livekit/media-sdk => github.com/vopenia-io/media-sdk v0.0.0-20251229153245-6b76cc17de47
 
-replace github.com/go-gst/go-gst => github.com/vopenia-io/go-gst v0.0.0-20260515154752-6148a6c18f3b
+replace github.com/go-gst/go-gst => github.com/vopenia-io/go-gst v0.0.0-20260526082237-c8c9bdf47527
 
-replace github.com/go-gst/go-glib => github.com/vopenia-io/go-glib v0.0.0-20260506081817-41da25f01133
+replace github.com/go-gst/go-glib => github.com/vopenia-io/go-glib v0.0.0-20260519120019-03a8b66c8c02
