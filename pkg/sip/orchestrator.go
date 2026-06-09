@@ -92,8 +92,6 @@ func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipIn
 
 func (o *MediaOrchestrator) init() error {
 
-	fmt.Println("Initializing media orchestrator")
-
 	if err := o.okStates(MediaStateNew); err != nil {
 		return err
 	}
