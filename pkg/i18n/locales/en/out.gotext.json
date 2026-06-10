@@ -1,0 +1,43 @@
+{
+    "language": "en",
+    "messages": [
+        {
+            "id": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "message": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "translation": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "translatorComment": "Copied from source.",
+            "placeholders": [
+                {
+                    "id": "Repeat_lenpin",
+                    "string": "%[1]s",
+                    "type": "string",
+                    "underlyingType": "string",
+                    "argNum": 1,
+                    "expr": "strings.Repeat(\"*\", len(pin))"
+                }
+            ],
+            "fuzzy": true
+        },
+        {
+            "id": "Invalid PIN",
+            "message": "Invalid PIN",
+            "translation": "Invalid PIN",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "PIN accepted, joining the call...",
+            "message": "PIN accepted, joining the call...",
+            "translation": "PIN accepted, joining the call...",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "You are the only participant...",
+            "message": "You are the only participant...",
+            "translation": "You are the only participant...",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        }
+    ]
+}

@@ -1,0 +1,35 @@
+{
+    "language": "fr",
+    "messages": [
+        {
+            "id": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "message": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "translation": "Veuillez saisir votre code PIN suivi de # (utilisez * pour effacer)\nSaisi : {Repeat_lenpin}",
+            "placeholders": [
+                {
+                    "id": "Repeat_lenpin",
+                    "string": "%[1]s",
+                    "type": "string",
+                    "underlyingType": "string",
+                    "argNum": 1,
+                    "expr": "strings.Repeat(\"*\", len(pin))"
+                }
+            ]
+        },
+        {
+            "id": "Invalid PIN",
+            "message": "Invalid PIN",
+            "translation": "Code PIN invalide"
+        },
+        {
+            "id": "PIN accepted, joining the call...",
+            "message": "PIN accepted, joining the call...",
+            "translation": "Code PIN accepté, connexion en cours..."
+        },
+        {
+            "id": "You are the only participant...",
+            "message": "You are the only participant...",
+            "translation": "Vous êtes le seul participant..."
+        }
+    ]
+}

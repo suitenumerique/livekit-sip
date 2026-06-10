@@ -40,29 +40,29 @@ func init() {
 
 var messageKeyToIndex = map[string]int{
 	"Invalid PIN":                       1,
-	"No video track":                    3,
 	"PIN accepted, joining the call...": 2,
 	"Please enter your PIN followed by # (use * to delete)\nEntered: %s": 0,
+	"You are the only participant...":                                    3,
 }
 
 var enIndex = []uint32{ // 5 elements
 	0x00000000, 0x00000045, 0x00000051, 0x00000073,
-	0x00000082,
+	0x00000093,
 } // Size: 44 bytes
 
-const enData string = "" + // Size: 130 bytes
+const enData string = "" + // Size: 147 bytes
 	"\x02Please enter your PIN followed by # (use * to delete)\x0aEntered: %[" +
-	"1]s\x02Invalid PIN\x02PIN accepted, joining the call...\x02No video trac" +
-	"k"
+	"1]s\x02Invalid PIN\x02PIN accepted, joining the call...\x02You are the o" +
+	"nly participant..."
 
 var frIndex = []uint32{ // 5 elements
 	0x00000000, 0x00000052, 0x00000064, 0x0000008d,
-	0x000000a1,
+	0x000000af,
 } // Size: 44 bytes
 
-const frData string = "" + // Size: 161 bytes
+const frData string = "" + // Size: 175 bytes
 	"\x02Veuillez saisir votre code PIN suivi de # (utilisez * pour effacer)" +
 	"\x0aSaisi : %[1]s\x02Code PIN invalide\x02Code PIN accepté, connexion en" +
-	" cours...\x02Aucune piste vidéo"
+	" cours...\x02Vous êtes le seul participant..."
 
-	// Total table size 379 bytes (0KiB); checksum: CE247873
+	// Total table size 410 bytes (0KiB); checksum: 88E2B8BB
