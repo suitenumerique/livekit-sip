@@ -94,6 +94,13 @@ func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.
 		return sip.CallDispatch{Result: sip.DispatchServiceUnavailable}
 	}
 	resp.Upgrade()
+	log.Infow("SIP dispatch rule evaluated",
+		"result", resp.Result.String(),
+		"requestPin", resp.RequestPin,
+		"ruleID", resp.SipDispatchRuleId,
+		"trunkID", resp.SipTrunkId,
+		"roomName", resp.RoomName,
+		"projectID", resp.ProjectId)
 	if info.Call.GetFrom().GetUser() == "" && info.Call.SourceIp != "" {
 		resp.ParticipantIdentity += info.Call.SourceIp
 		resp.ParticipantName += info.Call.SourceIp

@@ -101,6 +101,23 @@ const (
 	DispatchServiceUnavailable // dispatch rule evaluation failed at the transport level
 )
 
+func (r DispatchResult) String() string {
+	switch r {
+	case DispatchAccept:
+		return "accept"
+	case DispatchRequestPin:
+		return "request-pin"
+	case DispatchNoRuleReject:
+		return "reject"
+	case DispatchNoRuleDrop:
+		return "drop"
+	case DispatchServiceUnavailable:
+		return "unavailable"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(r))
+	}
+}
+
 type CallDispatch struct {
 	Result              DispatchResult
 	Room                RoomConfig

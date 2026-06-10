@@ -1224,7 +1224,10 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 					return disp, false, psrpc.NewErrorf(psrpc.Unavailable, "dispatch rule evaluation unavailable")
 				}
 				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
-					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
+					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin,
+						"dispatchResult", disp.Result.String(),
+						"ruleID", disp.DispatchRuleID,
+						"roomName", disp.Room.RoomName)
 					c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
 					c.playAudio(ctx, c.s.res.wrongPinFd)
 					c.close(ctx, callDropped, stats.ClientError("wrong-pin"))
