@@ -36,6 +36,15 @@ func (p *Pipeline) EmitAckSDP(sdp string) error {
 	return nil
 }
 
+// EmitOfferAborted releases the negotiation state held by an outgoing offer
+// whose re-INVITE failed.
+func (p *Pipeline) EmitOfferAborted() error {
+	if _, err := p.SipBin.Emit("abort-offer"); err != nil {
+		return fmt.Errorf("failed to emit abort-offer: %w", err)
+	}
+	return nil
+}
+
 func (p *Pipeline) SendOfferCh() <-chan string {
 	return p.SipIo.sendOfferCh
 }

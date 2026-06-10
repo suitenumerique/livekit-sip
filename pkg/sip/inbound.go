@@ -380,18 +380,27 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	s.cmu.RUnlock()
 	if existing != nil && existing.cc.InviteCSeq() < cc.InviteCSeq() {
 		existing.log().Infow("reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
+		offerData := req.Body()
+		if existing.medias != nil && existing.medias.ReInvitePending() {
+			existing.log().Infow("re-INVITE glare, responding 491 Request Pending", "cseq", cc.InviteCSeq())
+			cc.RejectReInvite(statusRequestPending, "Request Pending")
+			return nil
+		}
 		existing.cc.resetRefreshTimer()
 		existing.cc.mu.RLock()
 		cc.sessionExpires = existing.cc.sessionExpires
 		cc.minSe = existing.cc.minSe
 		cc.refresher = existing.cc.refresher
 		existing.cc.mu.RUnlock()
-		offerData := req.Body()
 		if existing.medias != nil && len(offerData) > 0 {
 			answerData, err := existing.medias.AnswerSDP(offerData)
 			if err != nil {
 				existing.log().Errorw("Cannot create SDP answer for re-INVITE", err)
-				cc.AcceptAsKeepAlive(existing.cc.OwnSDP())
+				if existing.medias.ReInvitePending() {
+					cc.RejectReInvite(statusRequestPending, "Request Pending")
+				} else {
+					cc.RejectReInvite(sip.StatusNotAcceptableHere, "Not Acceptable Here")
+				}
 			} else {
 				existing.cc.SetOwnSDP(answerData)
 				cc.AcceptAsKeepAlive(answerData)
@@ -1906,6 +1915,15 @@ func (c *sipInbound) AcceptAsKeepAlive(sdp []byte) {
 	c.respondWithData(sip.StatusOK, "OK", "application/sdp", sdp)
 }
 
+// statusRequestPending is the 491 Request Pending status (RFC 3261 §14.2).
+const statusRequestPending = sip.StatusCode(491)
+
+// RejectReInvite responds to an in-dialog INVITE without caching the
+// rejection for replay.
+func (c *sipInbound) RejectReInvite(status sip.StatusCode, reason string) {
+	c.respond(status, reason)
+}
+
 func (c *sipInbound) OwnSDP() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -2212,16 +2230,29 @@ func (c *sipInbound) AcceptBye(req *sip.Request, tx sip.ServerTransaction) {
 	c.drop() // mark as closed
 }
 
-func (c *sipInbound) swapSrcDst(req *sip.Request) {
+// routedDestination is the in-dialog request destination derived from the
+// remote Contact / Record-Route headers.
+func (c *sipInbound) routedDestination() string {
 	dest := c.inviteOk.Destination()
 	if contact := c.invite.Contact(); contact != nil {
-		req.Recipient = contact.Address
 		dest = ConvertURI(&contact.Address).GetDest()
-	} else {
-		req.Recipient = c.from.Address
 	}
 	if route := c.invite.RecordRoute(); route != nil {
 		dest = ConvertURI(&route.Address).GetDest()
+	}
+	return dest
+}
+
+func (c *sipInbound) swapSrcDst(req *sip.Request) {
+	if contact := c.invite.Contact(); contact != nil {
+		req.Recipient = contact.Address
+	} else {
+		req.Recipient = c.from.Address
+	}
+	dest := c.routedDestination()
+	// Send in-dialog requests on the flow the INVITE came from.
+	if src := c.invite.Source(); src != "" {
+		dest = src
 	}
 	req.SetSource(c.inviteOk.Source())
 	req.SetDestination(dest)
@@ -2310,7 +2341,17 @@ func (c *sipInbound) sendReInvite(ctx context.Context, offerSDP []byte) (*sip.Re
 
 	tx, err := c.Transaction(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create re-INVITE transaction: %w", err)
+		// Retry once via the Contact/Record-Route destination.
+		if dest := c.routedDestination(); dest != "" && dest != req.Destination() {
+			if via := req.Via(); via != nil {
+				via.Params.Add("branch", sip.GenerateBranchN(16))
+			}
+			req.SetDestination(dest)
+			tx, err = c.Transaction(req)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to create re-INVITE transaction: %w", err)
+		}
 	}
 	defer tx.Terminate()
 

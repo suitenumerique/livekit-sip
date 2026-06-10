@@ -209,8 +209,12 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 	return []byte(answerData), nil
 }
 
+// offerReadyTimeout bounds how long an incoming offer waits for a pending
+// transaction.
+var offerReadyTimeout = 5 * time.Second
+
 func (e *SipBin) OnOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error) {
-	unlock, err := e.transaction.WaitReady()
+	unlock, err := e.transaction.WaitReadyTimeout(offerReadyTimeout)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to wait for transaction to be ready: %v", err))
 		return nil, fmt.Errorf("transaction is not ready: %w", err)
@@ -349,9 +353,68 @@ func (e *SipBin) OnAnswerSdp(self *gst.Bin, answerData []byte) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	e.pendingOffer = nil
 	e.transactionID.Add(1)
 
 	return e.handleAnswerSdp(self, answerData)
+}
+
+// pendingOffer records the media state added for an outgoing offer.
+type pendingOffer struct {
+	prevMediasLen int
+}
+
+// rollbackPendingOffer reverts the screenshare media/track added for the
+// pending outgoing offer. Caller must hold e.mu.
+func (e *SipBin) rollbackPendingOffer(self *gst.Bin) {
+	po := e.pendingOffer
+	if po == nil {
+		return
+	}
+	e.pendingOffer = nil
+
+	if po.prevMediasLen >= 0 && po.prevMediasLen < len(e.Medias) {
+		e.Medias = e.Medias[:po.prevMediasLen]
+	}
+
+	if track := e.Tracks[livekit.TrackSource_SCREEN_SHARE]; track != nil && track.Idx >= po.prevMediasLen {
+		if err := e.CleanupTrack(self, track); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup screenshare track during offer rollback: %v", err))
+		}
+	}
+
+	// Remove the floorid attributes the offer added on the BFCP media.
+	if e.Bfcp != nil && e.Bfcp.Idx < len(e.Medias) && e.Medias[e.Bfcp.Idx] != nil {
+		bfcpMedia := e.Medias[e.Bfcp.Idx]
+		for i := bfcpMedia.AttributesLen(); i > 0; {
+			i--
+			if bfcpMedia.GetAttribute(i).Key() != "floorid" {
+				continue
+			}
+			if ret := bfcpMedia.RemoveAttribute(i); ret != gstsdp.SDPResultOk {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove floorid attribute during offer rollback: %v", ret))
+			}
+		}
+	}
+
+	self.Log(CAT, gst.LevelInfo, "Rolled back pending offer media state")
+}
+
+// OnOfferAborted releases the transaction held by an outgoing offer whose
+// re-INVITE failed and rolls back the media state added for it.
+func (e *SipBin) OnOfferAborted(self *gst.Bin) {
+	unlock, err := e.transaction.Ack(TransactionPendingKindAnswer)
+	if err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No pending offer transaction to abort: %v", err))
+		return
+	}
+	defer unlock()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.transactionID.Add(1)
+	e.rollbackPendingOffer(self)
 }
 
 func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
@@ -448,7 +511,8 @@ func (e *SipBin) makeSdpSession() (*gstsdp.Message, error) {
 	if ret := session.SetVersion("0"); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to set version on answer: %v", ret)
 	}
-	if ret := session.SetOrigin("-", e.sessionID, "1", "IN", lo.Ternary(e.ip.To4() != nil, "IP4", "IP6"), e.ip.String()); ret != gstsdp.SDPResultOk {
+	e.sdpVersion++
+	if ret := session.SetOrigin("-", e.sessionID, strconv.FormatUint(e.sdpVersion, 10), "IN", lo.Ternary(e.ip.To4() != nil, "IP4", "IP6"), e.ip.String()); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to set origin on answer: %v", ret)
 	}
 	if ret := session.SetSessionName("LiveKit SIP"); ret != gstsdp.SDPResultOk {
@@ -562,28 +626,33 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 		}
 		e.transactionID.Add(1)
 
-		screenshareMedia, err := e.makeOfferMedia(self, livekit.TrackSource_SCREEN_SHARE, len(e.Medias), e.Tracks[livekit.TrackSource_CAMERA].Proto)
+		prevMediasLen := len(e.Medias)
+		screenshareMedia, err := e.makeOfferMedia(self, livekit.TrackSource_SCREEN_SHARE, prevMediasLen, e.Tracks[livekit.TrackSource_CAMERA].Proto)
 		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media for early reinvite: %v", err))
 			return
 		}
 
 		e.Medias = append(e.Medias, screenshareMedia)
+		e.pendingOffer = &pendingOffer{prevMediasLen: prevMediasLen}
 
 		if err := e.bfcpMediaAddStreams(e.Medias); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer: %v", err))
+			e.rollbackPendingOffer(self)
 			return
 		}
 
 		offer, err := e.makeOfferSdp(self)
 		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer for early reinvite: %v", err))
+			e.rollbackPendingOffer(self)
 			return
 		}
 
 		offerData := offer.AsText()
 		if offerData == "" {
 			self.Log(CAT, gst.LevelError, "Failed to serialize offer for early reinvite")
+			e.rollbackPendingOffer(self)
 			return
 		}
 
@@ -591,6 +660,7 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 
 		if _, err := self.Emit("send-offer-sdp", string(offerData)); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit send-offer-sdp signal: %v", err))
+			e.rollbackPendingOffer(self)
 			return
 		}
 		e.transaction.SetPending(TransactionPendingKindAnswer)

@@ -43,6 +43,8 @@ type SipBin struct {
 
 	transaction   *SipTransaction
 	transactionID atomic.Uint64
+	pendingOffer  *pendingOffer
+	sdpVersion    uint64 // o= line version, incremented per generated SDP (RFC 3264 §8)
 
 	wg sync.WaitGroup
 }
@@ -51,6 +53,7 @@ var (
 	SignalOfferSdpID       uint
 	SignalAnswerSdpID      uint
 	SignalAckSdpID         uint
+	SignalAbortOfferID     uint
 	SignalSendOfferSdpID   uint
 	SignalAvailableMediaID uint
 )
@@ -91,6 +94,13 @@ func (e *SipBin) ClassInit(klass *glib.ObjectClass) {
 		gst.SignalRunLast,
 		glib.TYPE_NONE,
 		glib.TYPE_STRING,
+	)
+
+	SignalAbortOfferID = gst.SignalNew(
+		class.Type(),
+		"abort-offer",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
 	)
 
 	gst.SignalNew(
@@ -217,6 +227,19 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect ack-sdp signal: %v", err))
 		self.Error("failed to connect ack-sdp signal", err)
+		return
+	}
+
+	if _, err := self.Connect("abort-offer", func(instance *gst.Element) {
+		e := eweak.Value()
+		if e == nil {
+			return
+		}
+		self := gst.ToGstBin(instance)
+		e.OnOfferAborted(self)
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect abort-offer signal: %v", err))
+		self.Error("failed to connect abort-offer signal", err)
 		return
 	}
 

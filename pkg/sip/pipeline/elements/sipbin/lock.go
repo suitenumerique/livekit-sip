@@ -3,9 +3,13 @@ package sipbin
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
-var ErrTransactionClosed = fmt.Errorf("transaction closed")
+var (
+	ErrTransactionClosed = fmt.Errorf("transaction closed")
+	ErrTransactionBusy   = fmt.Errorf("transaction busy")
+)
 
 type TransactionPendingKind int
 
@@ -31,12 +35,36 @@ type SipTransaction struct {
 }
 
 func (t *SipTransaction) WaitReady() (unlock func(), err error) {
+	return t.waitReady(time.Time{})
+}
+
+// WaitReadyTimeout is WaitReady with a deadline: returns ErrTransactionBusy if
+// the transaction is still active after d.
+func (t *SipTransaction) WaitReadyTimeout(d time.Duration) (unlock func(), err error) {
+	return t.waitReady(time.Now().Add(d))
+}
+
+func (t *SipTransaction) waitReady(deadline time.Time) (unlock func(), err error) {
+	if !deadline.IsZero() {
+		// Wake waiters at the deadline.
+		timer := time.AfterFunc(time.Until(deadline), func() {
+			t.mu.Lock()
+			t.cond.Broadcast()
+			t.mu.Unlock()
+		})
+		defer timer.Stop()
+	}
+
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
 		return nil, ErrTransactionClosed
 	}
 	for t.active {
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			t.mu.Unlock()
+			return nil, ErrTransactionBusy
+		}
 		t.cond.Wait()
 		if t.closed {
 			t.mu.Unlock()

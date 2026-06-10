@@ -60,7 +60,8 @@ type MediaOrchestrator struct {
 	opts    *MediaOptions
 	inbound *sipInbound
 
-	closed atomic.Bool
+	closed          atomic.Bool
+	reinvitePending atomic.Bool
 
 	pipeline *pipeline.Pipeline
 
@@ -263,21 +264,41 @@ func (o *MediaOrchestrator) loopEvents() {
 	}
 }
 
+// ReInvitePending reports whether an outgoing re-INVITE is awaiting its
+// response.
+func (o *MediaOrchestrator) ReInvitePending() bool {
+	return o.reinvitePending.Load()
+}
+
+// abortOffer releases the pipeline negotiation state held by a failed
+// outgoing offer.
+func (o *MediaOrchestrator) abortOffer() {
+	if err := o.pipeline.EmitOfferAborted(); err != nil {
+		o.log.Errorw("failed to abort pending offer", err)
+	}
+}
+
 func (o *MediaOrchestrator) handleSendOffer(offer string) error {
+	o.reinvitePending.Store(true)
+	defer o.reinvitePending.Store(false)
+
 	resp, err := o.inbound.sendReInvite(o.ctx, []byte(offer))
 	if err != nil {
 		o.log.Errorw("re-INVITE failed", err)
+		o.abortOffer()
 		return err
 	}
 
 	if resp.StatusCode != 200 {
 		o.log.Errorw("re-INVITE rejected", nil, "status", resp.StatusCode)
+		o.abortOffer()
 		return fmt.Errorf("re-INVITE rejected with status %d", resp.StatusCode)
 	}
 
 	answerSDP := string(resp.Body())
 	if answerSDP == "" {
 		o.log.Errorw("re-INVITE 200 OK has no SDP body", nil)
+		o.abortOffer()
 		return fmt.Errorf("re-INVITE 200 OK has no SDP body")
 	}
 
