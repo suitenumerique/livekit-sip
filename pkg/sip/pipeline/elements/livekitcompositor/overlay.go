@@ -73,6 +73,7 @@ type overlayCache struct {
 	nTracks          int
 	ParticipantCount int
 	message          overlayMessage
+	fontScale        float64
 }
 
 type participantOverlayInfo struct {
@@ -98,6 +99,7 @@ func (e *LivekitCompositor) refreshOverlayCache() {
 		nTracks:          len(e.currentLayout),
 		ParticipantCount: len(e.participants),
 		message:          e.overlayMessage,
+		fontScale:        float64(e.videoWidth) / float64(1280) * float64(pango.SCALE),
 	}
 
 	e.LivekitCompositorCamera.overlayCache.Store(cache)
@@ -170,7 +172,7 @@ func (e *LivekitCompositor) collectParticipantOverlayInfo() []participantOverlay
 	return out
 }
 
-func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context) {
+func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context, cache *overlayCache) {
 	cr.Save()
 	cr.SetSourceRGBA(bgColorR, bgColorG, bgColorB, 1.0)
 	cr.Rectangle(0, 0, float64(e.videoWidth), float64(e.videoHeight))
@@ -178,7 +180,8 @@ func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context
 	cr.Restore()
 
 	layout := pango.CairoCreateLayout(cr)
-	desc := pango.FontDescriptionFromString("Sans Bold 36")
+	desc := pango.FontDescriptionFromString("Sans Bold")
+	desc.SetSize(int(cache.fontScale * 14))
 	layout.SetFontDescription(desc)
 	layout.SetText(i18n.Printer(e.lang).Sprintf("You are the only participant..."), -1)
 	pw, ph := layout.GetSize()
@@ -204,7 +207,8 @@ func (e *LivekitCompositor) drawOverlayMessage(self *gst.Bin, cr *cairo.Context,
 	cr.Restore()
 
 	layout := pango.CairoCreateLayout(cr)
-	desc := pango.FontDescriptionFromString("Sans Bold 36")
+	desc := pango.FontDescriptionFromString("Sans Bold")
+	desc.SetSize(int(cache.fontScale * 14))
 	layout.SetFontDescription(desc)
 	layout.SetText(cache.message.Message, -1)
 	pw, ph := layout.GetSize()
@@ -246,7 +250,7 @@ func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gs
 	nTracks := cache.nTracks
 
 	if nTracks == 0 {
-		e.drawOverlayNoTracks(self, cr)
+		e.drawOverlayNoTracks(self, cr, cache)
 		return
 	}
 
@@ -300,7 +304,8 @@ func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gs
 
 		// Bold initial centered on the disc.
 		layout := pango.CairoCreateLayout(cr)
-		desc := pango.FontDescriptionFromString(fmt.Sprintf("Sans Bold %d", int(radius*1.1)))
+		desc := pango.FontDescriptionFromString("Sans")
+		desc.SetSize(int(radius * 0.75 * float64(pango.SCALE)))
 		layout.SetFontDescription(desc)
 		layout.SetText(initial, -1)
 		pw, ph := layout.GetSize()
