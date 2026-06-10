@@ -81,9 +81,10 @@ type VideoConfig struct {
 }
 
 type GstConfig struct {
-	Debug   string `yaml:"debug"`
-	DumpDot bool   `yaml:"dump_dot"`
-	DumpDir string `yaml:"dump_dir"`
+	Debug     string `yaml:"debug"`
+	DumpDot   bool   `yaml:"dump_dot"`
+	DumpDir   string `yaml:"dump_dir"`
+	DedupLogs bool   `yaml:"dedup_logs"`
 }
 
 type PublishCodecConfig struct {
