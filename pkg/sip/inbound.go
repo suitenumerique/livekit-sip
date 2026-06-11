@@ -804,10 +804,15 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	// Send initial request. In the best case scenario, we will immediately get a room name to join.
 	// Otherwise, we could even learn that this number is not allowed and reject the call, or ask for pin if required.
 	tdisp := c.mon.StageDurTimer("eval-dispatch")
+	// The X-PIN header carries a PIN supplied by the SIP proxy, skipping the DTMF prompt when set.
+	pin := ""
+	if h := req.GetHeader("X-PIN"); h != nil {
+		pin = strings.TrimSpace(h.Value())
+	}
 	disp := c.s.handler.DispatchCall(ctx, &CallInfo{
 		TrunkID: trunkID,
 		Call:    c.call,
-		Pin:     "",
+		Pin:     pin,
 		NoPin:   false,
 	})
 	tdisp()
