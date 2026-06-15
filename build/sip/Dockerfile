@@ -36,12 +36,10 @@ COPY pkg/ pkg/
 COPY version/ version/
 
 # build
-RUN if [ "$TARGETPLATFORM" = "linux/arm64" ]; then GOARCH=arm64; else GOARCH=amd64; fi && \
-    CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -a \
-    -ldflags "-X github.com/livekit/sip/version.Version=${VERSION}" \
-    -o livekit-sip ./cmd/livekit-sip
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags='-s -w' -o /out/livekit-sip ./cmd/livekit-sip
 
-FROM debian:debian:13.5-slim
+FROM ubuntu:24.04
 
 # install wget for health check
 RUN apt-get update && \
@@ -50,7 +48,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # copy binary
-COPY --from=builder /workspace/livekit-sip /bin/
+COPY --from=builder /out/livekit-sip /bin/
 
 WORKDIR /sip
 
