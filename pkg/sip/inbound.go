@@ -2053,22 +2053,16 @@ func (c *sipInbound) addSessionTimerRequestHeaders(req *sip.Request) {
 }
 
 func (c *sipInbound) handleTimerRefresh(req *sip.Request, tx sip.ServerTransaction) {
-	if c.sessionExpires == 0 || c.refreshTimer == nil {
-		r := sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Session Timer Not Negotiated", nil)
-		c.addSessionTimerHeaders(r)
-		if err := tx.Respond(r); err != nil {
-			c.log.Errorw("failed to send 400 for session refresh", err)
-		}
-		return
-	}
-
-	c.refreshTimer.Stop()
+	// Bodyless UPDATE: answer 200 OK and reset the session timer if one is armed.
 	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 	c.addSessionTimerHeaders(r)
 	if err := tx.Respond(r); err != nil {
-		c.log.Errorw("failed to send 200 OK for session refresh", err)
+		c.log.Errorw("failed to send 200 OK for UPDATE refresh", err)
+		return
 	}
-	c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+	if c.refreshTimer != nil {
+		c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+	}
 }
 
 func (c *sipInbound) AcceptUpdate(req *sip.Request, tx sip.ServerTransaction) {
