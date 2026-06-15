@@ -41,7 +41,7 @@ RUN if [ "$TARGETPLATFORM" = "linux/arm64" ]; then GOARCH=arm64; else GOARCH=amd
     -ldflags "-X github.com/livekit/sip/version.Version=${VERSION}" \
     -o livekit-sip ./cmd/livekit-sip
 
-FROM debian:trixie-slim
+FROM debian:debian:13.5-slim
 
 # install wget for health check
 RUN apt-get update && \
