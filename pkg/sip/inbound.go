@@ -65,8 +65,8 @@ const (
 
 	// Session timer (RFC 4028).
 	sipSupportedTags = "timer"
-	sessionTimerSecs = 900 // default Session-Expires we offer, in seconds
-	minSESecs        = 90  // Min-SE floor (RFC 4028 minimum)
+	sessionTimerSecs = 1800 // default Session-Expires we offer, in seconds
+	minSESecs        = 90   // Min-SE floor (RFC 4028 minimum)
 )
 
 var allowHeader = sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, UPDATE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE")
@@ -1892,12 +1892,7 @@ func (c *sipInbound) accepted(ctx context.Context, inviteOK *sip.Response) {
 	go func() {
 		select {
 		case <-c.refreshTimer.C:
-			c.log.Warnw("session refresh timer expired, closing call", nil)
-			if c.call != nil {
-				c.call.Close()
-			} else {
-				c.CloseWithStatus(ctx, sip.StatusOK, "Session Timer Expired")
-			}
+			c.log.Warnw("session refresh timer expired, not closing call", nil)
 		case <-ctx.Done():
 		}
 	}()
