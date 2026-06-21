@@ -1266,14 +1266,6 @@ func (c *sipOutbound) setupSessionTimer() {
 	c.log.Infow("session timer setup", "sessionExpires", c.sessionExpires, "minSe", c.minSe, "refresher", c.refresher)
 }
 
-func (c *sipOutbound) resetRefreshTimer() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.refreshTimer != nil {
-		c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
-	}
-}
-
 func (c *sipOutbound) addSessionTimerRequestHeaders(req *sip.Request) {
 	if req.GetHeader("Supported") == nil {
 		req.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
@@ -1330,6 +1322,51 @@ func (c *sipOutbound) AcceptUpdate(req *sip.Request, tx sip.ServerTransaction) {
 	c.addSessionTimerHeaders(r)
 	if err := tx.Respond(r); err != nil {
 		c.log.Errorw("failed to send 501 for UPDATE with SDP", err)
+	}
+}
+
+func (c *sipOutbound) AcceptReInvite(req *sip.Request, tx sip.ServerTransaction, medias *MediaOrchestrator) {
+	var newCSeq uint32
+	if cseq := req.CSeq(); cseq != nil {
+		newCSeq = cseq.SeqNo
+	}
+	offer := req.Body()
+
+	var answer []byte
+	if medias != nil && len(offer) > 0 {
+		a, err := medias.AnswerSDP(offer)
+		if err != nil {
+			c.log.Errorw("failed to renegotiate re-INVITE, echoing current SDP", err)
+		} else {
+			answer = a
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(answer) > 0 {
+		c.localSDP = answer
+	}
+	respSDP := c.localSDP
+	if len(respSDP) == 0 {
+		c.log.Warnw("re-INVITE received but no SDP to respond with", nil)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "", nil))
+		return
+	}
+	if newCSeq > c.latestInviteCSeq {
+		c.latestInviteCSeq = newCSeq
+	}
+	if c.refreshTimer != nil {
+		c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+	}
+
+	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", respSDP)
+	r.AppendHeader(&contentTypeHeaderSDP)
+	r.AppendHeader(c.contact)
+	c.addSessionTimerHeaders(r)
+	if err := tx.Respond(r); err != nil {
+		c.log.Errorw("failed to respond to re-INVITE", err)
 	}
 }
 

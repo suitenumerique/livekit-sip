@@ -329,6 +329,8 @@ func (c *Client) OnRequest(req *sip.Request, tx sip.ServerTransaction) bool {
 	switch req.Method {
 	default:
 		return false
+	case "INVITE":
+		return c.onInvite(req, tx)
 	case "BYE":
 		return c.onBye(req, tx)
 	case "NOTIFY":
@@ -336,6 +338,19 @@ func (c *Client) OnRequest(req *sip.Request, tx sip.ServerTransaction) bool {
 	case "UPDATE":
 		return c.onUpdate(req, tx)
 	}
+}
+
+func (c *Client) onInvite(req *sip.Request, tx sip.ServerTransaction) bool {
+	tag, _ := GetLocalTagUAS(req)
+	c.cmu.Lock()
+	call := c.activeCalls[tag]
+	c.cmu.Unlock()
+	if call == nil {
+		return false
+	}
+	call.log.Infow("re-INVITE from remote")
+	call.cc.AcceptReInvite(req, tx, call.medias)
+	return true
 }
 
 func (c *Client) onUpdate(req *sip.Request, tx sip.ServerTransaction) bool {

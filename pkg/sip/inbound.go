@@ -409,19 +409,9 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 		}
 		return nil
 	}
-	if s.cli != nil { // Process reinvite for existing outbound calls
-		oc := s.cli.getActiveCall(cc.ID())
-		newCSeq := cc.InviteCSeq()
-		if oc != nil && oc.cc != nil && oc.cc.InviteCSeq() < newCSeq {
-			sdp := oc.cc.LocalSDP()
-			if len(sdp) != 0 {
-				oc.log.Infow("accepting reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
-				oc.cc.RecordInvite(newCSeq)
-				oc.cc.resetRefreshTimer() // re-INVITE refreshes the session timer (RFC 4028)
-				cc.AcceptAsKeepAlive(sdp)
-				return nil
-			}
-		}
+	// Process reinvite for existing outbound calls
+	if s.sipUnhandled != nil && s.sipUnhandled(req, tx) {
+		return nil
 	}
 
 	from, to := cc.From(), cc.To()
