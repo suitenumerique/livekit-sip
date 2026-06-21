@@ -10,7 +10,7 @@ import (
 	"github.com/go-gst/go-gst/gst/base"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/sipbin"
-	"github.com/pion/webrtc/v4"
+	"github.com/pion/rtp"
 )
 
 var sinkTrackProperties = []*glib.ParamSpec{
@@ -18,6 +18,13 @@ var sinkTrackProperties = []*glib.ParamSpec{
 		"track",
 		"Track",
 		"The webrtc track this element will write to",
+		glib.TYPE_ARBITRARY_DATA,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewBoxedParam(
+		"backupTrack",
+		"Backup Track",
+		"The backup webrtc track for this element",
 		glib.TYPE_ARBITRARY_DATA,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
@@ -42,13 +49,24 @@ var sinkTrackProperties = []*glib.ParamSpec{
 		glib.TYPE_ARBITRARY_DATA,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewBoolParam(
+		"use-backup",
+		"Use Backup Track",
+		"Whether to use the backup track for this element",
+		false,
+		glib.ParameterWritable,
+	),
 }
 
 type SinkTrack struct {
-	track *webrtc.TrackLocalStaticRTP
-	pub   atomic.Pointer[lksdk.LocalTrackPublication]
-	lp    *lksdk.LocalParticipant
-	opts  *lksdk.TrackPublicationOptions
+	track       *lksdk.LocalTrack
+	backupTrack *lksdk.LocalTrack
+	pub         atomic.Pointer[lksdk.LocalTrackPublication]
+	lp          *lksdk.LocalParticipant
+	opts        *lksdk.TrackPublicationOptions
+	useBackup   atomic.Bool
+
+	rtp rtp.Packet
 }
 
 func (*SinkTrack) New() glib.GoObjectSubclass {
@@ -137,7 +155,20 @@ func (s *SinkTrack) Render(self *base.GstBaseSink, buffer *gst.Buffer) gst.FlowR
 	// 	return gst.FlowOK
 	// }
 
-	if _, err := s.track.Write(buffer.Bytes()); err != nil {
+	if err := s.rtp.Unmarshal(buffer.Bytes()); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to unmarshal RTP packet: %v", err))
+		self.Error("Failed to unmarshal RTP packet", err)
+		return gst.FlowError
+	}
+
+	var track *lksdk.LocalTrack
+	if s.useBackup.Load() && s.backupTrack != nil {
+		track = s.backupTrack
+	} else {
+		track = s.track
+	}
+
+	if err := track.WriteRTP(&s.rtp, nil); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to write RTCP packet to track: %v", err))
 		self.Error("Failed to write RTCP packet to track", err)
 		return gst.FlowError
@@ -167,7 +198,11 @@ func (s *SinkTrack) publish(self *base.GstBaseSink) {
 		self.Log(CAT, gst.LevelWarning, "Track is already published, skipping publish")
 		return
 	}
-	pub, err := s.lp.PublishTrack(s.track, s.opts)
+	var pubOpts []lksdk.LocalTrackPublishOption
+	if s.backupTrack != nil {
+		pubOpts = append(pubOpts, lksdk.WithBackupCodec(s.backupTrack))
+	}
+	pub, err := s.lp.PublishTrack(s.track, s.opts, pubOpts...)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to publish track: %v", err))
 		self.Error("Failed to publish track", err)
@@ -221,13 +256,36 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			self.Error("Invalid type for track property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
-		track, ok := data.Data.(*webrtc.TrackLocalStaticRTP)
+		track, ok := data.Data.(*lksdk.LocalTrack)
 		if !ok {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property: %T", data.Data))
-			self.Error("Invalid data type for track property", fmt.Errorf("expected *webrtc.TrackLocalStaticRTP, got %T", data.Data))
+			self.Error("Invalid data type for track property", fmt.Errorf("expected *lksdk.LocalTrack, got %T", data.Data))
 			return
 		}
 		s.track = track
+	case "backupTrack":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property: %v", err))
+			self.Error("Failed to get Go value for track property", err)
+			return
+		}
+		if gv == nil {
+			return
+		}
+		data, ok := gv.(glib.ArbitraryValue)
+		if !ok {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property: %T", gv))
+			self.Error("Invalid type for track property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
+			return
+		}
+		track, ok := data.Data.(*lksdk.LocalTrack)
+		if !ok {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property: %T", data.Data))
+			self.Error("Invalid data type for track property", fmt.Errorf("expected *lksdk.LocalTrack, got %T", data.Data))
+			return
+		}
+		s.backupTrack = track
 	case "pub":
 		gv, err := value.GoValue()
 		if err != nil {
@@ -303,6 +361,20 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			return
 		}
 		s.opts = opts
+	case "use-backup":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for useBackupTrack property: %v", err))
+			self.Error("Failed to get Go value for useBackupTrack property", err)
+			return
+		}
+		useBackup, ok := gv.(bool)
+		if !ok {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for useBackupTrack property: %T", gv))
+			self.Error("Invalid type for useBackupTrack property", fmt.Errorf("expected bool, got %T", gv))
+			return
+		}
+		s.useBackup.Store(useBackup)
 	default:
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID %d for SinkTrack", id))
 		self.Error(fmt.Sprintf("Unknown property ID %d for SinkTrack", id), nil)

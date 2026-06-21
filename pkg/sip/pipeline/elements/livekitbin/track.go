@@ -26,24 +26,62 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	}
 
 	var mimeType string
+	var backupMimeType string
 	switch kind {
 	case livekit.TrackSource_MICROPHONE:
 		mimeType = e.config.microphoneMimeType
+		backupMimeType = webrtc.MimeTypeOpus
 	case livekit.TrackSource_CAMERA:
 		mimeType = e.config.cameraMimeType
+		backupMimeType = webrtc.MimeTypeH264
 	case livekit.TrackSource_SCREEN_SHARE:
 		mimeType = e.config.screenshareMimeType
+		backupMimeType = webrtc.MimeTypeH264
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		mimeType = e.config.screenshareAudioMimeType
+		backupMimeType = webrtc.MimeTypeOpus
 	default:
 		return fmt.Errorf("unknown track source")
 	}
 
-	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+	track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
 		MimeType: mimeType,
-	}, kind.String(), "pion")
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create new local track: %w", err)
+	}
+	track.OnBind(func() {
+		caps := mimeTypeToCaps(mimeType)
+		if p != nil && p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
+			if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter for track source %s: %v", kind.String(), err))
+			}
+			if err := p.TrackSink.SetProperty("use-backup", false); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set use-backup on track sink for track source %s: %v", kind.String(), err))
+			}
+		}
+	})
+
+	var backupTrack *lksdk.LocalTrack
+	if mimeType != backupMimeType {
+		backupTrack, err = lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
+			MimeType: backupMimeType,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create new backup local track: %w", err)
+		}
+
+		backupTrack.OnBind(func() {
+			caps := mimeTypeToCaps(backupMimeType)
+			if p != nil && p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
+				if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
+					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter for track source %s: %v", kind.String(), err))
+				}
+				if err := p.TrackSink.SetProperty("use-backup", true); err != nil {
+					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set use-backup on track sink for track source %s: %v", kind.String(), err))
+				}
+			}
+		})
 	}
 
 	// pub, err := e.room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{
@@ -62,11 +100,13 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	}
 
 	element, err := gst.NewElementWithProperties("livekitbin_sinktrack", map[string]interface{}{
-		"track": glib.ArbitraryValue{Data: track},
+		"track":       glib.ArbitraryValue{Data: track},
+		"backupTrack": glib.ArbitraryValue{Data: backupTrack},
 		// "pub":   glib.ArbitraryValue{Data: pub},
 		"opts": glib.ArbitraryValue{Data: &lksdk.TrackPublicationOptions{
-			Name:   fmt.Sprintf("%s_%s", e.room.LocalParticipant.Identity(), kind.String()),
-			Source: kind,
+			Name:              fmt.Sprintf("%s_%s", e.room.LocalParticipant.Identity(), kind.String()),
+			Source:            kind,
+			BackupCodecPolicy: livekit.BackupCodecPolicy_REGRESSION,
 		}},
 		"lp": glib.ArbitraryValue{Data: e.room.LocalParticipant},
 	})
