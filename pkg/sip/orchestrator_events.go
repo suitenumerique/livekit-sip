@@ -154,6 +154,15 @@ func (o *MediaOrchestrator) ParticipantName() string {
 	return name
 }
 
+func (o *MediaOrchestrator) Participant() ParticipantInfo {
+	return ParticipantInfo{
+		ID:       o.SID(),
+		Identity: o.ParticipantIdentity(),
+		Name:     o.ParticipantName(),
+		RoomName: o.RoomName(),
+	}
+}
+
 func (o *MediaOrchestrator) PlayAudio(ctx context.Context, fd int) error {
 	return o.pipeline.PlayAudio(ctx, fd)
 }

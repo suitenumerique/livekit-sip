@@ -53,13 +53,17 @@ func (ms MediaState) String() string {
 	}
 }
 
-type MediaOrchestrator struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	log     logger.Logger
-	opts    *MediaOptions
-	inbound *sipInbound
+type CallHandler interface {
+	SendReInvite(ctx context.Context, offer []byte) (*sip.Response, error)
+}
 
+type MediaOrchestrator struct {
+	ctx             context.Context
+	cancel          context.CancelFunc
+	log             logger.Logger
+	sipCallID       string
+	opts            *MediaOptions
+	handler         CallHandler
 	closed          atomic.Bool
 	reinvitePending atomic.Bool
 
@@ -73,15 +77,16 @@ type MediaOrchestrator struct {
 	dtmfHandler func(ev dtmf.Event)
 }
 
-func NewMediaOrchestrator(log logger.Logger, ctx context.Context, inbound *sipInbound, opts *MediaOptions) (*MediaOrchestrator, error) {
+func NewMediaOrchestrator(log logger.Logger, ctx context.Context, handler CallHandler, sipCallID string, opts *MediaOptions) (*MediaOrchestrator, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	o := &MediaOrchestrator{
-		ctx:     ctx,
-		cancel:  cancel,
-		log:     log,
-		opts:    opts,
-		inbound: inbound,
-		state:   MediaStateNew,
+		ctx:       ctx,
+		cancel:    cancel,
+		log:       log,
+		sipCallID: sipCallID,
+		opts:      opts,
+		handler:   handler,
+		state:     MediaStateNew,
 	}
 
 	if err := o.init(); err != nil {
@@ -108,7 +113,7 @@ func (o *MediaOrchestrator) init() error {
 		MaxActiveParticipants: o.opts.MaxActiveParticipants,
 		Gst:                   o.opts.Gst,
 		PublishCodecs:         o.opts.PublishCodecs,
-	}, o.inbound.sipCallID)
+	}, o.sipCallID)
 	if err != nil {
 		return fmt.Errorf("could not create pipeline: %w", err)
 	}
@@ -184,6 +189,17 @@ func (o *MediaOrchestrator) Close() error {
 	}
 }
 
+func (o *MediaOrchestrator) NewOffer() ([]byte, error) {
+	// if err := o.okStates(MediaStateOK, MediaStateReady); err != nil {
+	// 	return nil, err
+	// }
+	offer, err := o.pipeline.EmitCreateOfferSDP()
+	if err != nil {
+		return nil, fmt.Errorf("failed to emit create-offer-sdp: %w", err)
+	}
+	return []byte(offer), nil
+}
+
 func (o *MediaOrchestrator) AnswerSDP(offer []byte) (answer []byte, err error) {
 	if err := o.okStates(MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return nil, err
@@ -205,6 +221,22 @@ func (o *MediaOrchestrator) answerSDP(offerData []byte) ([]byte, error) {
 	o.state = MediaStateReady
 
 	return []byte(answerStr), nil
+}
+
+func (o *MediaOrchestrator) SetAnswerSDP(answer []byte) error {
+	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
+		return err
+	}
+	if err := o.pipeline.EmitAnswerSDP(string(answer)); err != nil {
+		return err
+	}
+	// Outbound offer/answer negotiation is now complete: we created the offer
+	// (NewOffer) and have applied the remote's answer. Advance to Ready so
+	// Start() can move the pipeline to PLAYING, mirroring answerSDP() on the
+	// inbound path. Without this the orchestrator stays in OK and Start()'s
+	// okStates(MediaStateReady) check rejects it, leaving the pipeline in READY.
+	o.state = MediaStateReady
+	return nil
 }
 
 func (o *MediaOrchestrator) AckSDP(req *sip.Request, tx sip.ServerTransaction) error {
@@ -282,7 +314,7 @@ func (o *MediaOrchestrator) handleSendOffer(offer string) error {
 	o.reinvitePending.Store(true)
 	defer o.reinvitePending.Store(false)
 
-	resp, err := o.inbound.sendReInvite(o.ctx, []byte(offer))
+	resp, err := o.handler.SendReInvite(o.ctx, []byte(offer))
 	if err != nil {
 		o.log.Errorw("re-INVITE failed", err)
 		o.abortOffer()

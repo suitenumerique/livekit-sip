@@ -1102,7 +1102,7 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, mconf *sipM
 		Gst:                   c.s.conf.Gst,
 		PublishCodecs:         c.s.conf.PublishCodecs,
 	}
-	orchestrator, err := NewMediaOrchestrator(c.log(), c.ctx, c.cc, opts)
+	orchestrator, err := NewMediaOrchestrator(c.log(), c.ctx, c.cc, c.cc.sipCallID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -2283,7 +2283,7 @@ func (c *sipInbound) setCSeq(req *sip.Request) {
 
 // sendReInvite sends a re-INVITE with the given SDP offer and waits for the response.
 // Used by the MediaOrchestrator to renegotiate media (e.g. video upgrade).
-func (c *sipInbound) sendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
+func (c *sipInbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
 	if c.invite == nil || c.inviteOk == nil {
 		return nil, fmt.Errorf("call not established")
 	}
