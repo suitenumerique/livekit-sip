@@ -50,12 +50,15 @@ type SipBin struct {
 }
 
 var (
-	SignalOfferSdpID       uint
-	SignalAnswerSdpID      uint
-	SignalAckSdpID         uint
-	SignalAbortOfferID     uint
-	SignalSendOfferSdpID   uint
-	SignalAvailableMediaID uint
+	SignalOfferSdpID          uint
+	SignalAnswerSdpID         uint
+	SignalAckSdpID            uint
+	SignalAbortOfferID        uint
+	SignalCreateOfferSdpID    uint
+	SignalToggleScreenshareID uint
+	SignalStatsID             uint
+	SignalSendOfferSdpID      uint
+	SignalAvailableMediaID    uint
 )
 
 func (e *SipBin) New() glib.GoObjectSubclass {
@@ -103,7 +106,14 @@ func (e *SipBin) ClassInit(klass *glib.ObjectClass) {
 		glib.TYPE_NONE,
 	)
 
-	gst.SignalNew(
+	SignalCreateOfferSdpID = gst.SignalNew(
+		class.Type(),
+		"create-offer-sdp",
+		gst.SignalRunLast,
+		glib.TYPE_STRING,
+	)
+
+	SignalToggleScreenshareID = gst.SignalNew(
 		class.Type(),
 		"toggle-screenshare",
 		gst.SignalRunLast,
@@ -111,7 +121,7 @@ func (e *SipBin) ClassInit(klass *glib.ObjectClass) {
 		glib.TYPE_BOOLEAN,
 	)
 
-	gst.SignalNew(
+	SignalStatsID = gst.SignalNew(
 		class.Type(),
 		"stats",
 		gst.SignalRunLast,
@@ -240,6 +250,25 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect abort-offer signal: %v", err))
 		self.Error("failed to connect abort-offer signal", err)
+		return
+	}
+
+	if _, err := self.Connect("create-offer-sdp", func(instance *gst.Element) string {
+		e := eweak.Value()
+		if e == nil {
+			return ""
+		}
+		self := gst.ToGstBin(instance)
+		offerData, err := e.OnCreateOfferSDP(self)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to create offer: %v", err))
+			self.Error("failed to create offer", err)
+			return ""
+		}
+		return string(offerData)
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect create-offer-sdp signal: %v", err))
+		self.Error("failed to connect create-offer-sdp signal", err)
 		return
 	}
 

@@ -30,7 +30,12 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 
 	// late offer
 	if len(offerData) == 0 {
-		return e.buildOfferSdp(self)
+		offer, err := e.buildOfferSdp(self)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build offer: %w", err)
+		}
+		e.transaction.SetPending(TransactionPendingKindAck)
+		return offer, err
 	}
 
 	offer, err := gstsdp.ParseSDPMessage(string(offerData))
@@ -410,6 +415,15 @@ func (e *SipBin) OnOfferAborted(self *gst.Bin) {
 	e.rollbackPendingOffer(self)
 }
 
+func (e *SipBin) OnCreateOfferSDP(self *gst.Bin) ([]byte, error) {
+	offer, err := e.buildOfferSdp(self)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build offer: %w", err)
+	}
+	e.transaction.SetPending(TransactionPendingKindAnswer)
+	return offer, nil
+}
+
 func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 	if e.Tracks[livekit.TrackSource_MICROPHONE] == nil {
 		microphoneMedia, err := e.makeOfferMedia(self, livekit.TrackSource_MICROPHONE, len(e.Medias), "")
@@ -469,8 +483,6 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 		self.Log(CAT, gst.LevelError, "Failed to serialize offer")
 		return nil, fmt.Errorf("failed to serialize offer")
 	}
-
-	e.transaction.SetPending(TransactionPendingKindAck)
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated offer SDP:\n%s", offerData))
 

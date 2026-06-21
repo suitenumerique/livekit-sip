@@ -45,6 +45,18 @@ func (p *Pipeline) EmitOfferAborted() error {
 	return nil
 }
 
+func (p *Pipeline) EmitCreateOfferSDP() (string, error) {
+	res, err := p.SipBin.Emit("create-offer-sdp")
+	if err != nil {
+		return "", fmt.Errorf("failed to emit create-offer-sdp: %w", err)
+	}
+	offer, ok := res.(string)
+	if !ok {
+		return "", fmt.Errorf("create-offer-sdp did not return a string")
+	}
+	return offer, nil
+}
+
 func (p *Pipeline) SendOfferCh() <-chan string {
 	return p.SipIo.sendOfferCh
 }
