@@ -30,6 +30,11 @@
             "id": "You are the only participant...",
             "message": "You are the only participant...",
             "translation": "Vous êtes le seul participant..."
+        },
+        {
+            "id": "No video track",
+            "message": "No video track",
+            "translation": "Aucune piste vidéo"
         }
     ]
 }

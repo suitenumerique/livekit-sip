@@ -38,6 +38,13 @@
             "translation": "You are the only participant...",
             "translatorComment": "Copied from source.",
             "fuzzy": true
+        },
+        {
+            "id": "No video track",
+            "message": "No video track",
+            "translation": "No video track",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
         }
     ]
 }
