@@ -81,10 +81,11 @@ type VideoConfig struct {
 }
 
 type GstConfig struct {
-	Debug     string `yaml:"debug"`
-	DumpDot   bool   `yaml:"dump_dot"`
-	DumpDir   string `yaml:"dump_dir"`
-	DedupLogs bool   `yaml:"dedup_logs"`
+	Debug           string `yaml:"debug"`
+	DumpDot         bool   `yaml:"dump_dot"`
+	DumpDir         string `yaml:"dump_dir"`
+	DedupLogs       bool   `yaml:"dedup_logs"`
+	DedupLogsWindow string `yaml:"dedup_logs_window"` // dedup TTL, e.g. "10s" (default 10s if empty)
 }
 
 type PublishCodecConfig struct {

@@ -19,7 +19,16 @@ var QLogSipCallID = glib.QuarkFromString("livekit-sip-log-sipcallid")
 var gstLogger logger.Logger
 var logDeduplication = sync.Map{}
 var gstLogDedup = false
+
+// gstLogDedupDuration is the GC tick: how often stale entries are flushed and the
+// high-count cap is checked.
 var gstLogDedupDuration = 250 * time.Millisecond
+
+// gstLogDedupWindow is the dedup TTL: identical messages keep being collapsed into
+// a single entry (with a count) as long as they recur within this window. It must
+// exceed the spacing of recurring noise — e.g. periodic RTCP SDES warnings arriving
+// ~every 3s — otherwise each occurrence is treated as new and re-printed.
+var gstLogDedupWindow = 10 * time.Second
 
 type gstLogKey = uint64
 type gstLogValue struct {
@@ -59,6 +68,13 @@ func SetupLogging(log logger.Logger, gstConf config.GstConfig) {
 		return
 	}
 	gstLogDedup = gstConf.DedupLogs
+	if gstConf.DedupLogsWindow != "" {
+		if d, err := time.ParseDuration(gstConf.DedupLogsWindow); err != nil {
+			log.Warnw("invalid gst.dedup_logs_window, keeping default", err, "value", gstConf.DedupLogsWindow, "default", gstLogDedupWindow)
+		} else if d > 0 {
+			gstLogDedupWindow = d
+		}
+	}
 	gstLogger = log.WithComponent("gst")
 	gst.SetLogFunction(gstLogFunc)
 
@@ -240,7 +256,7 @@ func LogDeduplicationGC() {
 		logDeduplication.Range(func(key, value any) bool {
 			v := value.(*gstLogValue)
 			count := v.count.Load()
-			if time.Unix(0, v.at).Add(gstLogDedupDuration).Before(now) {
+			if time.Unix(0, v.at).Add(gstLogDedupWindow).Before(now) {
 				logDeduplication.Delete(key)
 				if count > 0 {
 					gstLogPrint(v)
