@@ -333,7 +333,22 @@ func (c *Client) OnRequest(req *sip.Request, tx sip.ServerTransaction) bool {
 		return c.onBye(req, tx)
 	case "NOTIFY":
 		return c.onNotify(req, tx)
+	case "UPDATE":
+		return c.onUpdate(req, tx)
 	}
+}
+
+func (c *Client) onUpdate(req *sip.Request, tx sip.ServerTransaction) bool {
+	tag, _ := GetLocalTagUAS(req)
+	c.cmu.Lock()
+	call := c.activeCalls[tag]
+	c.cmu.Unlock()
+	if call == nil {
+		return false
+	}
+	call.log.Infow("UPDATE from remote")
+	call.cc.AcceptUpdate(req, tx)
+	return true
 }
 
 func (c *Client) onBye(req *sip.Request, tx sip.ServerTransaction) bool {

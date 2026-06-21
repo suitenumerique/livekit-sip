@@ -20,6 +20,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -703,6 +704,9 @@ func (c *outboundCall) sipSignal(ctx context.Context, tid traceid.ID) error {
 	c.sigTs.AckTime = time.Now()
 	joinDur()
 
+	// Dialog confirmed (ACK sent): start the RFC 4028 session-timer refresh
+	c.cc.accepted(ctx)
+
 	c.setExtraAttrs(c.sipConf.headersToAttrs, c.sipConf.includeHeaders, c.cc, nil)
 	c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 		// info.AudioCodec = mc.Audio.Codec.Info().SDPName
@@ -827,6 +831,13 @@ type sipOutbound struct {
 	referCseq        uint32
 	referDone        chan error
 	latestInviteCSeq uint32
+
+	// Session timer (RFC 4028), UAC side. Negotiated from the INVITE 2xx
+	sessionExpires uint32
+	minSe          uint32
+	refresher      string
+	refreshTimer   *time.Timer
+	timerCancel    context.CancelFunc
 }
 
 func (c *sipOutbound) From() sip.Uri {
@@ -1039,6 +1050,8 @@ authLoop:
 		req.PrependHeader(&sip.RouteHeader{Address: hdr.(*sip.RecordRouteHeader).Address})
 	}
 
+	c.setupSessionTimer()
+
 	return c.inviteOk.Body(), nil
 }
 
@@ -1074,7 +1087,9 @@ func (c *sipOutbound) attemptInvite(ctx context.Context, callID sip.CallIDHeader
 	req.AppendHeader(c.contact)
 
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
-	req.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
+	req.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, UPDATE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
+
+	c.addSessionTimerRequestHeaders(req)
 
 	if authHeader != "" {
 		req.AppendHeader(sip.NewHeader(authHeaderName, authHeader))
@@ -1187,13 +1202,159 @@ func (c *sipOutbound) swapSrcDst(req *sip.Request) {
 	}
 }
 
-// SendReInvite implements [CallHandler].
-func (c *sipOutbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
-	if c.invite == nil || c.inviteOk == nil {
-		return nil, fmt.Errorf("call not established")
+func (c *sipOutbound) peerSupportsTimer() bool {
+	if c.inviteOk == nil {
+		return false
+	}
+	for _, name := range []string{"Supported", "Require"} {
+		for _, h := range c.inviteOk.GetHeaders(name) {
+			for _, tag := range strings.Split(h.Value(), ",") {
+				if strings.TrimSpace(tag) == "timer" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (c *sipOutbound) refresherForDialog() string {
+	if c.inviteOk != nil {
+		if h := c.inviteOk.GetHeader("Session-Expires"); h != nil {
+			v := h.Value()
+			if strings.Contains(v, "refresher=uas") {
+				return "uas"
+			}
+			if strings.Contains(v, "refresher=uac") {
+				return "uac"
+			}
+		}
+	}
+	return "uac"
+}
+
+// setupSessionTimer negotiates the session timer from the INVITE 2xx response.
+// Must be called with c.mu held. No-op if the peer did not engage timers.
+func (c *sipOutbound) setupSessionTimer() {
+	hasSE := c.inviteOk != nil && c.inviteOk.GetHeader("Session-Expires") != nil
+	if !hasSE && !c.peerSupportsTimer() && c.refreshTimer == nil {
+		return
+	}
+	c.refresher = c.refresherForDialog()
+
+	if c.refreshTimer == nil {
+		c.minSe = minSESecs
+		c.sessionExpires = sessionTimerSecs
+	}
+	if h := c.inviteOk.GetHeader("Min-SE"); h != nil {
+		if secs, err := strconv.Atoi(strings.SplitN(h.Value(), ";", 2)[0]); err == nil && secs > 0 {
+			c.minSe = max(c.minSe, uint32(secs))
+		}
+	}
+	if h := c.inviteOk.GetHeader("Session-Expires"); h != nil {
+		if v, err := strconv.Atoi(strings.SplitN(h.Value(), ";", 2)[0]); err == nil && v > 0 {
+			c.sessionExpires = max(uint32(v), c.minSe)
+		}
 	}
 
-	req := sip.NewRequest(sip.INVITE, c.invite.Recipient)
+	d := time.Duration(c.sessionExpires) * time.Second
+	if c.refreshTimer == nil {
+		c.refreshTimer = time.NewTimer(d)
+	} else {
+		c.refreshTimer.Reset(d)
+	}
+	c.log.Infow("session timer setup", "sessionExpires", c.sessionExpires, "minSe", c.minSe, "refresher", c.refresher)
+}
+
+func (c *sipOutbound) resetRefreshTimer() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refreshTimer != nil {
+		c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+	}
+}
+
+func (c *sipOutbound) addSessionTimerRequestHeaders(req *sip.Request) {
+	if req.GetHeader("Supported") == nil {
+		req.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
+	}
+	se, minSe, refresher := c.sessionExpires, c.minSe, c.refresher
+	if se == 0 {
+		se, minSe, refresher = sessionTimerSecs, minSESecs, "uac"
+	}
+	if req.GetHeader("Session-Expires") == nil {
+		req.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", se, refresher)))
+	}
+	if req.GetHeader("Min-SE") == nil {
+		req.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", minSe)))
+	}
+}
+
+func (c *sipOutbound) addSessionTimerHeaders(r *sip.Response) {
+	var method sip.RequestMethod
+	if cseq := r.CSeq(); cseq != nil {
+		method = cseq.MethodName
+	}
+	is2xx := r.StatusCode >= 200 && r.StatusCode < 300
+
+	if is2xx && (method == sip.INVITE || method == sip.UPDATE || method == sip.OPTIONS) {
+		if r.GetHeader("Allow") == nil {
+			r.AppendHeader(sip.HeaderClone(allowHeader))
+		}
+		if r.GetHeader("Supported") == nil {
+			r.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
+		}
+	}
+	if is2xx && (method == sip.INVITE || method == sip.UPDATE) && c.sessionExpires != 0 {
+		if r.GetHeader("Session-Expires") == nil {
+			r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
+		}
+		if r.GetHeader("Min-SE") == nil {
+			r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
+		}
+	}
+	if r.StatusCode == 422 && c.sessionExpires != 0 && r.GetHeader("Min-SE") == nil {
+		r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
+	}
+}
+
+func (c *sipOutbound) AcceptUpdate(req *sip.Request, tx sip.ServerTransaction) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(req.Body()) == 0 {
+		c.handleTimerRefresh(req, tx)
+		return
+	}
+	r := sip.NewResponseFromRequest(req, sip.StatusNotImplemented, "Not Implemented", nil)
+	c.addSessionTimerHeaders(r)
+	if err := tx.Respond(r); err != nil {
+		c.log.Errorw("failed to send 501 for UPDATE with SDP", err)
+	}
+}
+
+// local expiry timer. Must be called with c.mu held.
+func (c *sipOutbound) handleTimerRefresh(req *sip.Request, tx sip.ServerTransaction) {
+	if c.sessionExpires == 0 || c.refreshTimer == nil {
+		r := sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Session Timer Not Negotiated", nil)
+		c.addSessionTimerHeaders(r)
+		if err := tx.Respond(r); err != nil {
+			c.log.Errorw("failed to send 400 for session refresh", err)
+		}
+		return
+	}
+
+	c.refreshTimer.Stop()
+	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
+	c.addSessionTimerHeaders(r)
+	if err := tx.Respond(r); err != nil {
+		c.log.Errorw("failed to send 200 OK for session refresh", err)
+	}
+	c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+}
+
+func (c *sipOutbound) newInDialogRequest(method sip.RequestMethod, body []byte) *sip.Request {
+	req := sip.NewRequest(method, c.invite.Recipient)
 	req.SipVersion = c.invite.SipVersion
 
 	sip.CopyHeaders("Via", c.invite, req)
@@ -1204,31 +1365,149 @@ func (c *sipOutbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.R
 	} else {
 		hdrs := c.inviteOk.GetHeaders("Record-Route")
 		for i := len(hdrs) - 1; i >= 0; i-- {
-			rrh, ok := hdrs[i].(*sip.RecordRouteHeader)
-			if ok {
-				req.AppendHeader(&sip.RouteHeader{Address: rrh.Address})
-			}
+			req.AppendHeader(sip.HeaderClone(hdrs[i]))
 		}
 	}
 
-	sip.CopyHeaders("Call-ID", c.invite, req)
-	sip.CopyHeaders("From", c.invite, req)
-	sip.CopyHeaders("To", c.inviteOk, req)
-
+	maxFwd := sip.MaxForwardsHeader(70)
+	req.AppendHeader(&maxFwd)
+	if h := c.invite.From(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
+	if h := c.inviteOk.To(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
+	if h := c.invite.CallID(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
 	req.AppendHeader(c.contact)
-	req.AppendHeader(&contentTypeHeaderSDP)
-	req.SetBody(offerSDP)
 
 	c.setCSeq(req)
-	c.swapSrcDst(req)
 
-	// c.addSessionTimerRequestHeaders(req)
+	req.SetBody(body)
+	req.SetTransport(c.invite.Transport())
+	req.SetSource(c.invite.Source())
+	req.SetDestination(c.invite.Destination())
+	return req
+}
+
+func (c *sipOutbound) sendUpdate(ctx context.Context) {
+	c.mu.Lock()
+	if c.invite == nil || c.inviteOk == nil {
+		c.mu.Unlock()
+		return
+	}
+
+	req := c.newInDialogRequest(sip.UPDATE, nil)
+	c.addSessionTimerRequestHeaders(req)
+	for k, v := range c.fillHeaders(nil) {
+		req.AppendHeader(sip.NewHeader(k, v))
+	}
+	c.mu.Unlock()
+
+	tx, err := c.Transaction(req)
+	if err != nil {
+		c.log.Errorw("failed to create UPDATE transaction", err)
+		return
+	}
+	defer tx.Terminate()
+
+	ctx, cancel := context.WithTimeout(ctx, 32*time.Second)
+	defer cancel()
+
+	resp, err := sipResponse(ctx, tx, c.c.closing.Watch(), nil)
+	if err != nil {
+		c.log.Errorw("session refresh UPDATE failed", err)
+		return
+	}
+
+	if resp.StatusCode == 422 { // Session Interval Too Small (RFC 4028)
+		c.mu.Lock()
+		bumped := false
+		if h := resp.GetHeader("Min-SE"); h != nil {
+			if v, err := strconv.Atoi(strings.SplitN(h.Value(), ";", 2)[0]); err == nil && uint32(v) > c.sessionExpires {
+				c.sessionExpires = uint32(v)
+				bumped = true
+			}
+		}
+		c.mu.Unlock()
+		if bumped {
+			c.sendUpdate(ctx)
+		}
+		return
+	}
+
+	c.mu.Lock()
+	if c.refreshTimer != nil {
+		c.refreshTimer.Reset(time.Duration(c.sessionExpires) * time.Second)
+	}
+	c.mu.Unlock()
+}
+
+func (c *sipOutbound) accepted(ctx context.Context) {
+	c.mu.Lock()
+	if c.refreshTimer == nil {
+		c.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	c.timerCancel = cancel
+	refreshTimer := c.refreshTimer
+	refresher := c.refresher
+	c.mu.Unlock()
+
+	// Expiry watchdog: if the session is not refreshed in time, tear the call down.
+	go func() {
+		select {
+		case <-refreshTimer.C:
+			c.log.Warnw("session refresh timer expired, closing call", nil)
+			if oc := c.c.getActiveCall(c.id); oc != nil {
+				oc.CloseWithReason(ctx, callDropped, stats.ClientError("session-timer-expired"), livekit.DisconnectReason_CLIENT_INITIATED)
+			} else {
+				c.Close(ctx)
+			}
+		case <-ctx.Done():
+		}
+	}()
+
+	// When we are the refresher, periodically send UPDATE at half the interval.
+	if refresher == "uac" {
+		go func() {
+			for {
+				c.mu.RLock()
+				interval := time.Duration(max(c.sessionExpires/2, c.minSe)) * time.Second
+				c.mu.RUnlock()
+				select {
+				case <-time.After(interval):
+					c.sendUpdate(ctx)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+}
+
+// SendReInvite implements [CallHandler].
+func (c *sipOutbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
+	c.mu.Lock()
+	if c.invite == nil || c.inviteOk == nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("call not established")
+	}
+
+	req := c.newInDialogRequest(sip.INVITE, offerSDP)
+	req.AppendHeader(&contentTypeHeaderSDP)
+
+	// Re-INVITEs refresh the session timer (RFC 4028); carry the headers.
+	c.addSessionTimerRequestHeaders(req)
 
 	// Apply dynamic attribute->header mapping via fillHeaders, the same mechanism used by
 	// sendBye/sendStatus.
 	for k, v := range c.fillHeaders(nil) {
 		req.AppendHeader(sip.NewHeader(k, v))
 	}
+	c.mu.Unlock()
 
 	tx, err := c.Transaction(req)
 	if err != nil {
@@ -1294,6 +1573,15 @@ func (c *sipOutbound) sendCancel(ctx context.Context) {
 }
 
 func (c *sipOutbound) drop() {
+	if c.timerCancel != nil {
+		c.timerCancel()
+		c.timerCancel = nil
+	}
+	if c.refreshTimer != nil {
+		c.refreshTimer.Stop()
+		c.refreshTimer = nil
+	}
+	c.sessionExpires = 0
 	c.invite = nil
 	c.inviteOk = nil
 	c.nextCSeq = 0

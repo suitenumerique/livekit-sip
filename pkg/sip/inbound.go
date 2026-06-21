@@ -417,6 +417,7 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 			if len(sdp) != 0 {
 				oc.log.Infow("accepting reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
 				oc.cc.RecordInvite(newCSeq)
+				oc.cc.resetRefreshTimer() // re-INVITE refreshes the session timer (RFC 4028)
 				cc.AcceptAsKeepAlive(sdp)
 				return nil
 			}
@@ -590,6 +591,9 @@ func (s *Server) onUpdate(log *slog.Logger, req *sip.Request, tx sip.ServerTrans
 	c := s.byLocalTag[tag]
 	s.cmu.RUnlock()
 	if c == nil {
+		if s.sipUnhandled != nil && s.sipUnhandled(req, tx) {
+			return
+		}
 		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call does not exist", nil))
 		return
 	}
