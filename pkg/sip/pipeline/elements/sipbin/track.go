@@ -266,6 +266,14 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	return nil
 }
 
+func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
+	t.Caps = caps
+	if err := t.RtpFilter.SetProperty("caps", caps); err != nil {
+		return fmt.Errorf("failed to update caps on RTP filter: %w", err)
+	}
+	return nil
+}
+
 func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 	var errs []error
 	for _, elem := range [](*gst.Element){track.RtpSrc, track.RtcpSrc, track.RtpSink, track.RtcpSink, track.RtpFilter} {

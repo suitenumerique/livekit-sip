@@ -66,6 +66,15 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 				} else {
 					self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received duplicate media for track source %d, media index %d", kind, i))
 					e.Tracks[kind].parseDirection(media)
+					caps, err := e.selectCapsForMedia(self, media, kind)
+					if err != nil {
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media %d: %v", i, err))
+						continue
+					}
+					if err := e.Tracks[kind].UpdateCaps(caps); err != nil {
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to update caps for duplicate media index %d: %v", i, err))
+						continue
+					}
 					localMedia, err := e.makeTrackMedia(self, e.Tracks[kind], e.Tracks[kind].Caps)
 					if err != nil {
 						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for duplicate media index %d: %v", i, err))
@@ -272,6 +281,10 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 				continue
 			}
 			e.Tracks[kind].parseDirection(media)
+			if err := e.Tracks[kind].UpdateCaps(caps); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to update caps for media %d: %v", i, err))
+				continue
+			}
 			localMedia, err := e.makeTrackMedia(self, e.Tracks[kind], caps)
 			if err != nil {
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to make answer media for media index %d: %v", i, err))

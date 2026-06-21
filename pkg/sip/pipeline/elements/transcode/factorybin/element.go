@@ -149,26 +149,19 @@ func (e *FactoryBin) selectFactory(incomingCaps *gst.Caps) *FactoryCaps {
 	return nil
 }
 
-func (e *FactoryBin) onCapsEvent(instance *gst.Object, pad *gst.Pad, event *gst.Event) bool {
-	e.mu.Lock()
-
-	self := gst.ToGstBin(instance)
-
-	if e.Elem != nil {
-		e.mu.Unlock()
-		return pad.EventDefault(instance, event)
+func (e *FactoryBin) currentFactoryLinksDownstream() bool {
+	if e.Elem == nil {
+		return true
 	}
-
-	caps := event.ParseCaps()
-	fc := e.selectFactory(caps)
-	if fc == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No factory found for caps: %q", caps.String()))
-		e.mu.Unlock()
-		return false
+	downstreamCaps := e.SrcPad.Pad.PeerQueryCaps(nil)
+	if downstreamCaps == nil {
+		return true
 	}
+	caps := e.Elem.GetStaticPad("src").QueryCaps(nil)
+	return caps != nil && caps.CanIntersect(downstreamCaps)
+}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Selected factory %s for caps %q", fc.Factory.GetName(), caps.String()))
-
+func (e *FactoryBin) createChild(self *gst.Bin, fc *FactoryCaps) *gst.Element {
 	properties := make(map[string]interface{})
 	maps.Copy(properties, e.Properties["*"])
 	if factoryProperties, ok := e.Properties[fc.Factory.GetName()]; ok {
@@ -179,32 +172,99 @@ func (e *FactoryBin) onCapsEvent(instance *gst.Object, pad *gst.Pad, event *gst.
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create element from factory %s: %v", fc.Factory.GetName(), err))
 		self.Error("Failed to create element from factory", err)
-		e.mu.Unlock()
-		return false
+		return nil
 	}
 
 	if err := self.Add(elem); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add element %s to bin: %v", elem.GetName(), err))
 		self.Error("Failed to add element to bin", err)
+		return nil
+	}
+
+	return elem
+}
+
+func (e *FactoryBin) reconfigure(self *gst.Bin, caps *gst.Caps) bool {
+	e.mu.Lock()
+
+	if e.Elem != nil {
+		if e.Elem.GetStaticPad("sink").QueryAcceptCaps(caps) && e.currentFactoryLinksDownstream() {
+			e.mu.Unlock()
+			return true
+		}
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Current element %s no longer fits caps %q, trying to select a new factory", e.Elem.GetName(), caps.String()))
+	}
+
+	fc := e.selectFactory(caps)
+	if fc == nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No factory found for caps: %q", caps.String()))
 		e.mu.Unlock()
 		return false
 	}
 
-	e.Elem = elem
-
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Selected factory %s for caps %q", fc.Factory.GetName(), caps.String()))
 
+	elem := e.createChild(self, fc)
+	if elem == nil {
+		e.mu.Unlock()
+		return false
+	}
+
+	oldElem := e.Elem
+	e.Elem = elem
+	sinkPad, srcPad := e.SinkPad, e.SrcPad
 	e.mu.Unlock()
 
-	e.SinkPad.SetTarget(elem.GetStaticPad("sink"))
-	e.SrcPad.SetTarget(elem.GetStaticPad("src"))
+	var parkProbeID uint64
+	if oldElem != nil {
+		parkProbeID = sinkPad.Pad.AddProbe(gst.PadProbeTypeBlockDownstream, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+			return gst.PadProbeOK
+		})
+
+		oldElem.GetStaticPad("src").AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeBufferList|gst.PadProbeTypeEventDownstream, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+			return gst.PadProbeDrop
+		})
+
+		sinkPad.GetInternal().Pad.AddProbe(gst.PadProbeTypeIdle, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+			if err := oldElem.SetState(gst.StateNull); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set state of old element %s to NULL: %v", oldElem.GetName(), err))
+			}
+			if err := self.Remove(oldElem); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove old element %s from bin: %v", oldElem.GetName(), err))
+			}
+			return gst.PadProbeRemove
+		})
+	}
+
+	srcPad.SetTarget(elem.GetStaticPad("src"))
+	sinkPad.SetTarget(elem.GetStaticPad("sink"))
 
 	if !elem.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state with parent for element %s", elem.GetName()))
 	}
 
+	if parkProbeID != 0 {
+		sinkPad.Pad.RemoveProbe(parkProbeID)
+	}
+
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Factory %s successfully configured for caps %q", fc.Factory.GetName(), caps.String()))
 
+	return true
+}
+
+func (e *FactoryBin) onCapsEvent(instance *gst.Object, pad *gst.Pad, event *gst.Event) bool {
+	self := gst.ToGstBin(instance)
+	if !e.reconfigure(self, event.ParseCaps()) {
+		return false
+	}
+	return pad.EventDefault(instance, event)
+}
+
+func (e *FactoryBin) onReconfigureEvent(instance *gst.Object, pad *gst.Pad, event *gst.Event) bool {
+	self := gst.ToGstBin(instance)
+	if caps := e.SinkPad.Pad.CurrentCaps(); caps != nil {
+		e.reconfigure(self, caps)
+	}
 	return pad.EventDefault(instance, event)
 }
 
@@ -233,6 +293,9 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 			if resultCaps == nil {
 				return false
 			}
+			if e.Elem != nil {
+				resultCaps = e.Elem.GetStaticPad("sink").QueryCaps(filter).Merge(resultCaps)
+			}
 			query.SetCapsResult(resultCaps)
 			return true
 		case gst.QueryAcceptCaps:
@@ -241,6 +304,10 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 				return false
 			}
 			acceptCaps := query.ParseAcceptCaps()
+			if e.Elem != nil && e.Elem.GetStaticPad("sink").QueryAcceptCaps(acceptCaps) {
+				query.SetAcceptCapsResult(true)
+				return true
+			}
 			resultCaps := e.computeCaps(instance, pad, gst.PadDirectionSink, acceptCaps)
 			accepted := resultCaps != nil && !resultCaps.IsEmpty()
 			query.SetAcceptCapsResult(accepted)
@@ -276,6 +343,9 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 			if resultCaps == nil {
 				return false
 			}
+			if e.Elem != nil {
+				resultCaps = e.Elem.GetStaticPad("src").QueryCaps(filter).Merge(resultCaps)
+			}
 			query.SetCapsResult(resultCaps)
 			return true
 		case gst.QueryAcceptCaps:
@@ -284,12 +354,28 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 				return false
 			}
 			acceptCaps := query.ParseAcceptCaps()
+			if e.Elem != nil && e.Elem.GetStaticPad("src").QueryAcceptCaps(acceptCaps) {
+				query.SetAcceptCapsResult(true)
+				return true
+			}
 			resultCaps := e.computeCaps(instance, pad, gst.PadDirectionSource, acceptCaps)
 			accepted := resultCaps != nil && !resultCaps.IsEmpty()
 			query.SetAcceptCapsResult(accepted)
 			return true
 		default:
 			return pad.QueryDefault(instance, query)
+		}
+	})
+	e.SrcPad.SetEventFunction(func(pad *gst.Pad, instance *gst.Object, event *gst.Event) bool {
+		switch event.Type() {
+		case gst.EventTypeReconfigure:
+			e := eweak.Value()
+			if e == nil {
+				return false
+			}
+			return e.onReconfigureEvent(instance, pad, event)
+		default:
+			return pad.EventDefault(instance, event)
 		}
 	})
 	self.AddPad(e.SrcPad.Pad)
@@ -409,6 +495,11 @@ func (e *FactoryBin) Constructed(instance *glib.Object) {
 		for _, t := range templates {
 			if t.Presence() != gst.PadPresenceAlways {
 				continue
+			}
+			if t.Name() == "src" && t.Direction() == gst.PadDirectionSource {
+				srcCaps = t.Caps()
+			} else if t.Name() == "sink" && t.Direction() == gst.PadDirectionSink {
+				sinkCaps = t.Caps()
 			}
 			switch t.Direction() {
 			case gst.PadDirectionSource:
