@@ -68,14 +68,14 @@ func (e *BFCPServer) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	param := properties[id]
 
 	if e.constructed {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Attempt to set property %s after BFCP server has been created, ignoring", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Attempt to set property after BFCP server has been created, ignoring\nproperty=%s", param.Name()))
 		return
 	}
 	switch param.Name() {
 	case "port-start":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -84,14 +84,14 @@ func (e *BFCPServer) SetProperty(instance *glib.Object, id uint, value *glib.Val
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-start property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-start property\nvalue=%d", val))
 			return
 		}
 		e.portStart = uint16(val)
 	case "port-end":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -100,14 +100,14 @@ func (e *BFCPServer) SetProperty(instance *glib.Object, id uint, value *glib.Val
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-end property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-end property\nvalue=%d", val))
 			return
 		}
 		e.portEnd = uint16(val)
 	case "port":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -116,14 +116,14 @@ func (e *BFCPServer) SetProperty(instance *glib.Object, id uint, value *glib.Val
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port property\nvalue=%d", val))
 			return
 		}
 		e.port = uint16(val)
 	case "bind-ip":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(string)
@@ -133,14 +133,14 @@ func (e *BFCPServer) SetProperty(instance *glib.Object, id uint, value *glib.Val
 		}
 		ip := net.ParseIP(val)
 		if ip == nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid IP address for bind-ip property: %s", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid IP address for bind-ip property\nvalue=%s", val))
 			return
 		}
 		e.bindIP = ip
 	case "floor-id":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting floor-id property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting floor-id property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -149,12 +149,12 @@ func (e *BFCPServer) SetProperty(instance *glib.Object, id uint, value *glib.Val
 			return
 		}
 		if val > math.MaxUint16 {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for floor-id property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for floor-id property\nvalue=%d", val))
 			return
 		}
 		e.floorID = uint16(val)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 	}
 }
 
@@ -165,21 +165,21 @@ func (e *BFCPServer) GetProperty(instance *glib.Object, id uint) *glib.Value {
 	case "port-start":
 		value, err := glib.GValue(uint(e.portStart))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "port-end":
 		value, err := glib.GValue(uint(e.portEnd))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "port":
 		value, err := glib.GValue(uint(e.port))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port property value\nerr=%v", err))
 			return nil
 		}
 		return value
@@ -189,19 +189,19 @@ func (e *BFCPServer) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		}
 		value, err := glib.GValue(e.bindIP.String())
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "floor-id":
 		value, err := glib.GValue(uint(e.floorID))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting floor-id property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting floor-id property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 		return nil
 	}
 }

@@ -88,7 +88,7 @@ func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
 
 	e.ProfileCapsFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create profile capsfilter: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create profile capsfilter\nerr=%v", err))
 		self.Error("Failed to create profile capsfilter", err)
 		return
 	}
@@ -104,7 +104,7 @@ func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
 		}
 		e.setMaxResolution(self, caps)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to profile capsfilter caps notify: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to profile capsfilter caps notify\nerr=%v", err))
 		self.Error("Failed to connect to profile capsfilter caps notify", err)
 		return
 	}
@@ -113,7 +113,7 @@ func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
 		"config-interval": int(-1),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264parse: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264parse\nerr=%v", err))
 		self.Error("Failed to create h264parse", err)
 		return
 	}
@@ -124,14 +124,14 @@ func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
 		"aggregate-mode":  int(1),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtph264pay: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtph264pay\nerr=%v", err))
 		self.Error("Failed to create rtph264pay", err)
 		return
 	}
 
 	e.PlidPatch, err = gst.NewElementWithProperties("h264rtpplidpatch", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264rtpplidpatch: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264rtpplidpatch\nerr=%v", err))
 		self.Error("Failed to create h264rtpplidpatch", err)
 		return
 	}
@@ -144,19 +144,19 @@ func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
 		}
 		e.onPlidResolved(self, plid)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect plid-resolved: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect plid-resolved\nerr=%v", err))
 		self.Error("Failed to connect plid-resolved", err)
 		return
 	}
 
 	if err := self.AddMany(e.ProfileCapsFilter, e.H264Parse, e.RtpH264Pay, e.PlidPatch); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
 
 	if err := gst.ElementLinkMany(e.ProfileCapsFilter, e.H264Parse, e.RtpH264Pay, e.PlidPatch); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}
@@ -175,12 +175,12 @@ func (e *H264RtpPayBin) setMaxResolution(self *gst.Bin, caps *gst.Caps) {
 	structure := caps.GetStructureAt(0)
 	level, err := structure.GetString("level")
 	if err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No level field in caps %s: %v", caps.String(), err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No level field in caps\ncaps=%s\nerr=%v", caps.String(), err))
 		return
 	}
 	levelIdc, is1b := gstH264LevelIDC(level)
 	if levelIdc == 0 && !is1b {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown level %q in caps %s", level, caps.String()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown level in caps\nlevel=%q\ncaps=%s", level, caps.String()))
 		return
 	}
 
@@ -191,41 +191,41 @@ func (e *H264RtpPayBin) setMaxResolution(self *gst.Bin, caps *gst.Caps) {
 
 	maxWidth, maxHeight, ok := maxResolutionForLevel(levelIdc, is1b, framerate)
 	if !ok {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get max resolution for level %q in caps %s", level, caps.String()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get max resolution for level in caps\nlevel=%q\ncaps=%s", level, caps.String()))
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Caps changed: level=%s is1b=%t framerate=%d - %dx%d", level, is1b, framerate, maxWidth, maxHeight))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Caps changed\nlevel=%s\nis1b=%t\nframerate=%d\nmax_width=%d\nmax_height=%d", level, is1b, framerate, maxWidth, maxHeight))
 	if _, err := self.Emit("max-resolution", maxWidth, maxHeight); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit max-resolution: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit max-resolution\nerr=%v", err))
 		self.Error("Failed to emit max-resolution", err)
 	}
 }
 
 func (e *H264RtpPayBin) onPlidResolved(self *gst.Bin, plid string) {
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Profile-level-id resolved: %s", plid))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Profile-level-id resolved\nplid=%s", plid))
 
 	parsed, err := parseProfileLevelID(plid)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse profile-level-id %q: %v", plid, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse profile-level-id\nplid=%q\nerr=%v", plid, err))
 		self.Error(fmt.Sprintf("Failed to parse profile-level-id %q", plid), err)
 		return
 	}
 
 	caps := gst.NewCapsFromString(h264CapsStringForPLID(parsed))
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Parsed profile-level-id: profileIDC=%d profileIOP=%d levelIDC=%d isLevel1b=%t: %s", parsed.profileIDC, parsed.profileIOP, parsed.levelIDC, parsed.isLevel1b, caps.String()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Parsed profile-level-id\nprofile_idc=%d\nprofile_iop=%d\nlevel_idc=%d\nis_level_1b=%t\ncaps=%s", parsed.profileIDC, parsed.profileIOP, parsed.levelIDC, parsed.isLevel1b, caps.String()))
 	if err := e.ProfileCapsFilter.SetProperty("caps", caps); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set caps on profile capsfilter: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set caps on profile capsfilter\nerr=%v", err))
 		self.Error("Failed to set caps on profile capsfilter", err)
 	}
 
 	w, h, ok := maxResolutionForLevel(parsed.levelIDC, parsed.isLevel1b, 24)
 	if !ok {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown profile-level-id %q; cannot determine max resolution", plid))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown profile-level-id; cannot determine max resolution\nplid=%q", plid))
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Emitting max-resolution for level %q: %dx%d", plid, w, h))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Emitting max-resolution for level\nplid=%q\nmax_width=%d\nmax_height=%d", plid, w, h))
 	if _, err := self.Emit("max-resolution", w, h); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit max-resolution: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit max-resolution\nerr=%v", err))
 		self.Error("Failed to emit max-resolution", err)
 	}
 }

@@ -112,13 +112,13 @@ func (s *SrcTrack) Constructed(instance *glib.Object) {
 		"rp":    glib.ArbitraryValue{Data: s.Rp},
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create srctrack_rtp: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create srctrack_rtp\nerr=%v", err))
 		self.Error("Failed to create srctrack_rtp", err)
 		return
 	}
 
 	if err := self.Add(s.src); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add srctrack_rtp: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add srctrack_rtp\nerr=%v", err))
 		self.Error("Failed to add srctrack_rtp", err)
 		return
 	}
@@ -144,7 +144,7 @@ func (s *SrcTrack) open(self *gst.Bin) gst.StateChangeReturn {
 	}
 
 	streamID := rtcpPad.CreateStreamID(self.Element, "rtcp")
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created RTCP stream ID: %s", streamID))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created RTCP stream ID\nstream_id=%s", streamID))
 	evt := gst.NewStreamStartEvent(streamID)
 	evt.SetGroupID(gst.NextGroupID())
 	if !rtcpPad.PushEvent(evt) && !rtcpPad.IsLinked() {
@@ -214,8 +214,8 @@ func (s *SrcTrack) SendRtcpBye(self *gst.Bin) {
 
 func (s *SrcTrack) ChangeState(instance *gst.Element, transition gst.StateChange) gst.StateChangeReturn {
 	self := gst.ToGstBin(instance)
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("SrcTrack %s state change: %s", s.Pub.SID(), transition.String()))
-	defer self.Log(CAT, gst.LevelDebug, fmt.Sprintf("SrcTrack %s state change completed: %s", s.Pub.SID(), transition.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("SrcTrack state change\nsid=%s\ntransition=%s", s.Pub.SID(), transition.String()))
+	defer self.Log(CAT, gst.LevelDebug, fmt.Sprintf("SrcTrack state change completed\nsid=%s\ntransition=%s", s.Pub.SID(), transition.String()))
 
 	switch transition {
 	case gst.StateChangeNullToReady:
@@ -301,7 +301,7 @@ func filterSSRC(pkt rtcp.Packet, ssrc uint32) rtcp.Packet {
 func (s *SrcTrack) pushRtcp(self *gst.Bin, rtcpPad *gst.Pad, pkt rtcp.Packet) {
 	raw, err := pkt.Marshal()
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to marshal RTCP packet: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to marshal RTCP packet\nerr=%v", err))
 		self.Error("Failed to marshal RTCP packet", err)
 		return
 	}
@@ -312,7 +312,7 @@ func (s *SrcTrack) pushRtcp(self *gst.Bin, rtcpPad *gst.Pad, pkt rtcp.Packet) {
 			self.Log(CAT, gst.LevelDebug, "RTCP pad is not linked, dropping RTCP packet")
 			return
 		}
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to push RTCP buffer: %v", ret))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to push RTCP buffer\nret=%v", ret))
 	}
 }
 
@@ -320,11 +320,11 @@ func (s *SrcTrack) onRtcp(self *gst.Bin, rtcpPad *gst.Pad) func(p rtcp.Packet) {
 	return func(p rtcp.Packet) {
 		switch p.(type) {
 		case *rtcp.Goodbye:
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP BYE for track %s(%d) of participant %s", s.Pub.Source(), s.Track.SSRC(), s.Rp.Identity()))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP BYE\nsource=%s\nssrc=%d\nparticipant=%s", s.Pub.Source(), s.Track.SSRC(), s.Rp.Identity()))
 		case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP PLI/FIR for track %s(%d) of participant %s", s.Pub.Source(), s.Track.SSRC(), s.Rp.Identity()))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP PLI/FIR\nsource=%s\nssrc=%d\nparticipant=%s", s.Pub.Source(), s.Track.SSRC(), s.Rp.Identity()))
 		default:
-			self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Pushing RTCP packet: %T:\n%+v", p, p))
+			self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Pushing RTCP packet\ntype=%T\nvalue=%+v", p, p))
 		}
 
 		if _, ok := p.(*rtcp.Goodbye); ok {
@@ -336,7 +336,7 @@ func (s *SrcTrack) onRtcp(self *gst.Bin, rtcpPad *gst.Pad) func(p rtcp.Packet) {
 			return
 		}
 
-		self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Pushing RTCP packet: %T:\n%+v", filtered, filtered))
+		self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Pushing RTCP packet\ntype=%T\nvalue=%+v", filtered, filtered))
 
 		s.pushRtcp(self, rtcpPad, filtered)
 	}
@@ -350,12 +350,12 @@ func (s *SrcTrack) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		enabled := s.Pub.IsEnabled()
 		val, err := glib.GValue(enabled)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get enabled property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get enabled property value\nerr=%v", err))
 			return nil
 		}
 		return val
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nname=%s", param.Name()))
 		return nil
 	}
 }
@@ -367,19 +367,19 @@ func (s *SrcTrack) SetProperty(instance *glib.Object, id uint, value *glib.Value
 	case "enabled":
 		enabledVal, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get bool value for enabled property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get bool value for enabled property\nerr=%v", err))
 			return
 		}
 		enabled, ok := enabledVal.(bool)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to convert enabled property value to bool: %v", enabledVal))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to convert enabled property value to bool\nvalue=%v", enabledVal))
 			return
 		}
 		s.Pub.SetEnabled(enabled)
 	case "track":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property\nerr=%v", err))
 			self.Error("Failed to get Go value for track property", err)
 			return
 		}
@@ -388,13 +388,13 @@ func (s *SrcTrack) SetProperty(instance *glib.Object, id uint, value *glib.Value
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property\ntype=%T", gv))
 			self.Error("Invalid type for track property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		track, ok := data.Data.(*webrtc.TrackRemote)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property\ntype=%T", data.Data))
 			self.Error("Invalid data type for track property", fmt.Errorf("expected *webrtc.TrackRemote, got %T", data.Data))
 			return
 		}
@@ -402,7 +402,7 @@ func (s *SrcTrack) SetProperty(instance *glib.Object, id uint, value *glib.Value
 	case "pub":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for pub property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for pub property\nerr=%v", err))
 			self.Error("Failed to get Go value for pub property", err)
 			return
 		}
@@ -411,13 +411,13 @@ func (s *SrcTrack) SetProperty(instance *glib.Object, id uint, value *glib.Value
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property\ntype=%T", gv))
 			self.Error("Invalid type for pub property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		pub, ok := data.Data.(*lksdk.RemoteTrackPublication)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for pub property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for pub property\ntype=%T", data.Data))
 			self.Error("Invalid data type for pub property", fmt.Errorf("expected *lksdk.RemoteTrackPublication, got %T", data.Data))
 			return
 		}
@@ -425,7 +425,7 @@ func (s *SrcTrack) SetProperty(instance *glib.Object, id uint, value *glib.Value
 	case "rp":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for rp property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for rp property\nerr=%v", err))
 			self.Error("Failed to get Go value for rp property", err)
 			return
 		}
@@ -434,18 +434,18 @@ func (s *SrcTrack) SetProperty(instance *glib.Object, id uint, value *glib.Value
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for rp property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for rp property\ntype=%T", gv))
 			self.Error("Invalid type for rp property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		rp, ok := data.Data.(*lksdk.RemoteParticipant)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for rp property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for rp property\ntype=%T", data.Data))
 			self.Error("Invalid data type for rp property", fmt.Errorf("expected *lksdk.RemoteParticipant, got %T", data.Data))
 			return
 		}
 		s.Rp = rp
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nname=%s", param.Name()))
 	}
 }

@@ -195,7 +195,7 @@ func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context
 	cr.Restore()
 
 	if status := cr.Status(); status != cairo.STATUS_SUCCESS {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after drawing no-tracks overlay: %d(%v)", int(status), status))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after drawing no-tracks overlay\nstatus_code=%d\nstatus=%v", int(status), status))
 	}
 }
 
@@ -222,7 +222,7 @@ func (e *LivekitCompositor) drawOverlayMessage(self *gst.Bin, cr *cairo.Context,
 	cr.Restore()
 
 	if status := cr.Status(); status != cairo.STATUS_SUCCESS {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after drawing no-tracks overlay: %d(%v)", int(status), status))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after drawing no-tracks overlay\nstatus_code=%d\nstatus=%v", int(status), status))
 	}
 }
 
@@ -440,6 +440,6 @@ func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gs
 	}
 
 	if status := cr.Status(); status != cairo.STATUS_SUCCESS {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after camera overlay draw: %d(%v)", int(status), status))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after camera overlay draw\nstatus_code=%d\nstatus=%v", int(status), status))
 	}
 }

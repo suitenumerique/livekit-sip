@@ -44,7 +44,7 @@ func (e *SipCompositor) SetProperty(instance *glib.Object, id uint, value *glib.
 	case "video-width":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -53,14 +53,14 @@ func (e *SipCompositor) SetProperty(instance *glib.Object, id uint, value *glib.
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property\nvalue=%d", val))
 			return
 		}
 		e.videoWidth = val
 	case "video-height":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -69,14 +69,14 @@ func (e *SipCompositor) SetProperty(instance *glib.Object, id uint, value *glib.
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property\nvalue=%d", val))
 			return
 		}
 		e.videoHeight = val
 	case "framerate":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)

@@ -86,7 +86,7 @@ func (s *SrcTrackRtp) SetProperty(instance *glib.Object, id uint, value *glib.Va
 	case "track":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property\nerr=%v", err))
 			self.Error("Failed to get Go value for track property", err)
 			return
 		}
@@ -95,13 +95,13 @@ func (s *SrcTrackRtp) SetProperty(instance *glib.Object, id uint, value *glib.Va
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property\ntype=%T", gv))
 			self.Error("Invalid type for track property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		track, ok := data.Data.(*webrtc.TrackRemote)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property\ntype=%T", data.Data))
 			self.Error("Invalid data type for track property", fmt.Errorf("expected *webrtc.TrackRemote, got %T", data.Data))
 			return
 		}
@@ -109,7 +109,7 @@ func (s *SrcTrackRtp) SetProperty(instance *glib.Object, id uint, value *glib.Va
 	case "pub":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for pub property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for pub property\nerr=%v", err))
 			self.Error("Failed to get Go value for pub property", err)
 			return
 		}
@@ -118,13 +118,13 @@ func (s *SrcTrackRtp) SetProperty(instance *glib.Object, id uint, value *glib.Va
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property\ntype=%T", gv))
 			self.Error("Invalid type for pub property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		pub, ok := data.Data.(*lksdk.RemoteTrackPublication)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for pub property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for pub property\ntype=%T", data.Data))
 			self.Error("Invalid data type for pub property", fmt.Errorf("expected *lksdk.RemoteTrackPublication, got %T", data.Data))
 			return
 		}
@@ -132,7 +132,7 @@ func (s *SrcTrackRtp) SetProperty(instance *glib.Object, id uint, value *glib.Va
 	case "rp":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for rp property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for rp property\nerr=%v", err))
 			self.Error("Failed to get Go value for rp property", err)
 			return
 		}
@@ -141,19 +141,19 @@ func (s *SrcTrackRtp) SetProperty(instance *glib.Object, id uint, value *glib.Va
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for rp property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for rp property\ntype=%T", gv))
 			self.Error("Invalid type for rp property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		rp, ok := data.Data.(*lksdk.RemoteParticipant)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for rp property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for rp property\ntype=%T", data.Data))
 			self.Error("Invalid data type for rp property", fmt.Errorf("expected *lksdk.RemoteParticipant, got %T", data.Data))
 			return
 		}
 		s.Rp = rp
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID: %d", id))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID\nid=%d", id))
 		self.Error(fmt.Sprintf("Unknown property ID: %d", id), nil)
 	}
 }
@@ -164,14 +164,14 @@ func (s *SrcTrackRtp) Constructed(instance *glib.Object) {
 
 	if s.Track == nil || s.Pub == nil || s.Rp == nil {
 		err := errors.New("Track, Pub, and Rp must be set before constructing SrcTrackRtp")
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to construct SrcTrackRtp: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to construct SrcTrackRtp\nerr=%v", err))
 		self.Error("Failed to construct SrcTrackRtp: Track, Pub, and Rp must be set", err)
 		return
 	}
 
 	s.unblock.Store(false)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Constructed SrcTrackRtp for track %s from participant %s", s.Track.ID(), s.Rp.Identity()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Constructed SrcTrackRtp\ntrack=%s\nparticipant=%s", s.Track.ID(), s.Rp.Identity()))
 }
 
 func (s *SrcTrackRtp) SetCaps(self *base.GstBaseSrc, caps *gst.Caps) bool {
@@ -186,7 +186,7 @@ func (s *SrcTrackRtp) GetCaps(self *base.GstBaseSrc, filter *gst.Caps) *gst.Caps
 	case livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		mediaType = "audio"
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported track source: %s", s.Pub.Source()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported track source\nsource=%s", s.Pub.Source()))
 		self.Error(fmt.Sprintf("Unsupported track source: %s", s.Pub.Source()), nil)
 		return gst.NewEmptyCaps()
 	}
@@ -204,7 +204,7 @@ func (s *SrcTrackRtp) Start(self *base.GstBaseSrc) bool {
 
 	s.unblock.Store(false)
 	if err := s.Track.SetReadDeadline(time.Time{}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to reset read deadline on track: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to reset read deadline on track\nerr=%v", err))
 		self.Error("Failed to reset read deadline on track", err)
 		return false
 	}
@@ -215,7 +215,7 @@ func (s *SrcTrackRtp) Start(self *base.GstBaseSrc) bool {
 func (s *SrcTrackRtp) Stop(self *base.GstBaseSrc) bool {
 	self.Log(CAT, gst.LevelDebug, "Stopping")
 	if err := s.Pub.SetSubscribed(false); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unsubscribe from track publication: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unsubscribe from track publication\nerr=%v", err))
 	}
 
 	return true
@@ -242,7 +242,7 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 		if err == io.EOF {
 			return gst.FlowEOS
 		}
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to read from io.Reader: %T: %v", err, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to read from io.Reader\ntype=%T\nerr=%v", err, err))
 		self.Error("Failed to read from io.Reader", err)
 		return gst.FlowError
 	}
@@ -265,7 +265,7 @@ func (s *SrcTrackRtp) Unlock(self *base.GstBaseSrc) bool {
 	s.unblock.Store(true)
 
 	if err := s.Track.SetReadDeadline(time.Now()); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set read deadline on track: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set read deadline on track\nerr=%v", err))
 		self.Error("Failed to set read deadline on track", err)
 		return false
 	}
@@ -277,7 +277,7 @@ func (s *SrcTrackRtp) UnlockStop(self *base.GstBaseSrc) bool {
 	self.Log(CAT, gst.LevelInfo, "SrcTrackRtp UnlockStop called")
 	s.unblock.Store(false)
 	if err := s.Track.SetReadDeadline(time.Time{}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to reset read deadline on track: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to reset read deadline on track\nerr=%v", err))
 		self.Error("Failed to reset read deadline on track", err)
 		return false
 	}

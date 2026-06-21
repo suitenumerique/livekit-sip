@@ -17,7 +17,7 @@ func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
 		}
 		ptr.OnRtpBinPadAdded(pad)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin pad-added signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin pad-added signal\nerr=%v", err))
 		self.Error("Error connecting to rtpbin pad-added signal", err)
 		return
 	}
@@ -29,7 +29,7 @@ func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
 		}
 		ptr.OnRtpBinPadRemoved(pad)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin pad-removed signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin pad-removed signal\nerr=%v", err))
 		self.Error("Error connecting to rtpbin pad-removed signal", err)
 		return
 	}
@@ -41,7 +41,7 @@ func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
 		}
 		return ptr.OnRtpBinRequestPtMap(session, pt)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin request-pt-map signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin request-pt-map signal\nerr=%v", err))
 		self.Error("Error connecting to rtpbin request-pt-map signal", err)
 		return
 	}
@@ -53,7 +53,7 @@ func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
 		}
 		ptr.OnSSRCCollision(session, ssrc)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin on-ssrc-collision signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin on-ssrc-collision signal\nerr=%v", err))
 		self.Error("Error connecting to rtpbin on-ssrc-collision signal", err)
 		return
 	}
@@ -65,7 +65,7 @@ func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
 		}
 		ptr.OnTimeout(session, ssrc)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin on-timeout signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin on-timeout signal\nerr=%v", err))
 		self.Error("Error connecting to rtpbin on-timeout signal", err)
 		return
 	}
@@ -80,7 +80,7 @@ func (e *LivekitBin) OnRtpBinPadAdded(pad *gst.Pad) {
 	pname := pad.GetName()
 	templ := pad.Template()
 	if templ == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("No pad template found for pad %s", pname))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("No pad template found for pad\npad=%s", pname))
 		return
 	}
 
@@ -99,7 +99,7 @@ func (e *LivekitBin) OnRtpBinPadAdded(pad *gst.Pad) {
 		}
 	}
 
-	self.Log(CAT, gst.LevelLog, fmt.Sprintf("No handler for pad %s with template %s", pname, templ.GetName()))
+	self.Log(CAT, gst.LevelLog, fmt.Sprintf("No handler for pad\npad=%s\ntemplate=%s", pname, templ.GetName()))
 }
 
 func (e *LivekitBin) OnRtpBinPadRemoved(pad *gst.Pad) {
@@ -111,7 +111,7 @@ func (e *LivekitBin) OnRtpBinPadRemoved(pad *gst.Pad) {
 	pname := pad.GetName()
 	templ := pad.Template()
 	if templ == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("No pad template found for pad %s", pname))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("No pad template found for pad\npad=%s", pname))
 		return
 	}
 
@@ -130,7 +130,7 @@ func (e *LivekitBin) OnRtpBinPadRemoved(pad *gst.Pad) {
 		}
 	}
 
-	self.Log(CAT, gst.LevelLog, fmt.Sprintf("No handler for pad %s with template %s", pname, templ.GetName()))
+	self.Log(CAT, gst.LevelLog, fmt.Sprintf("No handler for pad\npad=%s\ntemplate=%s", pname, templ.GetName()))
 }
 
 func (e *LivekitBin) OnRtpBinRequestPtMap(session, pt uint) *gst.Caps {
@@ -144,7 +144,7 @@ func (e *LivekitBin) OnRtpBinRequestPtMap(session, pt uint) *gst.Caps {
 	switch kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source %d in rtpbin request-pt-map callback", session))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in rtpbin request-pt-map callback\nsession=%d", session))
 		return nil
 	}
 
@@ -153,7 +153,7 @@ func (e *LivekitBin) OnRtpBinRequestPtMap(session, pt uint) *gst.Caps {
 	caps, ok := e.PtMap[kind][uint8(pt)]
 
 	if !ok {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown payload type %d in rtpbin request-pt-map callback", pt))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown payload type in rtpbin request-pt-map callback\npt=%d", pt))
 		return nil
 	}
 
@@ -166,7 +166,7 @@ func (e *LivekitBin) OnSSRCCollision(session, ssrc uint) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelWarning, fmt.Sprintf("SSRC collision detected in session %d for SSRC %d", session, ssrc))
+	self.Log(CAT, gst.LevelWarning, fmt.Sprintf("SSRC collision detected\nsession=%d\nssrc=%d", session, ssrc))
 }
 
 func (e *LivekitBin) OnTimeout(session, ssrc uint) {
@@ -175,10 +175,10 @@ func (e *LivekitBin) OnTimeout(session, ssrc uint) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("SSRC %d in session %d has timed out", ssrc, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("SSRC has timed out\nssrc=%d\nsession=%d", ssrc, session))
 
 	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal\nerr=%v", err))
 		self.Error("Error emitting clear-ssrc signal", err)
 		return
 	}

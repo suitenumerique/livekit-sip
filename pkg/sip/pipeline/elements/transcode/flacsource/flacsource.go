@@ -81,56 +81,56 @@ func (e *FlacSource) Constructed(instance *glib.Object) {
 		"fd": e.fd,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create fdsrc element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create fdsrc element\nerr=%v", err))
 		self.Error("Failed to create fdsrc element", err)
 		return
 	}
 
 	e.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element\nerr=%v", err))
 		self.Error("Failed to create queue element", err)
 		return
 	}
 
 	e.FlacParse, err = gst.NewElement("flacparse")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create flacparse element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create flacparse element\nerr=%v", err))
 		self.Error("Failed to create flacparse element", err)
 		return
 	}
 
 	e.FlacDec, err = gst.NewElement("flacdec")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create flacdec element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create flacdec element\nerr=%v", err))
 		self.Error("Failed to create flacdec element", err)
 		return
 	}
 
 	e.AudioConvert, err = gst.NewElement("audioconvert")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element\nerr=%v", err))
 		self.Error("Failed to create audioconvert element", err)
 		return
 	}
 
 	e.AudioResample, err = gst.NewElement("audioresample")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element\nerr=%v", err))
 		self.Error("Failed to create audioresample element", err)
 		return
 	}
 
 	e.AudioRate, err = gst.NewElement("audiorate")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element\nerr=%v", err))
 		self.Error("Failed to create audiorate element", err)
 		return
 	}
 
 	e.ClockSync, err = gst.NewElement("clocksync")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create clocksync element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create clocksync element\nerr=%v", err))
 		self.Error("Failed to create clocksync element", err)
 		return
 	}
@@ -158,7 +158,7 @@ func (e *FlacSource) Constructed(instance *glib.Object) {
 		e.AudioRate,
 		e.ClockSync,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -173,7 +173,7 @@ func (e *FlacSource) Constructed(instance *glib.Object) {
 		e.AudioRate,
 		e.ClockSync,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}
@@ -190,7 +190,7 @@ func (e *FlacSource) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	case "fd":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting fd property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting fd property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(int)
@@ -200,7 +200,7 @@ func (e *FlacSource) SetProperty(instance *glib.Object, id uint, value *glib.Val
 		}
 		e.fd = val
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 	}
 }
 
@@ -211,12 +211,12 @@ func (e *FlacSource) GetProperty(instance *glib.Object, id uint) *glib.Value {
 	case "fd":
 		value, err := glib.GValue(e.fd)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting fd property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting fd property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 		return nil
 	}
 }

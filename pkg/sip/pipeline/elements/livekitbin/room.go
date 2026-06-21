@@ -48,7 +48,7 @@ func (e *LivekitBin) OnConnectSignal(instance *gst.Element) {
 	}
 
 	if e.wsURL == "" || e.token == "" {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("WebSocket URL and token must be set before connecting to a LiveKit room (ws-url: %s, token: %s)", e.wsURL, e.token))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("WebSocket URL and token must be set before connecting to a LiveKit room\nws_url=%s\ntoken=%s", e.wsURL, e.token))
 		self.Error("WebSocket URL and token must be set before connecting to a LiveKit room", fmt.Errorf("invalid config: ws-url: %s, token: %s", e.wsURL, e.token))
 		return
 	}
@@ -66,13 +66,13 @@ func (e *LivekitBin) OnConnectSignal(instance *gst.Element) {
 		lksdk.WithExtraAttributes(e.defaultParticipantAttributes),
 		lksdk.WithCodecs(codecs),
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to LiveKit room: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to LiveKit room\nerr=%v", err))
 		self.ErrorMessage(apperror.AppErrorDomain, apperror.AppFatalError, fmt.Sprintf("Error connecting to LiveKit room: %v", err), "")
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, "Successfully joined LiveKit room, waiting for connection to be established...")
 	if err := roomWaitConnected(e.room); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error waiting for LiveKit room connection: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error waiting for LiveKit room connection\nerr=%v", err))
 		self.ErrorMessage(apperror.AppErrorDomain, apperror.AppFatalError, "Error waiting for LiveKit room connection", err.Error())
 		return
 	}
@@ -156,7 +156,7 @@ func (e *LivekitBin) OnActiveSpeakersChanged(p []lksdk.Participant) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers changed: %v", lo.Map(p, func(part lksdk.Participant, i int) string { return part.SID() })))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers changed\nspeakers=%v", lo.Map(p, func(part lksdk.Participant, i int) string { return part.SID() })))
 
 	if !e.Is(RoomStateJoined) {
 		self.Log(CAT, gst.LevelWarning, "Received active speakers changed callback while not joined to a room")
@@ -185,7 +185,7 @@ func (e *LivekitBin) OnActiveSpeakersChanged(p []lksdk.Participant) {
 			}
 			part := e.room.GetParticipantBySID(sid)
 			if part == nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Could not find participant with SID %s", sid))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Could not find participant with SID\nsid=%s", sid))
 				continue
 			}
 			p = append(p, part)
@@ -201,7 +201,7 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Track published by participant %s: %s (source: %s)", rp.Identity(), publication.Name(), publication.Source().String()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Track published\nparticipant=%s\ntrack=%s\nsource=%s", rp.Identity(), publication.Name(), publication.Source().String()))
 
 	var enabled bool
 	switch publication.Source() {
@@ -214,21 +214,21 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		enabled = e.config.screenshareAudio
 	default:
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Not subscribing to track publication for participant %s of kind %s", rp.Identity(), publication.Source().String()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Not subscribing to track publication\nparticipant=%s\nsource=%s", rp.Identity(), publication.Source().String()))
 		return
 	}
 
 	if !enabled {
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Not subscribing to track publication for participant %s of kind %s due to configuration", rp.Identity(), publication.Source().String()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Not subscribing to track publication due to configuration\nparticipant=%s\nsource=%s", rp.Identity(), publication.Source().String()))
 		return
 	}
 
 	if err := publication.SetSubscribed(true); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to %s track publication for participant %s: %v", publication.Source(), rp.Identity(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to track publication\nsource=%s\nparticipant=%s\nerr=%v", publication.Source(), rp.Identity(), err))
 		self.Error(fmt.Sprintf("Failed to subscribe to %s track publication for participant %s", publication.Source(), rp.Identity()), err)
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to %s track publication for participant %s", publication.Source(), rp.Identity()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to track publication\nsource=%s\nparticipant=%s", publication.Source(), rp.Identity()))
 }
 
 func (e *LivekitBin) OnParticipantConnected(rp *lksdk.RemoteParticipant) {
@@ -237,9 +237,9 @@ func (e *LivekitBin) OnParticipantConnected(rp *lksdk.RemoteParticipant) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Participant connected: %s", rp.SID()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Participant connected\nparticipant=%s", rp.SID()))
 	if _, err := self.Emit("participant-join", livekittracks.NewParticipantInfo(rp).Structure()); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-join signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-join signal\nerr=%v", err))
 		self.Error("Error emitting participant-join signal", err)
 		return
 	}
@@ -263,9 +263,9 @@ func (e *LivekitBin) OnParticipantDisconnected(rp *lksdk.RemoteParticipant) {
 		return p.SID() != rp.SID()
 	}))
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant disconnected: %s", rp.SID()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant disconnected\nparticipant=%s", rp.SID()))
 	if _, err := self.Emit("participant-left", livekittracks.NewParticipantInfo(rp).Structure()); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-left signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-left signal\nerr=%v", err))
 		self.Error("Error emitting participant-left signal", err)
 		return
 	}
@@ -279,12 +279,12 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 
 	pub, ok := publication.(*lksdk.RemoteTrackPublication)
 	if !ok {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track publication is not a remote track publication for participant %s: %v", participant.Identity(), publication))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track publication is not a remote track publication\nparticipant=%s\npublication=%v", participant.Identity(), publication))
 		return
 	}
 
 	if pub == nil || pub.TrackRemote() == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Remote track is nil for publication %s of participant %s", pub.SID(), participant.Identity()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Remote track is nil for publication\ntrack=%s\nparticipant=%s", pub.SID(), participant.Identity()))
 		return
 	}
 	ssrc := pub.TrackRemote().SSRC()
@@ -302,12 +302,12 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 		}
 
 		if _, err := e.RtpBin.Emit("clear-ssrc", uint32(pub.Source()), uint(ssrc)); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal for track %s of participant %s: %v", pub.SID(), participant.SID(), err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal\ntrack=%s\nparticipant=%s\nerr=%v", pub.SID(), participant.SID(), err))
 			self.Error(fmt.Sprintf("Error emitting clear-ssrc signal for track %s of participant %s", pub.SID(), participant.SID()), err)
 			return
 		}
 
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Muted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Muted track\nsource=%s\ntrack=%s\nssrc=%d\nparticipant=%s", pub.Source(), pub.SID(), ssrc, participant.SID()))
 	}()
 }
 
@@ -319,17 +319,17 @@ func (e *LivekitBin) OnTrackUnmuted(publication lksdk.TrackPublication, particip
 
 	pub, ok := publication.(*lksdk.RemoteTrackPublication)
 	if !ok {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track publication is not a remote track publication for participant %s: %v", participant.Identity(), publication))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track publication is not a remote track publication\nparticipant=%s\npublication=%v", participant.Identity(), publication))
 		return
 	}
 
 	if pub == nil || pub.TrackRemote() == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Remote track is nil for publication %s of participant %s", pub.SID(), participant.Identity()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Remote track is nil for publication\ntrack=%s\nparticipant=%s", pub.SID(), participant.Identity()))
 		return
 	}
 	ssrc := pub.TrackRemote().SSRC()
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Unmuted track %s(%s:%d) of participant %s", pub.Source(), pub.SID(), ssrc, participant.SID()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Unmuted track\nsource=%s\ntrack=%s\nssrc=%d\nparticipant=%s", pub.Source(), pub.SID(), ssrc, participant.SID()))
 }
 
 func (e *LivekitBin) getCurrentActiveSpeakers() []lksdk.Participant {
@@ -394,11 +394,11 @@ func (e *LivekitBin) updateActiveSpeakers(self *gst.Bin, p []lksdk.Participant) 
 		return lo.Contains(e.activeSpeakers, part.SID())
 	})
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers updated: %v", activeSpeakers))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers updated\nspeakers=%v", activeSpeakers))
 
 	structure := livekittracks.NewActiveSpeakerChangeInfo(p).Structure()
 	if _, err := self.Emit("active-speakers-changed", structure.Transfer()); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting active-speakers-changed signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting active-speakers-changed signal\nerr=%v", err))
 		self.Error("Error emitting active-speakers-changed signal", err)
 		return
 	}
@@ -431,7 +431,7 @@ func (e *LivekitBin) updateSubscriptions(self *gst.Bin) {
 				continue
 			}
 			if err := pub.SetSubscribed(true); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to subscribe to track %s of participant %s: %v", config.kind, participant.Identity(), err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to subscribe to track\ntrack=%s\nparticipant=%s\nerr=%v", config.kind, participant.Identity(), err))
 			} else {
 				changed = true
 			}

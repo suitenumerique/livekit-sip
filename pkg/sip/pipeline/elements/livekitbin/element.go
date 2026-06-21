@@ -220,14 +220,14 @@ func (e *LivekitBin) Constructed(instance *glib.Object) {
 		"do-lost":                  true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpbin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpbin\nerr=%v", err))
 		self.Error("Failed to create rtpbin", err)
 		return
 	}
 	e.setupRtpBinSignals(self)
 
 	if err := self.AddMany(e.RtpBin); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add children to livekitbin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add children to livekitbin\nerr=%v", err))
 		self.Error("Failed to add children to livekitbin", err)
 		return
 	}
@@ -243,7 +243,7 @@ func (e *LivekitBin) Constructed(instance *glib.Object) {
 		}
 		go ptr.OnConnectSignal(instance)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to connect signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to connect signal\nerr=%v", err))
 		self.Error("Failed to connect to connect signal", err)
 		return
 	}
@@ -252,8 +252,8 @@ func (e *LivekitBin) Constructed(instance *glib.Object) {
 func (e *LivekitBin) ChangeState(instance *gst.Element, transition gst.StateChange) gst.StateChangeReturn {
 	self := gst.ToGstBin(instance)
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("LivekitBin state change: %s", transition.String()))
-	defer self.Log(CAT, gst.LevelDebug, fmt.Sprintf("LivekitBin state change completed: %s", transition.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("LivekitBin state change\ntransition=%s", transition.String()))
+	defer self.Log(CAT, gst.LevelDebug, fmt.Sprintf("LivekitBin state change completed\ntransition=%s", transition.String()))
 
 	if transition == gst.StateChangeReadyToNull {
 		e.Close()
@@ -272,7 +272,7 @@ func (e *LivekitBin) RequestNewPad(instance *gst.Element, templ *gst.PadTemplate
 		return e.requestNewPadSendRtp(instance, templ, name, caps)
 	}
 
-	self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown pad template name: %s", templ.Name()))
+	self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown pad template name\nname=%s", templ.Name()))
 	return nil
 }
 
@@ -281,7 +281,7 @@ func (e *LivekitBin) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 
 	templ := pad.Template()
 	if templ == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad %s has no template", pad.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad has no template\nname=%s", pad.GetName()))
 		return
 	}
 
@@ -289,7 +289,7 @@ func (e *LivekitBin) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 	case "send_rtp_sink_%u":
 		e.releasePadSendRtpSink(self, pad)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown pad template for released pad %s: %s", pad.GetName(), templ.Name()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown pad template for released pad\nname=%s\ntemplate=%s", pad.GetName(), templ.Name()))
 	}
 }
 

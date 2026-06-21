@@ -54,28 +54,28 @@ func (e *DtmfAudio) InstanceInit(instance *glib.Object) {
 
 	e.RtpDtmfDepay, err = gst.NewElement("rtpdtmfdepay")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpdtmfdepay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpdtmfdepay element\nerr=%v", err))
 		self.Error("Failed to create rtpdtmfdepay element", err)
 		return
 	}
 
 	e.AudioConvert, err = gst.NewElement("audioconvert")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element\nerr=%v", err))
 		self.Error("Failed to create audioconvert element", err)
 		return
 	}
 
 	e.AudioResample, err = gst.NewElement("audioresample")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element\nerr=%v", err))
 		self.Error("Failed to create audioresample element", err)
 		return
 	}
 
 	e.AudioRate, err = gst.NewElement("audiorate")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element\nerr=%v", err))
 		self.Error("Failed to create audiorate element", err)
 		return
 	}
@@ -93,7 +93,7 @@ func (e *DtmfAudio) InstanceInit(instance *glib.Object) {
 		e.AudioResample,
 		e.AudioRate,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}

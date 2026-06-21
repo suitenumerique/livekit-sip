@@ -87,7 +87,7 @@ func (e *TrackFallback) RequestNewPad(instance *gst.Element, templ *gst.PadTempl
 		if templ != nil {
 			tname = templ.GetName()
 		}
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("RequestNewPad called with unsupported template %s", tname))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("RequestNewPad called with unsupported template\ntemplate=%s", tname))
 		return nil
 	}
 
@@ -98,7 +98,7 @@ func (e *TrackFallback) RequestNewPad(instance *gst.Element, templ *gst.PadTempl
 
 	var session int
 	if _, err := fmt.Sscanf(name, "sink_%d", &session); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name\nname=%s\nerr=%v", name, err))
 		return nil
 	}
 
@@ -112,47 +112,47 @@ func (e *TrackFallback) RequestNewPad(instance *gst.Element, templ *gst.PadTempl
 		livekit.TrackSource_SCREEN_SHARE,
 		livekit.TrackSource_SCREEN_SHARE_AUDIO:
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name %s: %d (%s)", name, session, kind.String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name\nname=%s\nsession=%d\nkind=%s", name, session, kind.String()))
 		return nil
 	}
 
 	if err := e.initTrack(self, kind); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize %s fallback for pad %s: %v", kind.String(), name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize fallback for pad\nkind=%s\npad=%s\nerr=%v", kind.String(), name, err))
 		self.Error(fmt.Sprintf("Failed to initialize %s fallback for pad %s", kind.String(), name), err)
 		return nil
 	}
 
 	sink := e.Tracks[kind].element.GetRequestPad("sink_%u")
 	if sink == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad for %s fallback: %s", kind.String(), name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad for fallback\nkind=%s\npad=%s", kind.String(), name))
 		self.Error(fmt.Sprintf("Failed to get request pad for %s fallback for pad %s", kind.String(), name), fmt.Errorf("request pad returned nil"))
 		return nil
 	}
 
 	if err := sink.SetProperty("priority", uint32(0)); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set priority property on %s fallback pad %s: %v", kind.String(), name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set priority property on fallback pad\nkind=%s\npad=%s\nerr=%v", kind.String(), name, err))
 		self.Error(fmt.Sprintf("Failed to set priority property on %s fallback pad for pad %s", kind.String(), name), err)
 		return nil
 	}
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
 	if gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for %s fallback: %s", kind.String(), name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for fallback\nkind=%s\npad=%s", kind.String(), name))
 		self.Error(fmt.Sprintf("Failed to create ghost pad for %s fallback for pad %s", kind.String(), name), fmt.Errorf("ghost pad returned nil"))
 		return nil
 	}
 	if !gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to activate ghost pad for %s fallback: %s", kind.String(), name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to activate ghost pad for fallback\nkind=%s\npad=%s", kind.String(), name))
 		self.Error(fmt.Sprintf("Failed to activate ghost pad for %s fallback for pad %s", kind.String(), name), fmt.Errorf("failed to activate ghost pad"))
 		return nil
 	}
 	if !self.AddPad(gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad for %s fallback to bin: %s", kind.String(), name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad for fallback to bin\nkind=%s\npad=%s", kind.String(), name))
 		self.Error(fmt.Sprintf("Failed to add ghost pad for %s fallback to bin for pad %s", kind.String(), name), fmt.Errorf("failed to add ghost pad to bin"))
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Successfully created and added ghost pad %s for %s fallback", name, kind.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Successfully created and added ghost pad for fallback\npad=%s\nkind=%s", name, kind.String()))
 
 	return gpad.Pad
 }
@@ -166,20 +166,20 @@ func (e *TrackFallback) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 		if templ != nil {
 			tname = templ.GetName()
 		}
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("RequestNewPad called with unsupported template %s", tname))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("RequestNewPad called with unsupported template\ntemplate=%s", tname))
 		return
 	}
 
 	name := pad.GetName()
 	gpad := pad.AsGhostPad()
 	if gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad %s is not a ghost pad, cannot release", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad is not a ghost pad, cannot release\npad=%s", name))
 		return
 	}
 
 	var session int
 	if _, err := fmt.Sscanf(name, "sink_%d", &session); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name\nname=%s\nerr=%v", name, err))
 		return
 	}
 
@@ -193,19 +193,19 @@ func (e *TrackFallback) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 		livekit.TrackSource_SCREEN_SHARE,
 		livekit.TrackSource_SCREEN_SHARE_AUDIO:
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name %s: %d (%s)", name, session, kind.String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name\nname=%s\nsession=%d\nkind=%s", name, session, kind.String()))
 		return
 	}
 
 	target := gpad.GetTarget()
 	if target == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Ghost pad %s has no target, cannot release", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Ghost pad has no target, cannot release\npad=%s", name))
 		self.Error(fmt.Sprintf("Ghost pad %s has no target, cannot release", name), fmt.Errorf("ghost pad has no target"))
 		return
 	}
 
 	if e.Tracks[kind].element == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Track element is nil while releasing pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Track element is nil while releasing pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Track element is nil while releasing pad %s", name), fmt.Errorf("track element is nil"))
 		return
 	}
@@ -213,20 +213,20 @@ func (e *TrackFallback) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 	e.Tracks[kind].element.ReleaseRequestPad(target)
 
 	if err := e.cleanupTrack(self, kind); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track after releasing pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track after releasing pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to cleanup track after releasing pad %s", name), err)
 	}
 
 	if !gpad.SetActive(false) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to deactivate ghost pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to deactivate ghost pad\npad=%s", name))
 		return
 	}
 	if !self.RemovePad(gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove ghost pad %s from SIP IO element", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove ghost pad from SIP IO element\npad=%s", name))
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released pad %s for session %d", name, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released pad for session\npad=%s\nsession=%d", name, session))
 }
 
 func (e *TrackFallback) initTrack(self *gst.Bin, kind livekit.TrackSource) error {
@@ -258,13 +258,13 @@ func (e *TrackFallback) initTrack(self *gst.Bin, kind livekit.TrackSource) error
 	}
 
 	if !element.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of %s fallback switch with parent", kind.String()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of fallback switch with parent\nkind=%s", kind.String()))
 	}
 
 	e.Tracks[kind].element = element
 	e.Tracks[kind].initialized = true
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Initialized %s fallback", kind.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Initialized fallback\nkind=%s", kind.String()))
 
 	return nil
 }
@@ -292,21 +292,21 @@ func (e *TrackFallback) cleanupTrack(self *gst.Bin, kind livekit.TrackSource) er
 
 	if pad := self.GetStaticPad(fmt.Sprintf("src_%d", kind)); pad != nil {
 		if !self.RemovePad(pad) {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for %s fallback from bin during cleanup", kind.String()))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for fallback from bin during cleanup\nkind=%s", kind.String()))
 		}
 	}
 
 	e.Tracks[kind].element = nil
 	e.Tracks[kind].initialized = false
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Cleaned up %s fallback", kind.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Cleaned up fallback\nkind=%s", kind.String()))
 
 	return nil
 }
 
 func (e *TrackFallback) startTrackFallback(self *gst.Bin, kind livekit.TrackSource) {
 	if err := e.initTrack(self, kind); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize %s fallback: %v", kind.String(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize fallback\nkind=%s\nerr=%v", kind.String(), err))
 		self.Error(fmt.Sprintf("Failed to initialize %s fallback", kind.String()), err)
 		return
 	}
@@ -322,45 +322,45 @@ func (e *TrackFallback) startTrackFallback(self *gst.Bin, kind livekit.TrackSour
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
 		fallback = &VideoFallback{}
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported track source kind: %s", kind.String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported track source kind\nkind=%s", kind.String()))
 		self.Error(fmt.Sprintf("Unsupported track source kind: %s", kind.String()), fmt.Errorf("unsupported track source kind"))
 		return
 	}
 
 	src, err := fallback.Create(e, self)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create %s fallback: %v", kind.String(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create fallback\nkind=%s\nerr=%v", kind.String(), err))
 		self.Error(fmt.Sprintf("Failed to create %s fallback", kind.String()), err)
 		return
 	}
 
 	sink := e.Tracks[kind].element.GetRequestPad("sink_%u")
 	if sink == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad for %s fallback", kind.String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad for fallback\nkind=%s", kind.String()))
 		self.Error(fmt.Sprintf("Failed to get request pad for %s fallback", kind.String()), err)
 		return
 	}
 
 	if err := sink.SetProperty("priority", uint32(1)); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set priority property on %s fallback pad: %v", kind.String(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set priority property on fallback pad\nkind=%s\nerr=%v", kind.String(), err))
 		self.Error(fmt.Sprintf("Failed to set priority property on %s fallback pad", kind.String()), err)
 		return
 	}
 
 	if ret := src.Link(sink); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link %s fallback src to switch sink: %s", kind.String(), ret.String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link fallback src to switch sink\nkind=%s\nret=%s", kind.String(), ret.String()))
 		self.Error(fmt.Sprintf("Failed to link %s fallback src to switch sink", kind.String()), err)
 		return
 	}
 
 	if err := fallback.Sync(); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync %s fallback elements with parent: %v", kind.String(), err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync fallback elements with parent\nkind=%s\nerr=%v", kind.String(), err))
 	}
 
 	e.Tracks[kind].fallback = fallback
 	e.Tracks[kind].fallbackPad = sink
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Started %s fallback", kind.String()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Started fallback\nkind=%s", kind.String()))
 }
 
 func (e *TrackFallback) stopTrackFallback(self *gst.Bin, kind livekit.TrackSource) {
@@ -369,7 +369,7 @@ func (e *TrackFallback) stopTrackFallback(self *gst.Bin, kind livekit.TrackSourc
 	}
 
 	if err := e.Tracks[kind].fallback.Remove(e, self); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove %s fallback: %v", kind.String(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove fallback\nkind=%s\nerr=%v", kind.String(), err))
 		self.Error(fmt.Sprintf("Failed to remove %s fallback", kind.String()), err)
 		return
 	}
@@ -381,10 +381,10 @@ func (e *TrackFallback) stopTrackFallback(self *gst.Bin, kind livekit.TrackSourc
 	e.Tracks[kind].fallbackPad = nil
 	e.Tracks[kind].fallback = nil
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Stopped %s fallback", kind.String()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Stopped fallback\nkind=%s", kind.String()))
 
 	if err := e.cleanupTrack(self, kind); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup %s fallback: %v", kind.String(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup fallback\nkind=%s\nerr=%v", kind.String(), err))
 		self.Error(fmt.Sprintf("Failed to cleanup %s fallback", kind.String()), err)
 	}
 }

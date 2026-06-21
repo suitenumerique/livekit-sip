@@ -54,28 +54,28 @@ func (e *AudioG722) InstanceInit(instance *glib.Object) {
 
 	e.AudioConvert, err = gst.NewElement("audioconvert")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element\nerr=%v", err))
 		self.Error("Failed to create audioconvert element", err)
 		return
 	}
 
 	e.AudioResample, err = gst.NewElement("audioresample")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element\nerr=%v", err))
 		self.Error("Failed to create audioresample element", err)
 		return
 	}
 
 	e.G722Enc, err = gst.NewElementWithProperties("avenc_g722", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create avenc_g722 element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create avenc_g722 element\nerr=%v", err))
 		self.Error("Failed to create avenc_g722 element", err)
 		return
 	}
 
 	e.RtpG722Pay, err = gst.NewElementWithProperties("rtpg722pay", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpg722pay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpg722pay element\nerr=%v", err))
 		self.Error("Failed to create rtpg722pay element", err)
 		return
 	}
@@ -86,7 +86,7 @@ func (e *AudioG722) InstanceInit(instance *glib.Object) {
 		e.G722Enc,
 		e.RtpG722Pay,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -97,7 +97,7 @@ func (e *AudioG722) InstanceInit(instance *glib.Object) {
 		e.G722Enc,
 		e.RtpG722Pay,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}

@@ -61,7 +61,7 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 		}
 
 		if err := e.trackToggleEvent(self, livekit.TrackSource_SCREEN_SHARE, false); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to toggle off screenshare track on floor release: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to toggle off screenshare track on floor release\nerr=%v", err))
 			self.Error("Failed to toggle off screenshare track on floor release", err)
 		}
 	}); err != nil {
@@ -82,7 +82,7 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 		}
 
 		if err := e.trackToggleEvent(self, livekit.TrackSource_SCREEN_SHARE, true); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to toggle on screenshare track on floor grant: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to toggle on screenshare track on floor grant\nerr=%v", err))
 			self.Error("Failed to toggle on screenshare track on floor grant", err)
 		}
 	}); err != nil {
@@ -129,7 +129,7 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 		if v, err := strconv.Atoi(version); err == nil {
 			b.BfcpVersion = v
 		} else {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to parse BFCP version from media attribute: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to parse BFCP version from media attribute\nerr=%v", err))
 		}
 	}
 
@@ -291,10 +291,10 @@ func (e *SipBin) bfcpStartScreenshare(self *gst.Bin) {
 	}
 
 	if _, err := e.Bfcp.BfcpServer.Emit("start-screenshare", int(e.Bfcp.FloorID)); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit start-screenshare signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit start-screenshare signal\nerr=%v", err))
 		self.Error("Failed to emit start-screenshare signal", err)
 	} else {
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Emitted start-screenshare signal for floor ID %d", e.Bfcp.FloorID))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Emitted start-screenshare signal\nfloor_id=%d", e.Bfcp.FloorID))
 	}
 }
 
@@ -305,9 +305,9 @@ func (e *SipBin) bfcpStopScreenshare(self *gst.Bin) {
 	}
 
 	if _, err := e.Bfcp.BfcpServer.Emit("stop-screenshare", int(e.Bfcp.FloorID)); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit stop-screenshare signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit stop-screenshare signal\nerr=%v", err))
 		self.Error("Failed to emit stop-screenshare signal", err)
 	} else {
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Emitted stop-screenshare signal for floor ID %d", e.Bfcp.FloorID))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Emitted stop-screenshare signal\nfloor_id=%d", e.Bfcp.FloorID))
 	}
 }

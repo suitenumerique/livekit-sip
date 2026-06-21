@@ -119,7 +119,7 @@ func (e *LivekitCompositor) cleanupMicrophone(self *gst.Bin) {
 
 	sinks, err := e.LivekitCompositorMicrophone.AudioMixer.GetSinkPads()
 	if err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get sink pads while handling pad-removed signal: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get sink pads while handling pad-removed signal\nerr=%v", err))
 		return
 	}
 	if len(sinks) > 1 {
@@ -129,19 +129,19 @@ func (e *LivekitCompositor) cleanupMicrophone(self *gst.Bin) {
 	self.Log(CAT, gst.LevelDebug, "Cleaning up microphone compositor since there are no more active sink pads")
 
 	if err := e.LivekitCompositorMicrophone.SilenceSrc.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone silence source state to null during cleanup: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone silence source state to null during cleanup\nerr=%v", err))
 	}
 	if err := e.LivekitCompositorMicrophone.SilenceFilter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone silence filter state to null during cleanup: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone silence filter state to null during cleanup\nerr=%v", err))
 	}
 	if err := e.LivekitCompositorMicrophone.AudioMixer.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone audiomixer state to null during cleanup: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone audiomixer state to null during cleanup\nerr=%v", err))
 	}
 	if err := e.LivekitCompositorMicrophone.Filter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone filter state to null during cleanup: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone filter state to null during cleanup\nerr=%v", err))
 	}
 	if err := self.RemoveMany(e.LivekitCompositorMicrophone.SilenceSrc, e.LivekitCompositorMicrophone.SilenceFilter, e.LivekitCompositorMicrophone.AudioMixer, e.LivekitCompositorMicrophone.Filter); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove microphone elements from bin during cleanup: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove microphone elements from bin during cleanup\nerr=%v", err))
 	}
 
 	if pad := self.GetStaticPad(fmt.Sprintf("src_%d", livekit.TrackSource_MICROPHONE)); pad != nil {
@@ -156,7 +156,7 @@ func (e *LivekitCompositor) cleanupMicrophone(self *gst.Bin) {
 
 func (e *LivekitCompositor) requestNewMicrophoneSinkPad(self *gst.Bin, templ *gst.PadTemplate, name string) *gst.Pad {
 	if err := e.initMicrophone(self); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize microphone compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize microphone compositor\nerr=%v", err))
 		return nil
 	}
 
@@ -180,7 +180,7 @@ func (e *LivekitCompositor) requestNewMicrophoneSinkPad(self *gst.Bin, templ *gs
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new microphone sink pad %s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new microphone sink pad\npad=%s", gpad.GetName()))
 
 	return gpad.Pad
 }
@@ -210,7 +210,7 @@ func (e *LivekitCompositor) releaseMicrophoneSinkPad(self *gst.Bin, gpad *gst.Gh
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for microphone sink from bin")
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released microphone sink pad %s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released microphone sink pad\npad=%s", gpad.GetName()))
 
 	e.cleanupMicrophone(self)
 }

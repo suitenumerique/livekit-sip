@@ -32,7 +32,7 @@ func (g *GstLogger) Debugw(msg string, keysAndValues ...interface{}) {
 
 	self := gst.ToElement(g.wself.Get())
 	if self == nil || self.Instance() == nil {
-		CAT.Log(gst.LevelDebug, fmt.Sprintf("BFCPServer: %s", msg))
+		CAT.Log(gst.LevelDebug, fmt.Sprintf("BFCPServer\nmsg=%s", msg))
 	} else {
 		self.Log(CAT, gst.LevelDebug, msg)
 	}
@@ -53,7 +53,7 @@ func (g *GstLogger) Errorw(msg string, err error, keysAndValues ...interface{}) 
 
 	self := gst.ToElement(g.wself.Get())
 	if self == nil || self.Instance() == nil {
-		CAT.Log(gst.LevelError, fmt.Sprintf("BFCPServer: %s", msg))
+		CAT.Log(gst.LevelError, fmt.Sprintf("BFCPServer\nmsg=%s", msg))
 	} else {
 		self.Log(CAT, gst.LevelError, msg)
 	}
@@ -72,7 +72,7 @@ func (g *GstLogger) Infow(msg string, keysAndValues ...interface{}) {
 
 	self := gst.ToElement(g.wself.Get())
 	if self == nil || self.Instance() == nil {
-		CAT.Log(gst.LevelInfo, fmt.Sprintf("BFCPServer: %s", msg))
+		CAT.Log(gst.LevelInfo, fmt.Sprintf("BFCPServer\nmsg=%s", msg))
 	} else {
 		self.Log(CAT, gst.LevelInfo, msg)
 	}
@@ -93,7 +93,7 @@ func (g *GstLogger) Warnw(msg string, err error, keysAndValues ...interface{}) {
 
 	self := gst.ToElement(g.wself.Get())
 	if self == nil || self.Instance() == nil {
-		CAT.Log(gst.LevelWarning, fmt.Sprintf("BFCPServer: %s", msg))
+		CAT.Log(gst.LevelWarning, fmt.Sprintf("BFCPServer\nmsg=%s", msg))
 	} else {
 		self.Log(CAT, gst.LevelWarning, msg)
 	}

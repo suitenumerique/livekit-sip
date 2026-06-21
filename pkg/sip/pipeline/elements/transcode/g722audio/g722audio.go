@@ -55,35 +55,35 @@ func (e *G722Audio) InstanceInit(instance *glib.Object) {
 
 	e.RtpG722Depay, err = gst.NewElement("rtpg722depay")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpg722depay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpg722depay element\nerr=%v", err))
 		self.Error("Failed to create rtpg722depay element", err)
 		return
 	}
 
 	e.G722Dec, err = gst.NewElement("avdec_g722")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create avdec_g722 element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create avdec_g722 element\nerr=%v", err))
 		self.Error("Failed to create avdec_g722 element", err)
 		return
 	}
 
 	e.AudioConvert, err = gst.NewElement("audioconvert")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element\nerr=%v", err))
 		self.Error("Failed to create audioconvert element", err)
 		return
 	}
 
 	e.AudioResample, err = gst.NewElement("audioresample")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element\nerr=%v", err))
 		self.Error("Failed to create audioresample element", err)
 		return
 	}
 
 	e.AudioRate, err = gst.NewElement("audiorate")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element\nerr=%v", err))
 		self.Error("Failed to create audiorate element", err)
 		return
 	}
@@ -95,7 +95,7 @@ func (e *G722Audio) InstanceInit(instance *glib.Object) {
 		e.AudioResample,
 		e.AudioRate,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -107,7 +107,7 @@ func (e *G722Audio) InstanceInit(instance *glib.Object) {
 		e.AudioResample,
 		e.AudioRate,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}

@@ -165,7 +165,7 @@ func (e *IoManagerSip) Constructed(instance *glib.Object) {
 		"framerate":    e.videoFramerate,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create sip_compositor element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create sip_compositor element\nerr=%v", err))
 		self.Error("Failed to create sip_compositor element", err)
 		return
 	}
@@ -176,7 +176,7 @@ func (e *IoManagerSip) Constructed(instance *glib.Object) {
 			e.compositorPadAdded(self, pad)
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-added signal of sip_compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-added signal of sip_compositor\nerr=%v", err))
 		self.Error("Failed to connect to pad-added signal of sip_compositor", err)
 		return
 	}
@@ -187,13 +187,13 @@ func (e *IoManagerSip) Constructed(instance *glib.Object) {
 			e.compositorPadRemoved(self, pad)
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-removed signal of sip_compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-removed signal of sip_compositor\nerr=%v", err))
 		self.Error("Failed to connect to pad-removed signal of sip_compositor", err)
 		return
 	}
 
 	if err := self.Add(e.Compositor); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add sip_compositor element to SIP IO element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add sip_compositor element to SIP IO element\nerr=%v", err))
 		self.Error("Failed to add sip_compositor element to SIP IO element", err)
 		return
 	}
@@ -222,7 +222,7 @@ func (e *IoManagerSip) SetProperty(instance *glib.Object, id uint, value *glib.V
 	case "video-width":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -231,14 +231,14 @@ func (e *IoManagerSip) SetProperty(instance *glib.Object, id uint, value *glib.V
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property\nvalue=%d", val))
 			return
 		}
 		e.videoWidth = val
 	case "video-height":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -247,14 +247,14 @@ func (e *IoManagerSip) SetProperty(instance *glib.Object, id uint, value *glib.V
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property\nvalue=%d", val))
 			return
 		}
 		e.videoHeight = val
 	case "framerate":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)

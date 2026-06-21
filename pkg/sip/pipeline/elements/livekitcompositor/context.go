@@ -49,7 +49,7 @@ func (e *LivekitCompositor) SetContext(instance *gst.Element, ctx *gst.Context) 
 	switch ctx.GetType() {
 	case ContextOverlayMessage:
 		message, level, show := GetContextOverlayMessage(ctx)
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Setting overlay message context: message=%s, level=%d, show=%t", message, level, show))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Setting overlay message context\nmessage=%s\nlevel=%d\nshow=%t", message, level, show))
 		e.mu.Lock()
 		e.overlayMessage = overlayMessage{
 			Message: message,

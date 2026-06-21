@@ -43,7 +43,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 		return nil, err
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received offer SDP:\n%s", offer.AsText()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received offer SDP\nsdp=%s", offer.AsText()))
 
 	answer, err := e.makeSdpSession()
 	if err != nil {
@@ -53,7 +53,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 	medias := make([]*gstsdp.Media, offer.MediasLen())
 	for i, media := range offer.Medias() {
 		if media.GetPort() == 0 {
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Media %d is disabled in answer, skipping", i))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Media is disabled in answer, skipping\nmedia=%d", i))
 			continue
 		}
 		switch kind := getMediaKind(media); kind {
@@ -61,69 +61,69 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 			e.extractMediaCases(self, media, kind)
 			if e.Tracks[kind] != nil {
 				if e.Tracks[kind].Idx != i {
-					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received multiple media for track source %d, existing media index %d, new media index %d: disabling new media", kind, e.Tracks[kind].Idx, i))
+					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received multiple media for track source, disabling new media\nsource=%d\nexisting_media=%d\nnew_media=%d", kind, e.Tracks[kind].Idx, i))
 					continue
 				} else {
-					self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received duplicate media for track source %d, media index %d", kind, i))
+					self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received duplicate media for track source\nsource=%d\nmedia=%d", kind, i))
 					e.Tracks[kind].parseDirection(media)
 					caps, err := e.selectCapsForMedia(self, media, kind)
 					if err != nil {
-						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media %d: %v", i, err))
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media\nmedia=%d\nerr=%v", i, err))
 						continue
 					}
 					if err := e.Tracks[kind].UpdateCaps(caps); err != nil {
-						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to update caps for duplicate media index %d: %v", i, err))
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to update caps for duplicate media index\nmedia=%d\nerr=%v", i, err))
 						continue
 					}
 					localMedia, err := e.makeTrackMedia(self, e.Tracks[kind], e.Tracks[kind].Caps)
 					if err != nil {
-						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for duplicate media index %d: %v", i, err))
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for duplicate media index\nmedia=%d\nerr=%v", i, err))
 						continue
 					}
 					medias[i] = localMedia
-					self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Reusing existing track for duplicate media index %d with caps %s", i, e.Tracks[kind].Caps.String()))
+					self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Reusing existing track for duplicate media index\nmedia=%d\ncaps=%s", i, e.Tracks[kind].Caps.String()))
 					continue
 				}
 			}
 			caps, err := e.selectCapsForMedia(self, media, kind)
 			if err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			track, err := e.NewTrack(self, i, kind, media.GetProto())
 			if err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create track for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create track for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			e.Tracks[kind] = track
 			track.parseDirection(media)
 			if ret := media.SetProto(track.Proto); ret != gstsdp.SDPResultOk {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set proto on media %d: %v", i, ret))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set proto on media\nmedia=%d\nerr=%v", i, ret))
 				continue
 			}
 
 			localMedia, err := e.makeTrackMedia(self, track, caps)
 			if err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to make answer media for media index %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to make answer media for media index\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			medias[i] = localMedia
-			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Added media %d to answer with caps %s", i, caps.String()))
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Added media to answer with caps\nmedia=%d\ncaps=%s", i, caps.String()))
 			if err := track.Init(e, self, media, offer, caps); err != nil {
 				medias[i] = nil
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize track for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize track for media\nmedia=%d\nerr=%v", i, err))
 			}
 			continue
 		case TrackSource_BFCP:
 			if e.Bfcp != nil {
 				if e.Bfcp.Idx != i {
-					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received multiple media for BFCP track, existing media index %d, new media index %d: disabling new media", e.Bfcp.Idx, i))
+					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received multiple media for BFCP track, disabling new media\nexisting_media=%d\nnew_media=%d", e.Bfcp.Idx, i))
 					continue
 				} else {
-					self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received duplicate media for BFCP track, media index %d", i))
+					self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received duplicate media for BFCP track\nmedia=%d", i))
 					localMedia, err := e.makeBfcpMedia(e.Bfcp)
 					if err != nil {
-						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for duplicate BFCP media index %d: %v", i, err))
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for duplicate BFCP media index\nmedia=%d\nerr=%v", i, err))
 						continue
 					}
 					medias[i] = localMedia
@@ -136,22 +136,22 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 			case "":
 				proto = "UDP/BFCP"
 			default:
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unsupported proto %s for BFCP media %d, disabling media", proto, i))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unsupported proto for BFCP media, disabling media\nvalue=%s\nmedia=%d", proto, i))
 				continue
 			}
 			track, err := e.NewBfcpTrack(self, i, proto)
 			if err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create BFCP track for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create BFCP track for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			e.Bfcp = track
 			if err := track.Init(e, self, media, offer); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize BFCP track for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize BFCP track for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			localMedia, err := e.makeBfcpMedia(track)
 			if err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for BFCP media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for BFCP media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			medias[i] = localMedia
@@ -166,14 +166,14 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 
 	for i, media := range medias {
 		if media == nil {
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Disabling media %d because it is not compatible or supported: %s", i, offer.Media(i).AsText()))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Disabling media because it is not compatible or supported\nmedia=%d\nsdp=%s", i, offer.Media(i).AsText()))
 			disabledMedia, err := disableMedia(offer.Media(i), answer)
 			if err != nil {
 				return nil, fmt.Errorf("failed to disable media %d: %w", i, err)
 			}
 			medias[i] = disabledMedia
 		} else {
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Adding media %d to answer", i))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Adding media to answer\nmedia=%d", i))
 			if ret := answer.AddMediaCopy(media); ret != gstsdp.SDPResultOk {
 				return nil, fmt.Errorf("failed to add media %d to answer: %v", i, ret)
 			}
@@ -182,21 +182,21 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 
 	for i, track := range e.Tracks {
 		if track != nil && (track.Idx >= len(medias) || medias[track.Idx].GetPort() == 0) {
-			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up track for media index %d because it is disabled", i))
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up track for media index because it is disabled\nmedia=%d", i))
 			if err := e.CleanupTrack(self, track); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for media index %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for media index\nmedia=%d\nerr=%v", i, err))
 			}
 		}
 	}
 	if e.Bfcp != nil && (e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx].GetPort() == 0) {
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up BFCP track because media index %d is disabled in answer", e.Bfcp.Idx))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up BFCP track because media index is disabled in answer\nmedia=%d", e.Bfcp.Idx))
 		if err := e.CleanupBfcp(self, e.Bfcp); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup BFCP track: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup BFCP track\nerr=%v", err))
 		}
 	}
 
 	if answer.MediasLen() != offer.MediasLen() { // if you see that, then i did something very wrong in the code above
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Number of media in answer does not match offer: %d vs %d", answer.MediasLen(), offer.MediasLen()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Number of media in answer does not match offer\nanswer=%d\noffer=%d", answer.MediasLen(), offer.MediasLen()))
 		self.Error("number of media in answer does not match offer", fmt.Errorf("%d vs %d", answer.MediasLen(), offer.MediasLen()))
 		return nil, fmt.Errorf("number of media in answer does not match offer: %d vs %d", answer.MediasLen(), offer.MediasLen())
 	}
@@ -210,7 +210,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 
 	e.transaction.SetPending(TransactionPendingKindAck)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated answer SDP:\n%s", answerData))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated answer SDP\nsdp=%s", answerData))
 
 	self.Log(CAT, gst.LevelDebug, "Emitting available media")
 	e.emitAvailableMedia(self)
@@ -233,7 +233,7 @@ var offerReadyTimeout = 5 * time.Second
 func (e *SipBin) OnOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error) {
 	unlock, err := e.transaction.WaitReadyTimeout(offerReadyTimeout)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to wait for transaction to be ready: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to wait for transaction to be ready\nerr=%v", err))
 		return nil, fmt.Errorf("transaction is not ready: %w", err)
 	}
 	defer unlock()
@@ -256,58 +256,58 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 		return err
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received answer SDP:\n%s", answer.AsText()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received answer SDP\nsdp=%s", answer.AsText()))
 
 	medias := make([]*gstsdp.Media, answer.MediasLen())
 	for i, media := range answer.Medias() {
 		if i >= len(e.Medias) {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received more media than expected in answer: media index %d exceeds expected media count %d, disabling media", i, len(e.Medias)))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received more media than expected in answer, disabling media\nmedia=%d\nexpected_count=%d", i, len(e.Medias)))
 			continue
 		}
 		if media.GetPort() == 0 {
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Media %d is disabled in answer, skipping", i))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Media is disabled in answer, skipping\nmedia=%d", i))
 			continue
 		}
 		switch kind := getMediaKind(media); kind {
 		case livekit.TrackSource_CAMERA, livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 			e.extractMediaCases(self, media, kind)
 			if e.Tracks[kind] == nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No existing track for media %d with track source %d, disabling media", i, kind))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No existing track for media with track source, disabling media\nmedia=%d\nsource=%d", i, kind))
 				continue
 			}
 			caps, err := e.selectCapsForMedia(self, media, kind)
 			if err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to select caps for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			e.Tracks[kind].parseDirection(media)
 			if err := e.Tracks[kind].UpdateCaps(caps); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to update caps for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to update caps for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			localMedia, err := e.makeTrackMedia(self, e.Tracks[kind], caps)
 			if err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to make answer media for media index %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to make answer media for media index\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			medias[i] = localMedia
 			if err := e.Tracks[kind].Init(e, self, media, answer, caps); err != nil {
 				medias[i] = nil
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize track for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize track for media\nmedia=%d\nerr=%v", i, err))
 			}
 			continue
 		case TrackSource_BFCP:
 			if e.Bfcp == nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No existing BFCP track for media %d, disabling media", i))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No existing BFCP track for media, disabling media\nmedia=%d", i))
 				continue
 			}
 			if err := e.Bfcp.Init(e, self, media, answer); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize BFCP track for media %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize BFCP track for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			localMedia, err := e.makeBfcpMedia(e.Bfcp)
 			if err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for BFCP media %d: %v", i, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for BFCP media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
 			medias[i] = localMedia
@@ -318,7 +318,7 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 
 	for i, media := range medias {
 		if media == nil {
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Disabling media %d because it is not compatible or supported: %s", i, answer.Media(i).AsText()))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Disabling media because it is not compatible or supported\nmedia=%d\nsdp=%s", i, answer.Media(i).AsText()))
 			disabledMedia, err := disableMedia(answer.Media(i), nil)
 			if err != nil {
 				return fmt.Errorf("failed to disable media %d: %w", i, err)
@@ -329,16 +329,16 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 
 	for i, track := range e.Tracks {
 		if track != nil && (track.Idx >= len(medias) || medias[track.Idx].GetPort() == 0) {
-			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up track for media index %d because it is disabled in answer", i))
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up track for media index because it is disabled in answer\nmedia=%d", i))
 			if err := e.CleanupTrack(self, track); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for media index %d: %v", i, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for media index\nmedia=%d\nerr=%v", i, err))
 			}
 		}
 	}
 	if e.Bfcp != nil && (e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx].GetPort() == 0) {
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up BFCP track because media index %d is disabled in answer", e.Bfcp.Idx))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up BFCP track because media index is disabled in answer\nmedia=%d", e.Bfcp.Idx))
 		if err := e.CleanupBfcp(self, e.Bfcp); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup BFCP track: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup BFCP track\nerr=%v", err))
 		}
 	}
 
@@ -356,7 +356,7 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 func (e *SipBin) OnAnswerSdp(self *gst.Bin, answerData []byte) error {
 	unlock, err := e.transaction.Ack(TransactionPendingKindAnswer)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to acknowledge transaction: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to acknowledge transaction\nerr=%v", err))
 		return fmt.Errorf("failed to acknowledge transaction: %w", err)
 	}
 	defer unlock()
@@ -441,7 +441,7 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 	if e.Tracks[livekit.TrackSource_MICROPHONE] == nil {
 		microphoneMedia, err := e.makeOfferMedia(self, livekit.TrackSource_MICROPHONE, len(e.Medias), "")
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media\nerr=%v", err))
 			return nil, fmt.Errorf("failed to create offer media: %w", err)
 		}
 		e.Medias = append(e.Medias, microphoneMedia)
@@ -450,7 +450,7 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 	if e.Tracks[livekit.TrackSource_CAMERA] == nil {
 		cameraMedia, err := e.makeOfferMedia(self, livekit.TrackSource_CAMERA, len(e.Medias), "")
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media\nerr=%v", err))
 			return nil, fmt.Errorf("failed to create offer media: %w", err)
 		}
 		e.Medias = append(e.Medias, cameraMedia)
@@ -459,7 +459,7 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 	if e.Tracks[livekit.TrackSource_SCREEN_SHARE] == nil {
 		screenshareMedia, err := e.makeOfferMedia(self, livekit.TrackSource_SCREEN_SHARE, len(e.Medias), "")
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media\nerr=%v", err))
 			return nil, fmt.Errorf("failed to create offer media: %w", err)
 		}
 		e.Medias = append(e.Medias, screenshareMedia)
@@ -468,26 +468,26 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 	if e.Bfcp == nil {
 		bfcpTrack, err := e.NewBfcpTrack(self, len(e.Medias), "UDP/BFCP")
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create BFCP track: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create BFCP track\nerr=%v", err))
 			return nil, fmt.Errorf("failed to create BFCP track: %w", err)
 		}
 		e.Bfcp = bfcpTrack
 		bfcpMedia, err := e.makeBfcpMedia(bfcpTrack)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media\nerr=%v", err))
 			return nil, fmt.Errorf("failed to create offer media: %w", err)
 		}
 		e.Medias = append(e.Medias, bfcpMedia)
 	}
 
 	if err := e.bfcpMediaAddStreams(self, e.Medias); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer\nerr=%v", err))
 		return nil, fmt.Errorf("failed to add BFCP streams to offer: %w", err)
 	}
 
 	offer, err := e.makeOfferSdp(self)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer\nerr=%v", err))
 		return nil, fmt.Errorf("failed to create offer: %w", err)
 	}
 
@@ -497,7 +497,7 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 		return nil, fmt.Errorf("failed to serialize offer")
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated offer SDP:\n%s", offerData))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated offer SDP\nsdp=%s", offerData))
 
 	return []byte(offerData), nil
 }
@@ -630,7 +630,7 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 
 		unlock, err := e.transaction.WaitReady()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to start SIP transaction for sending offer: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to start SIP transaction for sending offer\nerr=%v", err))
 			return
 		}
 		defer unlock()
@@ -639,7 +639,7 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 		defer e.mu.Unlock()
 
 		if e.transactionID.Load() != transactionID {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Not sending early reinvite offer because transaction ID has changed: current %d, expected %d", e.transactionID.Load(), transactionID))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Not sending early reinvite offer because transaction ID has changed\ncurrent=%d\nexpected=%d", e.transactionID.Load(), transactionID))
 			return
 		}
 		e.transactionID.Add(1)
@@ -647,7 +647,7 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 		prevMediasLen := len(e.Medias)
 		screenshareMedia, err := e.makeOfferMedia(self, livekit.TrackSource_SCREEN_SHARE, prevMediasLen, e.Tracks[livekit.TrackSource_CAMERA].Proto)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media for early reinvite: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer media for early reinvite\nerr=%v", err))
 			return
 		}
 
@@ -655,14 +655,14 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 		e.pendingOffer = &pendingOffer{prevMediasLen: prevMediasLen}
 
 		if err := e.bfcpMediaAddStreams(self, e.Medias); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer\nerr=%v", err))
 			e.rollbackPendingOffer(self)
 			return
 		}
 
 		offer, err := e.makeOfferSdp(self)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer for early reinvite: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create offer for early reinvite\nerr=%v", err))
 			e.rollbackPendingOffer(self)
 			return
 		}
@@ -674,10 +674,10 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 			return
 		}
 
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated offer SDP:\n%s", string(offerData)))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated offer SDP\nsdp=%s", string(offerData)))
 
 		if _, err := self.Emit("send-offer-sdp", string(offerData)); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit send-offer-sdp signal: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit send-offer-sdp signal\nerr=%v", err))
 			e.rollbackPendingOffer(self)
 			return
 		}
@@ -705,7 +705,7 @@ func (e *SipBin) clearTracks(self *gst.Bin) {
 		defer e.wg.Done()
 		unlock, err := e.transaction.WaitReady()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to start SIP transaction for sending offer: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to start SIP transaction for sending offer\nerr=%v", err))
 			return
 		}
 		defer unlock()
@@ -714,7 +714,7 @@ func (e *SipBin) clearTracks(self *gst.Bin) {
 		defer e.mu.Unlock()
 
 		if e.transactionID.Load() != transactionID {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Not cleaning up tracks because transaction ID has changed: current %d, expected %d", e.transactionID.Load(), transactionID))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Not cleaning up tracks because transaction ID has changed\ncurrent=%d\nexpected=%d", e.transactionID.Load(), transactionID))
 			return
 		}
 		e.transactionID.Add(1)

@@ -44,7 +44,7 @@ func (*SinkRtcp) ClassInit(klass *glib.ObjectClass) {
 		gst.PadDirectionSink,
 		gst.PadPresenceAlways,
 		gst.NewCapsFromString("application/x-rtcp")))
-	
+
 	class.InstallProperties(sinkRtcpProperties)
 }
 
@@ -94,21 +94,21 @@ func (s *SinkRtcp) Stop(self *base.GstBaseSink) bool {
 
 func (s *SinkRtcp) Render(self *base.GstBaseSink, buffer *gst.Buffer) gst.FlowReturn {
 	if state := s.pc.ConnectionState(); state != webrtc.PeerConnectionStateConnected {
-		self.Log(CAT, gst.LevelTrace, fmt.Sprintf("PeerConnection is not connected (state: %s), dropping RTCP packet", state.String()))
+		self.Log(CAT, gst.LevelTrace, fmt.Sprintf("PeerConnection is not connected, dropping RTCP packet\nstate=%s", state.String()))
 		return gst.FlowOK
 	}
 
 	pkts, err := rtcp.Unmarshal(buffer.Bytes())
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to unmarshal RTCP packet: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to unmarshal RTCP packet\nerr=%v", err))
 		self.Error("Failed to unmarshal RTCP packet", err)
 		return gst.FlowError
 	}
 
-	self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Sending %d RTCP packets to PeerConnection: %+v", len(pkts), pkts))
+	self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Sending RTCP packets to PeerConnection\ncount=%d\npackets=%+v", len(pkts), pkts))
 
 	if err := s.pc.WriteRTCP(pkts); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to write RTCP packets to PeerConnection: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to write RTCP packets to PeerConnection\nerr=%v", err))
 		self.Error("Failed to write RTCP packets to PeerConnection", err)
 		return gst.FlowError
 	}
@@ -127,7 +127,7 @@ func (s *SinkRtcp) SetProperty(instance *glib.Object, id uint, value *glib.Value
 	case "pc":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for property 'pc': %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for property 'pc'\nerr=%v", err))
 			self.Error("Failed to get Go value for property 'pc'", err)
 			return
 		}
@@ -136,19 +136,19 @@ func (s *SinkRtcp) SetProperty(instance *glib.Object, id uint, value *glib.Value
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property\ntype=%T", gv))
 			self.Error("Invalid type for pub property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		pc, ok := data.Data.(*webrtc.PeerConnection)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for property 'pc': %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for property 'pc'\ntype=%T", data.Data))
 			self.Error("Invalid data type for property 'pc'", fmt.Errorf("expected *webrtc.PeerConnection, got %T", data.Data))
 			return
 		}
 		s.pc = pc
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID %d", id))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID\nid=%d", id))
 		self.Error("Unknown property ID", fmt.Errorf("unknown property ID %d", id))
 	}
 }

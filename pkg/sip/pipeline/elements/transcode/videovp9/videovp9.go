@@ -86,7 +86,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 
 	e.VideoConvert, err = gst.NewElementWithProperties("videoconvert", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoconvert element\nerr=%v", err))
 		self.Error("Failed to create videoconvert element", err)
 		return
 	}
@@ -95,7 +95,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		"add-borders": true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoscale element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoscale element\nerr=%v", err))
 		self.Error("Failed to create videoscale element", err)
 		return
 	}
@@ -104,7 +104,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],pixel-aspect-ratio=1/1", e.videoWidth, e.videoHeight)),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element\nerr=%v", err))
 		self.Error("Failed to create capsfilter element", err)
 		return
 	}
@@ -119,7 +119,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		"lag-in-frames": int(0),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9enc element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9enc element\nerr=%v", err))
 		self.Error("Failed to create vp9enc element", err)
 		return
 	}
@@ -128,7 +128,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		"mtu": int(1200),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpvp9pay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpvp9pay element\nerr=%v", err))
 		self.Error("Failed to create rtpvp9pay element", err)
 		return
 	}
@@ -140,7 +140,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		e.Vp9Enc,
 		e.Vp9Pay,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -152,7 +152,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		e.Vp9Enc,
 		e.Vp9Pay,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}
@@ -173,7 +173,7 @@ func (e *VideoVp9) SetProperty(instance *glib.Object, id uint, value *glib.Value
 	case "video-width":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -182,14 +182,14 @@ func (e *VideoVp9) SetProperty(instance *glib.Object, id uint, value *glib.Value
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property\nvalue=%d", val))
 			return
 		}
 		e.videoWidth = val
 	case "video-height":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -198,7 +198,7 @@ func (e *VideoVp9) SetProperty(instance *glib.Object, id uint, value *glib.Value
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property\nvalue=%d", val))
 			return
 		}
 		e.videoHeight = val

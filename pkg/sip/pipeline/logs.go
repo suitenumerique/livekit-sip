@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +19,7 @@ var QLogSipCallID = glib.QuarkFromString("livekit-sip-log-sipcallid")
 var gstLogger logger.Logger
 var logDeduplication = sync.Map{}
 var gstLogDedup = false
-var gstLogDedupDuration = 100 * time.Millisecond
+var gstLogDedupDuration = 250 * time.Millisecond
 
 type gstLogKey = uint64
 type gstLogValue struct {
@@ -28,7 +29,7 @@ type gstLogValue struct {
 	loc        string
 	objectName string
 	msg        string
-	details    string
+	details    []string
 	count      atomic.Int64
 	at         int64
 }
@@ -67,12 +68,40 @@ func SetupLogging(log logger.Logger, gstConf config.GstConfig) {
 }
 
 func (p *Pipeline) SetLogHandler() {
+	p.pipeline.SetQDataQuark(QLogSipCallID, p.sipCallID)
 	p.pipeline.Connect("deep-element-added", func(_ any, _ any, child *gst.Element) {
 		if child == nil {
 			return
 		}
 		child.SetQDataQuark(QLogSipCallID, p.sipCallID)
 	})
+}
+
+func splitLFNotCRLF(s string) []string {
+	out := make([]string, 0, strings.Count(s, "\n")+1)
+	start := 0
+	search := 0
+
+	for {
+		j := strings.IndexByte(s[search:], '\n')
+		if j < 0 {
+			break
+		}
+
+		i := search + j
+
+		if i > 0 && s[i-1] == '\r' {
+			search = i + 1
+			continue
+		}
+
+		out = append(out, s[start:i])
+		start = i + 1
+		search = start
+	}
+
+	out = append(out, s[start:])
+	return out
 }
 
 func gstLogFunc(
@@ -96,15 +125,18 @@ func gstLogFunc(
 	}
 	loc := fmt.Sprintf("%s:%d:%s", file, line, function)
 	cat := category.GetName()
-	data := strings.Split(message.Get(), "\n")
-	var msg, details string
+	data := splitLFNotCRLF(message.Get())
+	var (
+		msg     string
+		details []string
+	)
 	if len(data) == 0 {
 		msg = ""
 	} else {
 		msg = data[0]
 	}
 	if len(data) > 1 {
-		details = strings.Join(data[1:], "\n")
+		details = data[1:]
 	}
 
 	if gstLogDedup {
@@ -121,7 +153,7 @@ func gstLogFunc(
 		key = fnvAdd(key, "\x00")
 		key = fnvAdd(key, msg)
 		key = fnvAdd(key, "\x00")
-		key = fnvAdd(key, details)
+		key = fnvAdd(key, strings.Join(details, "\n"))
 		now := time.Now()
 		if val, ok := logDeduplication.Load(key); ok {
 			v := val.(*gstLogValue)
@@ -166,8 +198,19 @@ func gstLogPrint(data *gstLogValue) {
 	if data.objectName != "" {
 		log = log.WithValues("object", data.objectName)
 	}
-	if data.details != "" {
-		log = log.WithValues("details", data.details)
+	for i, detail := range data.details {
+		if detail == "" {
+			continue
+		}
+		var k, v string
+		if idx := strings.Index(detail, "="); idx != -1 {
+			k = detail[:idx]
+			v = detail[idx+1:]
+		} else {
+			k = strconv.Itoa(i)
+			v = detail
+		}
+		log = log.WithValues(k, v)
 	}
 	count := data.count.Load()
 	if count > 0 {
@@ -184,7 +227,7 @@ func gstLogPrint(data *gstLogValue) {
 	case gst.LevelDebug:
 		log.Debugw(data.msg)
 	default:
-		log.Infow(data.msg)
+		log.Debugw(data.msg)
 	}
 }
 

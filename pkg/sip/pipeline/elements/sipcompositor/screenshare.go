@@ -67,7 +67,7 @@ func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
 
 func (e *SipCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.PadTemplate, name string) *gst.Pad {
 	if err := e.initScreenshare(self); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize screenshare compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize screenshare compositor\nerr=%v", err))
 		return nil
 	}
 
@@ -77,7 +77,7 @@ func (e *SipCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.P
 		return nil
 	}
 	if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", sink); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new screenshare sink: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new screenshare sink\nerr=%v", err))
 	}
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
@@ -94,7 +94,7 @@ func (e *SipCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.P
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new screenshare sink pad %s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new screenshare sink pad\npad=%s", gpad.GetName()))
 
 	return gpad.Pad
 }
@@ -116,11 +116,11 @@ func (e *SipCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.Ghost
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for screenshare sink from bin")
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released screenshare sink pad %s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released screenshare sink pad\npad=%s", gpad.GetName()))
 
 	sinks, err := e.SipCompositorScreenshare.InputSelector.GetSinkPads()
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from input-selector: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from input-selector\nerr=%v", err))
 		return
 	}
 	if len(sinks) == 0 {
@@ -128,7 +128,7 @@ func (e *SipCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.Ghost
 		e.cleanupScreenshare(self)
 	} else {
 		if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", sinks[len(sinks)-1]); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing screenshare sink pad: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing screenshare sink pad\nerr=%v", err))
 		}
 	}
 }
@@ -139,13 +139,13 @@ func (e *SipCompositor) cleanupScreenshare(self *gst.Bin) {
 	}
 
 	if err := e.SipCompositorScreenshare.InputSelector.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set input-selector to null state after releasing last screenshare sink pad: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set input-selector to null state after releasing last screenshare sink pad\nerr=%v", err))
 	}
 	if err := e.SipCompositorScreenshare.Filter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to null state after releasing last screenshare sink pad: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to null state after releasing last screenshare sink pad\nerr=%v", err))
 	}
 	if err := self.RemoveMany(e.SipCompositorScreenshare.InputSelector, e.SipCompositorScreenshare.Filter); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove input-selector from bin after releasing last screenshare sink pad: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove input-selector from bin after releasing last screenshare sink pad\nerr=%v", err))
 	}
 	if !self.RemovePad(e.SipCompositorScreenshare.gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for screenshare source from bin after releasing last screenshare sink pad")

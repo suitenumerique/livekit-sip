@@ -25,7 +25,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				e.Close()
 			}); err != nil {
 				e.livekitMu.Unlock()
-				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add LivekitBin close to main loop: %v", err))
+				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add LivekitBin close to main loop\nerr=%v", err))
 			}
 		},
 		OnParticipantConnected: func(rp *lksdk.RemoteParticipant) {
@@ -35,7 +35,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				e.OnParticipantConnected(rp)
 			}); err != nil {
 				e.livekitMu.Unlock()
-				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add participant connection to main loop: %v", err))
+				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add participant connection to main loop\nerr=%v", err))
 			}
 		},
 		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
@@ -45,7 +45,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				e.OnParticipantDisconnected(rp)
 			}); err != nil {
 				e.livekitMu.Unlock()
-				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add participant disconnection to main loop: %v", err))
+				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add participant disconnection to main loop\nerr=%v", err))
 			}
 		},
 		ParticipantCallback: lksdk.ParticipantCallback{
@@ -55,7 +55,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 					return
 				}
 				if err := e.Wait(RoomStateJoined); err != nil {
-					self.Log(CAT, gst.LevelError, fmt.Sprintf("Error waiting for room to be joined: %v", err))
+					self.Log(CAT, gst.LevelError, fmt.Sprintf("Error waiting for room to be joined\nerr=%v", err))
 					self.Error(fmt.Sprintf("Error waiting for room to be joined: %v", err), err)
 					return
 				}
@@ -72,7 +72,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 					time.Sleep(5 * time.Millisecond)
 				}); err != nil {
 					e.livekitMu.Unlock()
-					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track subscription to main loop: %v", err))
+					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track subscription to main loop\nerr=%v", err))
 				}
 			},
 			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, publication *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -82,7 +82,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 					e.UnsubscribeTrack(track, publication, rp)
 				}); err != nil {
 					e.livekitMu.Unlock()
-					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track unsubscription to main loop: %v", err))
+					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track unsubscription to main loop\nerr=%v", err))
 				}
 			},
 			OnTrackPublished: e.OnTrackPublished,
@@ -93,7 +93,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 					e.OnTrackMuted(pub, p)
 				}); err != nil {
 					e.livekitMu.Unlock()
-					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track muted to main loop: %v", err))
+					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track muted to main loop\nerr=%v", err))
 				}
 			},
 			OnTrackUnmuted: func(pub lksdk.TrackPublication, p lksdk.Participant) {
@@ -103,7 +103,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 					e.OnTrackUnmuted(pub, p)
 				}); err != nil {
 					e.livekitMu.Unlock()
-					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track unmuted to main loop: %v", err))
+					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track unmuted to main loop\nerr=%v", err))
 				}
 			},
 			OnLocalTrackPublished: func(pub *lksdk.LocalTrackPublication, _ *lksdk.LocalParticipant) {
@@ -121,7 +121,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				if err := e.publications[kind].TrackSink.SetProperty("pub", glib.ArbitraryValue{Data: pub}); err != nil {
 					self := gst.ToGstBin(e.self.Get())
 					if self != nil && self.Instance() != nil {
-						self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set pub property on sink track for publication %s: %v", pub.SID(), err))
+						self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set pub property on sink track for publication\npublication=%s\nerr=%v", pub.SID(), err))
 						self.Error(fmt.Sprintf("Failed to set pub property on sink track for publication %s", pub.SID()), err)
 					}
 				}
@@ -134,7 +134,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				e.OnActiveSpeakersChanged(p)
 			}); err != nil {
 				e.livekitMu.Unlock()
-				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add active speakers update to main loop: %v", err))
+				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add active speakers update to main loop\nerr=%v", err))
 			}
 		},
 	}

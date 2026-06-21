@@ -67,13 +67,13 @@ func (e *plidPatch) resolvePlid(self *base.GstBaseTransform) {
 	st := downstream.GetStructureAt(0)
 	plid, err := st.GetString("profile-level-id")
 	if err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("resolvePlid: downstream caps missing profile-level-id: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("resolvePlid: downstream caps missing profile-level-id\nerr=%v", err))
 		return
 	}
 
 	parsed, err := parseProfileLevelID(plid)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("resolvePlid: failed to parse profile-level-id %q: %v", plid, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("resolvePlid: failed to parse profile-level-id\nplid=%q\nerr=%v", plid, err))
 		return
 	}
 
@@ -83,7 +83,7 @@ func (e *plidPatch) resolvePlid(self *base.GstBaseTransform) {
 	if err == nil {
 		maxFs, err = strconv.Atoi(maxFsStr)
 		if err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-fs value in downstream caps: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-fs value in downstream caps\nerr=%v", err))
 			maxFs = 0
 		}
 	}
@@ -92,7 +92,7 @@ func (e *plidPatch) resolvePlid(self *base.GstBaseTransform) {
 	if err == nil {
 		maxMbps, err = strconv.Atoi(maxMbpsStr)
 		if err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-mbps value in downstream caps: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-mbps value in downstream caps\nerr=%v", err))
 			maxMbps = 0
 		}
 	}
@@ -100,16 +100,16 @@ func (e *plidPatch) resolvePlid(self *base.GstBaseTransform) {
 	patched := patchProfileLevelID(parsed, maxFs, maxMbps)
 
 	if patched == e.plid {
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Profile-level-id already resolved and unchanged: %s", patched))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Profile-level-id already resolved and unchanged\nplid=%s", patched))
 		return
 	}
 
 	e.plid = patched
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Profile-level-id resolved: %s -> %s level %d", plid, patched, patched.levelIDC))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Profile-level-id resolved\nfrom=%s\nto=%s\nlevel=%d", plid, patched, patched.levelIDC))
 
 	if _, err := self.Element.Emit("plid-resolved", patched.String()); err != nil {
-		self.Log(CAT, gst.LevelError, "failed to emit plid-resolved: "+err.Error())
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to emit plid-resolved\nerr=%v", err))
 	}
 }
 

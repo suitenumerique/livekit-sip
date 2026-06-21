@@ -55,21 +55,21 @@ func (e *AudioPcma) InstanceInit(instance *glib.Object) {
 
 	e.AudioConvert, err = gst.NewElement("audioconvert")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element\nerr=%v", err))
 		self.Error("Failed to create audioconvert element", err)
 		return
 	}
 
 	e.AudioResample, err = gst.NewElement("audioresample")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element\nerr=%v", err))
 		self.Error("Failed to create audioresample element", err)
 		return
 	}
 
 	e.ALawEnc, err = gst.NewElementWithProperties("alawenc", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create alawenc element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create alawenc element\nerr=%v", err))
 		self.Error("Failed to create alawenc element", err)
 		return
 	}
@@ -80,7 +80,7 @@ func (e *AudioPcma) InstanceInit(instance *glib.Object) {
 		"ptime-multiple": int64(20 * time.Millisecond.Nanoseconds()),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtppcmapay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtppcmapay element\nerr=%v", err))
 		self.Error("Failed to create rtppcmapay element", err)
 		return
 	}
@@ -91,7 +91,7 @@ func (e *AudioPcma) InstanceInit(instance *glib.Object) {
 		e.ALawEnc,
 		e.RtpPcmaPay,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -102,7 +102,7 @@ func (e *AudioPcma) InstanceInit(instance *glib.Object) {
 		e.ALawEnc,
 		e.RtpPcmaPay,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}

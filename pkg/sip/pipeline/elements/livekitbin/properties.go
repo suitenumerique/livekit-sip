@@ -129,12 +129,12 @@ func stringPropSetter(dst *string) func(self *gst.Bin, param *glib.ParamSpec, va
 	return func(self *gst.Bin, param *glib.ParamSpec, value *glib.Value) {
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting %s property value: %v", param.Name(), err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting property value\nproperty=%s\nerr=%v", param.Name(), err))
 			return
 		}
 		val, ok := gv.(string)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for %s property", param.Name()))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for property\nproperty=%s", param.Name()))
 			return
 		}
 		if val != "" {
@@ -147,7 +147,7 @@ func stringPropGetter(src *string) func(self *gst.Bin, param *glib.ParamSpec) *g
 	return func(self *gst.Bin, param *glib.ParamSpec) *glib.Value {
 		value, err := glib.GValue(*src)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting %s property value: %v", param.Name(), err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting property value\nproperty=%s\nerr=%v", param.Name(), err))
 			return nil
 		}
 		return value
@@ -158,12 +158,12 @@ func boolPropSetter(dst *bool) func(self *gst.Bin, param *glib.ParamSpec, value 
 	return func(self *gst.Bin, param *glib.ParamSpec, value *glib.Value) {
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting %s property value: %v", param.Name(), err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting property value\nproperty=%s\nerr=%v", param.Name(), err))
 			return
 		}
 		val, ok := gv.(bool)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for %s property", param.Name()))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for property\nproperty=%s", param.Name()))
 			return
 		}
 		*dst = val
@@ -174,7 +174,7 @@ func boolPropGetter(src *bool) func(self *gst.Bin, param *glib.ParamSpec) *glib.
 	return func(self *gst.Bin, param *glib.ParamSpec) *glib.Value {
 		value, err := glib.GValue(*src)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting %s property value: %v", param.Name(), err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting property value\nproperty=%s\nerr=%v", param.Name(), err))
 			return nil
 		}
 		return value
@@ -208,7 +208,7 @@ func (e *LivekitBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	case "participant-attributes":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting participant-attributes property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting participant-attributes property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(*gst.Structure)
@@ -220,7 +220,7 @@ func (e *LivekitBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 		for k, v := range val.Values() {
 			str, ok := v.(string)
 			if !ok {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for participant attribute %s", k))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for participant attribute\nname=%s", k))
 				continue
 			}
 			participantAttributes[k] = str
@@ -233,7 +233,7 @@ func (e *LivekitBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	case "max-active-participants":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting max-active-participants property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting max-active-participants property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -275,7 +275,7 @@ func (e *LivekitBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	case "screenshare-audio-mime-type":
 		stringPropSetter(&e.screenshareAudioMimeType)(self, param, value)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 	}
 }
 
@@ -319,19 +319,19 @@ func (e *LivekitBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		structure := gst.NewStructure("participant-attributes")
 		for k, v := range attributes {
 			if err := structure.SetValue(k, v); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Error setting participant attribute %s: %v", k, err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Error setting participant attribute\nname=%s\nerr=%v", k, err))
 			}
 		}
 		value, err := glib.GValue(structure)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting participant-attributes property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting participant-attributes property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "max-active-participants":
 		value, err := glib.GValue(e.maxActiveParticipants)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting max-active-participants property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting max-active-participants property value\nerr=%v", err))
 			return nil
 		}
 		return value
@@ -352,7 +352,7 @@ func (e *LivekitBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 	case "screenshare-audio-mime-type":
 		return stringPropGetter(&e.screenshareAudioMimeType)(self, param)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 		return nil
 	}
 }

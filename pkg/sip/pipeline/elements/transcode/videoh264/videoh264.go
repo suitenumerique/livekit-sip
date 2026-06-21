@@ -92,7 +92,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 
 	e.VideoConvert, err = gst.NewElementWithProperties("videoconvert", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoconvert element\nerr=%v", err))
 		self.Error("Failed to create videoconvert element", err)
 		return
 	}
@@ -101,7 +101,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"add-borders": true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoscale element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoscale element\nerr=%v", err))
 		self.Error("Failed to create videoscale element", err)
 		return
 	}
@@ -115,7 +115,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d]", e.videoWidth, e.videoHeight)),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create scale capsfilter: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create scale capsfilter\nerr=%v", err))
 		self.Error("Failed to create scale capsfilter", err)
 		return
 	}
@@ -136,14 +136,14 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"bitrate":          uint(defaultBitrate),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create x264enc element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create x264enc element\nerr=%v", err))
 		self.Error("Failed to create x264enc element", err)
 		return
 	}
 
 	e.H264RtpPayBin, err = gst.NewElementWithProperties("h264rtppaybin", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264rtppaybin element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264rtppaybin element\nerr=%v", err))
 		self.Error("Failed to create h264rtppaybin element", err)
 		return
 	}
@@ -159,11 +159,11 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		w = max(1, min(w, int(e.videoWidth)))
 		h = max(1, min(h, int(e.videoHeight)))
 		if err := e.ScaleFilter.SetProperty("caps", gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d]", w, h))); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set scale filter caps: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set scale filter caps\nerr=%v", err))
 			self.Error("Failed to set scale filter caps", err)
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect max-resolution signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect max-resolution signal\nerr=%v", err))
 		self.Error("Failed to connect max-resolution signal", err)
 	}
 
@@ -171,7 +171,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"caps": gst.NewCapsFromString("application/x-rtp, media=(string)video, encoding-name=(string)H264"),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create RTP codec filter element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create RTP codec filter element\nerr=%v", err))
 		self.Error("Failed to create RTP codec filter element", err)
 		return
 	}
@@ -194,19 +194,19 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		}
 		bitrate, err := strconv.Atoi(bitrateStr)
 		if err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-br value in RTP codec filter sink caps: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-br value in RTP codec filter sink caps\nerr=%v", err))
 			return
 		}
 		if bitrate > 0 {
 			if err := e.X264Enc.SetProperty("bitrate", uint(bitrate)); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set x264enc bitrate: %v", err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set x264enc bitrate\nerr=%v", err))
 				self.Error("Failed to set x264enc bitrate", err)
 			} else {
-				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate to %d", bitrate))
+				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate\nbitrate=%d", bitrate))
 			}
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect notify::caps signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect notify::caps signal\nerr=%v", err))
 		self.Error("Failed to connect notify::caps signal", err)
 	}
 
@@ -218,7 +218,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		e.H264RtpPayBin,
 		e.RtpCodecFilter,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -231,7 +231,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		e.H264RtpPayBin,
 		e.RtpCodecFilter,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}
@@ -252,7 +252,7 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "video-width":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -261,14 +261,14 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property\nvalue=%d", val))
 			return
 		}
 		e.videoWidth = val
 	case "video-height":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -277,7 +277,7 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property\nvalue=%d", val))
 			return
 		}
 		e.videoHeight = val

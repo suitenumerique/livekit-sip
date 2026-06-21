@@ -32,40 +32,42 @@ func (p *Pipeline) DumpDotLoop() error {
 		defer mu.Unlock()
 		if dump {
 			dump = false
-			p.Log.Debugw("Dumping pipeline state to dot file")
+			// Logged object-less (CAT.Log) rather than on p.pipeline: this runs
+			// asynchronously and p.pipeline may already be nil during shutdown.
+			CAT.Log(gst.LevelDebug, fmt.Sprintf("Dumping pipeline state to dot file\ncallID=%s", p.sipCallID))
 			count++
 			done := make(chan struct{})
 			if _, err := glib.IdleAdd(func() {
 				if p.Closed() {
-					p.Log.Debugw("Pipeline closed, skipping dump")
+					CAT.Log(gst.LevelDebug, fmt.Sprintf("Pipeline closed, skipping dump\ncallID=%s", p.sipCallID))
 					close(done)
 					return
 				}
 				pipeline := p.Pipeline()
 				if pipeline == nil {
-					p.Log.Debugw("Pipeline is nil, skipping dump")
+					CAT.Log(gst.LevelDebug, fmt.Sprintf("Pipeline is nil, skipping dump\ncallID=%s", p.sipCallID))
 					close(done)
 					return
 				}
-				data := p.Pipeline().DebugBinToDotData(gst.DebugGraphShowAll | gst.DebugGraphShowFullParams)
+				data := pipeline.DebugBinToDotData(gst.DebugGraphShowAll | gst.DebugGraphShowFullParams)
 				filename := fmt.Sprintf("%s/pipeline-%s-%d.dot", p.dumpDir, p.sipCallID, count)
 				if err := os.WriteFile(filename, []byte(data), 0644); err != nil {
-					p.Log.Errorw("Failed to write pipeline dot file", err, "filename", filename)
+					pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to write pipeline dot file\nerr=%v\nfilename=%s", err, filename))
 				} else {
-					p.Log.Infow("Pipeline dot file written", "filename", filename)
+					pipeline.Log(CAT, gst.LevelInfo, fmt.Sprintf("Pipeline dot file written\nfilename=%s", filename))
 				}
 				close(done)
 			}); err != nil {
-				p.Log.Errorw("Failed to add idle function for dumping pipeline", err)
+				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add idle function for dumping pipeline\ncallID=%s\nerr=%v", p.sipCallID, err))
 				return
 			}
 			<-done
-			p.Log.Debugw("Pipeline state dumped to dot file")
+			CAT.Log(gst.LevelDebug, fmt.Sprintf("Pipeline state dumped to dot file\ncallID=%s", p.sipCallID))
 		}
 	}
 
 	if err := p.ensureDumpDir(); err != nil {
-		p.Log.Warnw("Pipeline dumping is disabled", err, "dumpDot", p.dumpDot, "dumpDir", p.dumpDir)
+		CAT.Log(gst.LevelWarning, fmt.Sprintf("Pipeline dumping is disabled\ndumpDot=%v\ndumpDir=%s\nerr=%v", p.dumpDot, p.dumpDir, err))
 		dumpPipeline = func() {}
 	}
 
@@ -113,7 +115,7 @@ func (p *Pipeline) ensureDumpDir() error {
 			if err := os.MkdirAll(p.dumpDir, 0755); err != nil {
 				return fmt.Errorf("pipeline dump directory does not exist and failed to create it: %w", err)
 			}
-			p.Log.Infow("Dump directory created", "directory", p.dumpDir)
+			CAT.Log(gst.LevelInfo, fmt.Sprintf("Dump directory created\ndirectory=%s", p.dumpDir))
 			dir, err = os.Stat(p.dumpDir)
 			if err != nil {
 				return fmt.Errorf("failed to stat dump directory after creating it, disabling pipeline dumping: %w", err)

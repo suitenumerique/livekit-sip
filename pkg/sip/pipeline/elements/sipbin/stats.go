@@ -105,7 +105,7 @@ func (e *SipBin) DumpStats(self *gst.Bin) *gst.Structure {
 		kind := livekit.TrackSource(i)
 		stats, err := e.getStats(kind)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get stats for track source %s: %v", kind, err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get stats for track source\nsource=%s\nerr=%v", kind, err))
 			self.Error(fmt.Sprintf("Failed to get stats for track source %s", kind), err)
 			continue
 		}
@@ -114,12 +114,12 @@ func (e *SipBin) DumpStats(self *gst.Bin) *gst.Structure {
 		}
 
 		if err := st.SetValue(kind.String(), glib.ArbitraryValue{Data: stats}); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set stats structure for track source %s: %v", kind, err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set stats structure for track source\nsource=%s\nerr=%v", kind, err))
 			self.Error(fmt.Sprintf("Failed to set stats structure for track source %s", kind), err)
 		}
 
 		if err := st.SetValue(fmt.Sprintf("%s-caps", kind), e.Tracks[kind].Caps.Copy()); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps structure for track source %s: %v", kind, err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps structure for track source\nsource=%s\nerr=%v", kind, err))
 			self.Error(fmt.Sprintf("Failed to set caps structure for track source %s", kind), err)
 		}
 	}
@@ -300,4 +300,3 @@ func readReceivedRR(s *gst.Structure) []ReceiverReport {
 	}
 	return out
 }
-

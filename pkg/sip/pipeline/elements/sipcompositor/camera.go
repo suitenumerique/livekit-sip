@@ -67,7 +67,7 @@ func (e *SipCompositor) initCamera(self *gst.Bin) error {
 
 func (e *SipCompositor) requestNewCameraSinkPad(self *gst.Bin, templ *gst.PadTemplate, name string) *gst.Pad {
 	if err := e.initCamera(self); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize camera compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize camera compositor\nerr=%v", err))
 		return nil
 	}
 
@@ -77,7 +77,7 @@ func (e *SipCompositor) requestNewCameraSinkPad(self *gst.Bin, templ *gst.PadTem
 		return nil
 	}
 	if err := e.SipCompositorCamera.InputSelector.SetProperty("active-pad", sink); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new camera sink: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new camera sink\nerr=%v", err))
 	}
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
@@ -94,7 +94,7 @@ func (e *SipCompositor) requestNewCameraSinkPad(self *gst.Bin, templ *gst.PadTem
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new camera sink pad %s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new camera sink pad\npad=%s", gpad.GetName()))
 
 	return gpad.Pad
 }
@@ -116,11 +116,11 @@ func (e *SipCompositor) releaseCameraSinkPad(self *gst.Bin, gpad *gst.GhostPad) 
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for camera sink from bin")
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released camera sink pad %s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released camera sink pad\npad=%s", gpad.GetName()))
 
 	sinks, err := e.SipCompositorCamera.InputSelector.GetSinkPads()
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from input-selector: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get sink pads from input-selector\nerr=%v", err))
 		return
 	}
 	if len(sinks) == 0 {
@@ -128,7 +128,7 @@ func (e *SipCompositor) releaseCameraSinkPad(self *gst.Bin, gpad *gst.GhostPad) 
 		e.cleanupCamera(self)
 	} else {
 		if err := e.SipCompositorCamera.InputSelector.SetProperty("active-pad", sinks[len(sinks)-1]); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing camera sink pad: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing camera sink pad\nerr=%v", err))
 		}
 	}
 }
@@ -139,13 +139,13 @@ func (e *SipCompositor) cleanupCamera(self *gst.Bin) {
 	}
 
 	if err := e.SipCompositorCamera.InputSelector.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set input-selector to null state after releasing last camera sink pad: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set input-selector to null state after releasing last camera sink pad\nerr=%v", err))
 	}
 	if err := e.SipCompositorCamera.Filter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to null state after releasing last camera sink pad: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to null state after releasing last camera sink pad\nerr=%v", err))
 	}
 	if err := self.RemoveMany(e.SipCompositorCamera.InputSelector, e.SipCompositorCamera.Filter); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove input-selector from bin after releasing last camera sink pad: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove input-selector from bin after releasing last camera sink pad\nerr=%v", err))
 	}
 	if !self.RemovePad(e.SipCompositorCamera.gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for camera source from bin after releasing last camera sink pad")

@@ -14,31 +14,31 @@ import (
 )
 
 func (e *SipBin) extractMediaCases(self *gst.Bin, media *gstsdp.Media, kind livekit.TrackSource) {
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Extracting media cases for media %s with %d formats", media.GetMedia(), media.FormatsLen()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Extracting media cases\nmedia=%s\nformats=%d", media.GetMedia(), media.FormatsLen()))
 	for i := 0; ; i++ {
 		format := media.GetAttributeValN("rtpmap", i)
 		if format == "" {
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Finished extracting media cases for media %s after %d formats", media.GetMedia(), i))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Finished extracting media cases\nmedia=%s\nformats=%d", media.GetMedia(), i))
 			break
 		}
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Processing rtpmap format: %s", format))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Processing rtpmap format\nformat=%s", format))
 
 		ptStr, rest, ok := strings.Cut(format, " ")
 		if !ok {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid rtpmap format: %s", format))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid rtpmap format\nformat=%s", format))
 			continue
 		}
 		pt, err := strconv.Atoi(ptStr)
 		if err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid payload type %s in rtpmap attribute: %v", ptStr, err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid payload type in rtpmap attribute\npt=%s\nerr=%v", ptStr, err))
 			continue
 		}
 		if pt < 0 || pt > 127 {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Payload type out of range in rtpmap attribute: %d", pt))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Payload type out of range in rtpmap attribute\npt=%d", pt))
 			continue
 		}
 		if rest == "" {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Missing encoding in rtpmap attribute: %s", format))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Missing encoding in rtpmap attribute\nformat=%s", format))
 			continue
 		}
 		encoding, _, ok := strings.Cut(rest, "/")
@@ -46,25 +46,25 @@ func (e *SipBin) extractMediaCases(self *gst.Bin, media *gstsdp.Media, kind live
 			encoding = rest
 		}
 		if encoding == "" {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Empty encoding in rtpmap attribute: %s", format))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Empty encoding in rtpmap attribute\nformat=%s", format))
 			continue
 		}
 
 		if encoding == strings.ToLower(encoding) {
 			if encCase, exist := e.encodingCase[kind][uint8(pt)]; exist && encCase != EncodingCaseLower {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Conflicting encoding case for payload type %d: already have %v, new encoding %s", pt, e.encodingCase[kind][uint8(pt)], encoding))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Conflicting encoding case for payload type\npt=%d\nexisting=%v\nencoding=%s", pt, e.encodingCase[kind][uint8(pt)], encoding))
 				continue
 			}
 			e.encodingCase[kind][uint8(pt)] = EncodingCaseLower
 		} else if encoding == strings.ToUpper(encoding) {
 			if encCase, exist := e.encodingCase[kind][uint8(pt)]; exist && encCase != EncodingCaseUpper {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Conflicting encoding case for payload type %d: already have %v, new encoding %s", pt, e.encodingCase[kind][uint8(pt)], encoding))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Conflicting encoding case for payload type\npt=%d\nexisting=%v\nencoding=%s", pt, e.encodingCase[kind][uint8(pt)], encoding))
 				continue
 			}
 			e.encodingCase[kind][uint8(pt)] = EncodingCaseUpper
 		}
 
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Extracted encoding case for payload type %d: %s -> %v", pt, encoding, e.encodingCase[kind][uint8(pt)]))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Extracted encoding case for payload type\npt=%d\nencoding=%s\ncase=%v", pt, encoding, e.encodingCase[kind][uint8(pt)]))
 	}
 }
 
@@ -93,10 +93,10 @@ func (e *SipBin) normalizeEncodingName(self *gst.Bin, kind livekit.TrackSource, 
 			encoding = strings.ToUpper(encoding)
 		}
 		if err := structure.SetString("encoding-name", encoding); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set encoding-name value on caps structure: %v", err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set encoding-name value on caps structure\nerr=%v", err))
 			continue
 		}
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Normalized encoding name for payload type %d: %s", payload, structure.String()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Normalized encoding name for payload type\npt=%d\nstructure=%s", payload, structure.String()))
 	}
 	return res
 }
@@ -139,18 +139,18 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 			structure := caps.GetStructureAt(i)
 			encoding, err := structure.GetString("encoding-name")
 			if err != nil || encoding == "" {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get encoding-name value from caps structure: %v", err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get encoding-name value from caps structure\nerr=%v", err))
 				continue
 			}
 			media, err := structure.GetString("media")
 			if err != nil || media == "" {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get media value from caps structure: %v", err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get media value from caps structure\nerr=%v", err))
 				continue
 			}
 
 			info := rtp.PayloadInfoForName(media, encoding)
 			if info == nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No payload info found for media %s and encoding %s", media, encoding))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No payload info found\nmedia=%s\nencoding=%s", media, encoding))
 				continue
 			}
 			pt := info.PayloadType()
@@ -159,7 +159,7 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 				dynamicPt++
 			}
 			if err := structure.SetInt("payload", int(pt)); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set payload type on caps structure: %v", err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set payload type on caps structure\nerr=%v", err))
 				continue
 			}
 			offerCaps = append(offerCaps, caps.Copy().Fixate())
@@ -213,20 +213,20 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 	}
 
 	if ret := media.AddAttribute("rtcp-fb", "* nack pli"); ret != gstsdp.SDPResultOk {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media: %v", ret))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 	}
 	if ret := media.AddAttribute("rtcp-fb", "* ccm fir"); ret != gstsdp.SDPResultOk {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media: %v", ret))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 	}
 
 	switch kind {
 	case livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		if ret := media.AddAttribute("content", "slides"); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media\nerr=%v", ret))
 		}
 	case livekit.TrackSource_CAMERA:
 		if ret := media.AddAttribute("content", "main"); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media\nerr=%v", ret))
 		}
 	}
 
@@ -282,12 +282,12 @@ func mediaCapsRtcpFeedback(self *gst.Bin, caps *gst.Caps) *gst.Caps {
 		structure := caps.GetStructureAt(i)
 		if !structure.HasField("rtcp-fb-nack-pli") {
 			if err := structure.SetBool("rtcp-fb-nack-pli", true); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set rtcp-fb-nack-pli attribute on caps structure: %v", err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set rtcp-fb-nack-pli attribute on caps structure\nerr=%v", err))
 			}
 		}
 		if !structure.HasField("rtcp-fb-ccm-fir") {
 			if err := structure.SetBool("rtcp-fb-ccm-fir", true); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set rtcp-fb-ccm-fir attribute on caps structure: %v", err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set rtcp-fb-ccm-fir attribute on caps structure\nerr=%v", err))
 			}
 		}
 	}
@@ -299,12 +299,12 @@ func (e *SipBin) selectCapsForMedia(self *gst.Bin, media *gstsdp.Media, kind liv
 	for _, format := range media.Formats() {
 		pt, err := strconv.Atoi(format)
 		if err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid format %s for media %s: %v", format, media.GetMedia(), err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid format for media\nformat=%s\nmedia=%s\nerr=%v", format, media.GetMedia(), err))
 			continue
 		}
 		caps, err := media.GetCaps(pt)
 		if err != nil || caps.GetSize() == 0 {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get caps for format %s and payload type %d: %v", format, pt, err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get caps for format and payload type\nformat=%s\npt=%d\nerr=%v", format, pt, err))
 			continue
 		}
 		caps.GetStructureAt(0).SetName("application/x-rtp")
@@ -321,13 +321,13 @@ func (e *SipBin) selectCapsForMedia(self *gst.Bin, media *gstsdp.Media, kind liv
 			encodingName, err := caps.GetStructureAt(0).GetString("encoding-name")
 			if err != nil || encodingName != info.EncodingName() {
 				if err := caps.GetStructureAt(0).SetString("encoding-name", info.EncodingName()); err != nil {
-					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set encoding-name attribute on caps: %v", err))
+					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set encoding-name attribute on caps\nerr=%v", err))
 				}
 			}
 		}
 
 		if existing, exist := e.PtMap[kind][uint8(pt)]; exist && existing != nil && !existing.IsEqual(caps) {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received duplicate caps for payload type %d: existing %s, new %s", pt, existing.String(), caps.String()))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received duplicate caps for payload type\npt=%d\nexisting=%s\nnew=%s", pt, existing.String(), caps.String()))
 		}
 		e.PtMap[kind][uint8(pt)] = caps
 
@@ -342,10 +342,10 @@ func (e *SipBin) selectCapsForMedia(self *gst.Bin, media *gstsdp.Media, kind liv
 	for _, formatCaps := range e.formats {
 		leftover := make([]*gst.Caps, 0, len(mediaCaps))
 		for _, caps := range mediaCaps {
-			self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Intersecting media caps %s with format caps %s", caps.String(), formatCaps.String()))
+			self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Intersecting media caps with format caps\nmedia_caps=%s\nformat_caps=%s", caps.String(), formatCaps.String()))
 			icaps := caps.IntersectFull(formatCaps, gst.CapsIntersectFirst)
 			if icaps != nil && !icaps.IsEmpty() {
-				self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Found compatible caps for media %s: %s", kind.String(), icaps.String()))
+				self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Found compatible caps for media\nsource=%s\ncaps=%s", kind.String(), icaps.String()))
 				res.Append(caps.Copy())
 			} else {
 				leftover = append(leftover, caps)
@@ -370,7 +370,7 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 
 	caps = e.normalizeEncodingName(self, track.Kind, caps)
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Creating media for track %d with caps: %s", track.Idx, caps.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Creating media for track\ntrack=%d\ncaps=%s", track.Idx, caps.String()))
 
 	media, err := gstsdp.NewMedia()
 	if err != nil {
@@ -396,10 +396,10 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 	switch track.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
 		if ret := media.AddAttribute("rtcp-fb", "* nack pli"); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 		}
 		if ret := media.AddAttribute("rtcp-fb", "* ccm fir"); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 		}
 	}
 
@@ -410,25 +410,25 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 	switch track.Kind {
 	case livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		if ret := media.AddAttribute("content", "slides"); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media\nerr=%v", ret))
 		}
 	case livekit.TrackSource_CAMERA:
 		if ret := media.AddAttribute("content", "main"); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media\nerr=%v", ret))
 		}
 	}
 
 	if !track.recv && !track.send {
 		if ret := media.AddAttribute("inactive", ""); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add inactive attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add inactive attribute to media\nerr=%v", ret))
 		}
 	} else if track.recv && !track.send {
 		if ret := media.AddAttribute("recvonly", ""); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add direction attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add direction attribute to media\nerr=%v", ret))
 		}
 	} else if !track.recv && track.send {
 		if ret := media.AddAttribute("sendonly", ""); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add direction attribute to media: %v", ret))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add direction attribute to media\nerr=%v", ret))
 		}
 	}
 

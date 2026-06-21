@@ -56,14 +56,14 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 
 	e.AudioConvert, err = gst.NewElement("audioconvert")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioconvert element\nerr=%v", err))
 		self.Error("Failed to create audioconvert element", err)
 		return
 	}
 
 	e.AudioResample, err = gst.NewElement("audioresample")
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audioresample element\nerr=%v", err))
 		self.Error("Failed to create audioresample element", err)
 		return
 	}
@@ -72,7 +72,7 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		"audio-level-meta": true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create level element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create level element\nerr=%v", err))
 		self.Error("Failed to create level element", err)
 		return
 	}
@@ -81,7 +81,7 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		"frame-size": int(2), // 2.5ms
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create opusenc element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create opusenc element\nerr=%v", err))
 		self.Error("Failed to create opusenc element", err)
 		return
 	}
@@ -90,7 +90,7 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		"pt": 111,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpopuspay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpopuspay element\nerr=%v", err))
 		self.Error("Failed to create rtpopuspay element", err)
 		return
 	}
@@ -99,7 +99,7 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		"caps": gst.NewCapsFromString("application/x-rtp, media=(string)audio, clock-rate=(int)48000, encoding-name=(string)OPUS, extmap-1=(string)< \"\", urn:ietf:params:rtp-hdrext:ssrc-audio-level, \"vad=on\" >"),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element\nerr=%v", err))
 		self.Error("Failed to create capsfilter element", err)
 		return
 	}
@@ -121,7 +121,7 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		e.RtpOpusPay,
 		e.RtpFilter,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}

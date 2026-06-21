@@ -156,7 +156,7 @@ func (s *SinkTrack) Render(self *base.GstBaseSink, buffer *gst.Buffer) gst.FlowR
 	// }
 
 	if err := s.rtp.Unmarshal(buffer.Bytes()); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to unmarshal RTP packet: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to unmarshal RTP packet\nerr=%v", err))
 		self.Error("Failed to unmarshal RTP packet", err)
 		return gst.FlowError
 	}
@@ -169,7 +169,7 @@ func (s *SinkTrack) Render(self *base.GstBaseSink, buffer *gst.Buffer) gst.FlowR
 	}
 
 	if err := track.WriteRTP(&s.rtp, nil); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to write RTCP packet to track: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to write RTCP packet to track\nerr=%v", err))
 		self.Error("Failed to write RTCP packet to track", err)
 		return gst.FlowError
 	}
@@ -189,7 +189,7 @@ func (s *SinkTrack) unPublish(self *base.GstBaseSink) {
 	}
 
 	if err := s.lp.UnpublishTrack(tp.SID()); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unpublish track: %v", err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unpublish track\nerr=%v", err))
 	}
 }
 
@@ -204,7 +204,7 @@ func (s *SinkTrack) publish(self *base.GstBaseSink) {
 	}
 	pub, err := s.lp.PublishTrack(s.track, s.opts, pubOpts...)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to publish track: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to publish track\nerr=%v", err))
 		self.Error("Failed to publish track", err)
 		return
 	}
@@ -243,7 +243,7 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "track":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property\nerr=%v", err))
 			self.Error("Failed to get Go value for track property", err)
 			return
 		}
@@ -252,13 +252,13 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property\ntype=%T", gv))
 			self.Error("Invalid type for track property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		track, ok := data.Data.(*lksdk.LocalTrack)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property\ntype=%T", data.Data))
 			self.Error("Invalid data type for track property", fmt.Errorf("expected *lksdk.LocalTrack, got %T", data.Data))
 			return
 		}
@@ -266,7 +266,7 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "backupTrack":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track property\nerr=%v", err))
 			self.Error("Failed to get Go value for track property", err)
 			return
 		}
@@ -275,13 +275,13 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for track property\ntype=%T", gv))
 			self.Error("Invalid type for track property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		track, ok := data.Data.(*lksdk.LocalTrack)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track property\ntype=%T", data.Data))
 			self.Error("Invalid data type for track property", fmt.Errorf("expected *lksdk.LocalTrack, got %T", data.Data))
 			return
 		}
@@ -289,7 +289,7 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "pub":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for pub property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for pub property\nerr=%v", err))
 			self.Error("Failed to get Go value for pub property", err)
 			return
 		}
@@ -298,13 +298,13 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for pub property\ntype=%T", gv))
 			self.Error("Invalid type for pub property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		pub, ok := data.Data.(*lksdk.LocalTrackPublication)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for pub property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for pub property\ntype=%T", data.Data))
 			self.Error("Invalid data type for pub property", fmt.Errorf("expected *lksdk.LocalTrackPublication, got %T", data.Data))
 			return
 		}
@@ -315,7 +315,7 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "lp":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for lp property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for lp property\nerr=%v", err))
 			self.Error("Failed to get Go value for lp property", err)
 			return
 		}
@@ -324,13 +324,13 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for lp property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for lp property\ntype=%T", gv))
 			self.Error("Invalid type for lp property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		lp, ok := data.Data.(*lksdk.LocalParticipant)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for lp property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for lp property\ntype=%T", data.Data))
 			self.Error("Invalid data type for lp property", fmt.Errorf("expected *lksdk.LocalParticipant, got %T", data.Data))
 			return
 		}
@@ -338,7 +338,7 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "opts":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for opts property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for opts property\nerr=%v", err))
 			self.Error("Failed to get Go value for opts property", err)
 			return
 		}
@@ -347,13 +347,13 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 		}
 		data, ok := gv.(glib.ArbitraryValue)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for opts property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for opts property\ntype=%T", gv))
 			self.Error("Invalid type for opts property", fmt.Errorf("expected glib.ArbitraryValue, got %T", gv))
 			return
 		}
 		opts, ok := data.Data.(*lksdk.TrackPublicationOptions)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for opts property: %T", data.Data))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for opts property\ntype=%T", data.Data))
 			self.Error("Invalid data type for opts property", fmt.Errorf("expected *lksdk.TrackPublicationOptions, got %T", data.Data))
 			return
 		}
@@ -364,19 +364,19 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	case "use-backup":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for useBackupTrack property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for useBackupTrack property\nerr=%v", err))
 			self.Error("Failed to get Go value for useBackupTrack property", err)
 			return
 		}
 		useBackup, ok := gv.(bool)
 		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for useBackupTrack property: %T", gv))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for useBackupTrack property\ntype=%T", gv))
 			self.Error("Invalid type for useBackupTrack property", fmt.Errorf("expected bool, got %T", gv))
 			return
 		}
 		s.useBackup.Store(useBackup)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID %d for SinkTrack", id))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown property ID for SinkTrack\nid=%d", id))
 		self.Error(fmt.Sprintf("Unknown property ID %d for SinkTrack", id), nil)
 	}
 }

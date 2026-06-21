@@ -19,6 +19,12 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/sipbin"
 )
 
+var CAT = gst.NewDebugCategory(
+	"livekit-sip",
+	gst.DebugColorFgGreen|gst.DebugColorBgBlack,
+	"LiveKit SIP Pipeline",
+)
+
 type CallStats struct {
 	Microphone        *sipbin.RTPSessionStats
 	MicrophonePtCaps  map[int]string
@@ -29,7 +35,6 @@ type CallStats struct {
 }
 
 type Pipeline struct {
-	Log       logger.Logger
 	pipeline  *gst.Pipeline
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -55,8 +60,6 @@ type Pipeline struct {
 
 	*SipIo
 	*WebrtcIo
-	// *SipToWebrtc
-	// *WebrtcToSip
 	*IOManager
 }
 
@@ -125,7 +128,7 @@ func (p *Pipeline) GetStats() (*CallStats, error) {
 func (p *Pipeline) getStats() (*CallStats, error) {
 	structureVal, err := p.SipIo.SipBin.Emit("stats")
 	if err != nil {
-		p.Log.Warnw("Failed to emit stats signal", err)
+		p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to emit stats signal\nerr=%v", err))
 		return nil, err
 	}
 	if structureVal == nil {
@@ -134,7 +137,7 @@ func (p *Pipeline) getStats() (*CallStats, error) {
 
 	structure, ok := structureVal.(*gst.Structure)
 	if !ok {
-		p.Log.Warnw("Failed to convert stats signal result to GstStructure", nil, "value", fmt.Sprintf("%T=%v", structureVal, structureVal))
+		p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to convert stats signal result to GstStructure\ntype=%T\nvalue=%v", structureVal, structureVal))
 		return nil, fmt.Errorf("failed to convert stats signal result to GstStructure")
 	}
 
@@ -154,12 +157,12 @@ func (p *Pipeline) getStats() (*CallStats, error) {
 		}
 		av, ok := statsVal.(glib.ArbitraryValue)
 		if !ok {
-			p.Log.Warnw("Expected ArbitraryValue", nil, stats.kind.String(), fmt.Sprintf("%T=%v", statsVal, statsVal))
+			p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Expected ArbitraryValue\nkind=%s\ntype=%T\nvalue=%v", stats.kind.String(), statsVal, statsVal))
 			continue
 		}
 		sessionStats, ok := av.Data.(*sipbin.RTPSessionStats)
 		if !ok {
-			p.Log.Warnw("Wrong inner type", nil, stats.kind.String(), fmt.Sprintf("%T", av.Data))
+			p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Wrong inner type\nkind=%s\ntype=%T", stats.kind.String(), av.Data))
 			continue
 		}
 		if sessionStats != nil {
@@ -172,14 +175,14 @@ func (p *Pipeline) getStats() (*CallStats, error) {
 		}
 		caps, ok := capsVal.(*gst.Caps)
 		if !ok {
-			p.Log.Warnw("Expected GstCaps", nil, stats.kind.String(), fmt.Sprintf("%T=%v", capsVal, capsVal))
+			p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Expected GstCaps\nkind=%s\ntype=%T\nvalue=%v", stats.kind.String(), capsVal, capsVal))
 			continue
 		}
 		for i := range caps.GetSize() {
 			st := caps.GetStructureAt(i)
 			pt, err := st.GetInt("payload")
 			if err != nil {
-				p.Log.Warnw("Failed to get payload type from caps structure", err, stats.kind.String(), "structure_index", i)
+				p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get payload type from caps structure\nkind=%s\nstructure_index=%d\nerr=%v", stats.kind.String(), i, err))
 				continue
 			}
 			(*stats.ptCaps)[pt] = st.String()
@@ -188,7 +191,7 @@ func (p *Pipeline) getStats() (*CallStats, error) {
 		caps = nil
 	}
 
-	p.Log.Debugw("Received call stats update", "stats", stats)
+	p.pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received call stats update\nstats=%+v", stats))
 	p.stats.Store(stats)
 	return stats, nil
 }
@@ -199,7 +202,8 @@ func (p *Pipeline) Close() error {
 	if !p.closed.Break() {
 		return nil
 	}
-	p.Log.Debugw("Closing pipeline")
+	pipeline := p.pipeline
+	pipeline.Log(CAT, gst.LevelDebug, "Closing pipeline")
 
 	p.getStats()
 
@@ -215,32 +219,32 @@ func (p *Pipeline) Close() error {
 		p.IOManager.SipController.SetLockedState(true)
 		p.IOManager.LivekitController.SetLockedState(true)
 
-		p.Log.Debugw("Pipline SetState NULL")
+		pipeline.Log(CAT, gst.LevelDebug, "Pipline SetState NULL")
 		err = errors.Join(err, p.Pipeline().SetState(gst.StateNull))
-		p.Log.Debugw("Pipline SetState NULL complete")
+		pipeline.Log(CAT, gst.LevelDebug, "Pipline SetState NULL complete")
 
-		p.Log.Debugw("SipBin SetState NULL")
+		pipeline.Log(CAT, gst.LevelDebug, "SipBin SetState NULL")
 		err = errors.Join(err, p.SipIo.SipBin.SetState(gst.StateNull))
-		p.Log.Debugw("SipBin SetState NULL complete")
+		pipeline.Log(CAT, gst.LevelDebug, "SipBin SetState NULL complete")
 
-		p.Log.Debugw("LivekitController SetState NULL")
+		pipeline.Log(CAT, gst.LevelDebug, "LivekitController SetState NULL")
 		err = errors.Join(err, p.IOManager.LivekitController.SetState(gst.StateNull))
-		p.Log.Debugw("LivekitController SetState NULL complete")
+		pipeline.Log(CAT, gst.LevelDebug, "LivekitController SetState NULL complete")
 
-		p.Log.Debugw("LivekitBin SetState NULL")
+		pipeline.Log(CAT, gst.LevelDebug, "LivekitBin SetState NULL")
 		err = errors.Join(err, p.WebrtcIo.LivekitBin.SetState(gst.StateNull))
-		p.Log.Debugw("LivekitBin SetState NULL complete")
+		pipeline.Log(CAT, gst.LevelDebug, "LivekitBin SetState NULL complete")
 
-		p.Log.Debugw("SipController SetState NULL")
+		pipeline.Log(CAT, gst.LevelDebug, "SipController SetState NULL")
 		err = errors.Join(err, p.IOManager.SipController.SetState(gst.StateNull))
-		p.Log.Debugw("SipController SetState NULL complete")
+		pipeline.Log(CAT, gst.LevelDebug, "SipController SetState NULL complete")
 
 		p.SipIo.SipBin.SetLockedState(false)
 		p.WebrtcIo.LivekitBin.SetLockedState(false)
 		p.IOManager.SipController.SetLockedState(false)
 		p.IOManager.LivekitController.SetLockedState(false)
 
-		p.Log.Debugw("Pipeline set to null state complete", "pid", pid, "err", err)
+		pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Pipeline set to null state complete\npid=%d\nerr=%v", pid, err))
 	}()
 
 	closed := false
@@ -250,7 +254,7 @@ func (p *Pipeline) Close() error {
 	case <-time.After(10 * time.Second):
 	}
 	if !closed {
-		p.Log.Warnw("Timeout waiting for pipeline to set to null state, sending flush event", nil)
+		pipeline.Log(CAT, gst.LevelWarning, "Timeout waiting for pipeline to set to null state, sending flush event")
 		go func() {
 			p.Pipeline().SendEvent(gst.NewFlushStartEvent())
 		}()
@@ -261,7 +265,7 @@ func (p *Pipeline) Close() error {
 		}
 	}
 	if !closed {
-		p.Log.Warnw("Timeout waiting for pipeline to set to null state after flush start, sending flush stop event", nil)
+		pipeline.Log(CAT, gst.LevelWarning, "Timeout waiting for pipeline to set to null state after flush start, sending flush stop event")
 		go func() {
 			p.Pipeline().SendEvent(gst.NewFlushStopEvent(true))
 		}()
@@ -272,7 +276,7 @@ func (p *Pipeline) Close() error {
 		}
 	}
 	if !closed {
-		p.Log.Warnw("Timeout waiting for pipeline to set to null state after flush stop, trying to break clock", nil)
+		pipeline.Log(CAT, gst.LevelWarning, "Timeout waiting for pipeline to set to null state after flush stop, trying to break clock")
 		go func() {
 			p.Pipeline().SetBaseTime(0)
 			p.Pipeline().SetStartTime(gst.ClockTimeNone)
@@ -285,9 +289,9 @@ func (p *Pipeline) Close() error {
 	}
 
 	if !closed && p.cleanup != nil {
-		p.Log.Warnw("Failed to set pipeline to null state after breaking clock, trying early cleanup", nil)
+		pipeline.Log(CAT, gst.LevelWarning, "Failed to set pipeline to null state after breaking clock, trying early cleanup")
 		if err := p.cleanup(); err != nil {
-			p.Log.Errorw("Failed timeout cleanup before setting pipeline to null state", err)
+			pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed timeout cleanup before setting pipeline to null state\nerr=%v", err))
 		}
 		p.cleanup = nil // prevent double cleanup
 		select {
@@ -298,18 +302,18 @@ func (p *Pipeline) Close() error {
 	}
 
 	if !closed {
-		p.Log.Errorw("Failed to set pipeline to null state after breaking clock", errors.New("timeout waiting for null state"))
+		pipeline.Log(CAT, gst.LevelError, "Failed to set pipeline to null state after breaking clock: timeout waiting for null state")
 		return fmt.Errorf("failed to set pipeline to null state")
 	}
 
-	p.Log.Debugw("Pipeline set to null state")
+	pipeline.Log(CAT, gst.LevelDebug, "Pipeline set to null state")
 
 	if p.cleanup != nil {
-		p.Log.Debugw("Running pipeline cleanup")
+		pipeline.Log(CAT, gst.LevelDebug, "Running pipeline cleanup")
 		if err := p.cleanup(); err != nil {
-			p.Log.Errorw("Failed timeout cleanup before setting pipeline to null state", err)
+			pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed timeout cleanup before setting pipeline to null state\nerr=%v", err))
 		}
-		p.Log.Debugw("Pipeline cleanup complete")
+		pipeline.Log(CAT, gst.LevelDebug, "Pipeline cleanup complete")
 	}
 
 	if p.debugSrv != nil {
@@ -317,10 +321,10 @@ func (p *Pipeline) Close() error {
 	}
 
 	p.CloseBus()
-	p.Log.Debugw("Pipeline bus closed")
+	pipeline.Log(CAT, gst.LevelDebug, "Pipeline bus closed")
 
 	time.Sleep(100 * time.Millisecond) // give some time to settle
-	p.Log.Infow("Pipeline closed")
+	pipeline.Log(CAT, gst.LevelInfo, "Pipeline closed")
 
 	p.pipeline = nil
 
@@ -341,7 +345,6 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 	ctx, cancel := context.WithCancel(ctx)
 
 	p := &Pipeline{
-		Log:                   log.WithComponent("pipeline"),
 		pipeline:              pipeline,
 		ctx:                   ctx,
 		cancel:                cancel,
@@ -366,12 +369,12 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 
 	p.SetLogHandler()
 
-	p.Log.Debugw("Setting up bus")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Setting up bus")
 	p.SetupBus()
 
 	p.debugSrv = debug.NewServer(":8888", p.dumpCH)
 	if err := p.debugSrv.Start(); err != nil {
-		p.Log.Warnw("Failed to start debug server", err)
+		p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to start debug server\nerr=%v", err))
 	}
 	p.pipeline.Connect("deep-element-added", func(_ any, _ any, child *gst.Element) {
 		p.debugSrv.OnElementAdded(child)
@@ -380,24 +383,24 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		p.debugSrv.OnElementRemoved(child)
 	})
 
-	p.Log.Debugw("Adding SIP IO chain")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Adding SIP IO chain")
 	p.SipIo, err = AddChain(p, NewSipInput(log, p, sipOpt))
 	if err != nil {
-		p.Log.Errorw("Failed to add SIP IO chain", err)
+		p.pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add SIP IO chain\nerr=%v", err))
 		return nil, err
 	}
 
-	p.Log.Debugw("Adding Webrtc IO chain")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Adding Webrtc IO chain")
 	p.WebrtcIo, err = AddChain(p, NewWebrtcIo(log, p))
 	if err != nil {
-		p.Log.Errorw("Failed to add WebRTC IO chain", err)
+		p.pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add WebRTC IO chain\nerr=%v", err))
 		return nil, err
 	}
 
-	p.Log.Debugw("Adding IO chain")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Adding IO chain")
 	p.IOManager, err = AddChain(p, NewIOChain(log, p))
 	if err != nil {
-		p.Log.Errorw("Failed to add IO chain", err)
+		p.pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add IO chain\nerr=%v", err))
 		return nil, err
 	}
 
@@ -408,7 +411,7 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 	// 	return nil, err
 	// }
 
-	p.Log.Debugw("Linking chains")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Linking chains")
 	if err := LinkChains(p,
 		p.SipIo,
 		p.WebrtcIo,
@@ -416,19 +419,19 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		// p.WebrtcToSip,
 		p.IOManager,
 	); err != nil {
-		p.Log.Errorw("Failed to link chains", err)
+		p.pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link chains\nerr=%v", err))
 		return nil, err
 	}
 
-	p.Log.Debugw("Pipeline created")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Pipeline created")
 
 	return p, nil
 }
 
 func (p *Pipeline) cleanupChains() error {
-	p.Log.Debugw("Closing pipeline chains")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Closing pipeline chains")
 
-	p.Log.Debugw("Closing SIP IO")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Closing SIP IO")
 	if p.SipIo != nil {
 		if err := p.SipIo.Close(); err != nil {
 			return fmt.Errorf("failed to close SIP IO: %w", err)
@@ -436,7 +439,7 @@ func (p *Pipeline) cleanupChains() error {
 		p.SipIo = nil
 	}
 
-	p.Log.Debugw("Closing WebRTC IO")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Closing WebRTC IO")
 	if p.WebrtcIo != nil {
 		if err := p.WebrtcIo.Close(); err != nil {
 			return fmt.Errorf("failed to close WebRTC IO: %w", err)
@@ -444,7 +447,7 @@ func (p *Pipeline) cleanupChains() error {
 		p.WebrtcIo = nil
 	}
 
-	p.Log.Debugw("Closing IO chain")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Closing IO chain")
 	if p.IOManager != nil {
 		if err := p.IOManager.Close(); err != nil {
 			return fmt.Errorf("failed to close IO chain: %w", err)
@@ -452,33 +455,33 @@ func (p *Pipeline) cleanupChains() error {
 		p.IOManager = nil
 	}
 
-	p.Log.Debugw("Pipeline chains closed")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Pipeline chains closed")
 	return nil
 }
 
 func AddChain[C GstChain](p *Pipeline, chain C) (C, error) {
 	var zero C
 
-	p.Log.Debugw("Adding chain to pipeline")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Adding chain to pipeline")
 	if err := chain.Create(); err != nil {
 		return zero, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	p.Log.Debugw("Adding chain elements to pipeline")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Adding chain elements to pipeline")
 	if err := chain.Add(); err != nil {
 		return zero, fmt.Errorf("failed to add chain to pipeline: %w", err)
 	}
 
-	p.Log.Debugw("Chain added to pipeline")
+	p.pipeline.Log(CAT, gst.LevelDebug, "Chain added to pipeline")
 	return chain, nil
 }
 
 func LinkChains(p *Pipeline, chains ...GstChain) error {
 	for i, chain := range chains {
-		p.Log.Debugw("Linking chain in pipeline", "chain_index", i)
+		p.pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Linking chain in pipeline\nchain_index=%d", i))
 		if err := chain.Link(); err != nil {
 			typ := reflect.TypeOf(chain)
-			p.Log.Errorw("Failed to link chain in pipeline", err, "index", i, "chain_type", typ.String())
+			p.pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link chain in pipeline\nindex=%d\nchain_type=%s\nerr=%v", i, typ.String(), err))
 			return fmt.Errorf("failed to link chain %s in pipeline: %w", typ.String(), err)
 		}
 	}

@@ -160,9 +160,9 @@ func PadOnTrackSourceInfo(pad *gst.Pad, callback func(pad *gst.Pad, info TrackSo
 			if err != nil {
 				parent := pad.GetParentElement()
 				if parent != nil {
-					parent.Log(CAT, gst.LevelError, fmt.Sprintf("failed to parse track source info event: %v", err))
+					parent.Log(CAT, gst.LevelError, fmt.Sprintf("failed to parse track source info event\nerr=%v", err))
 				} else {
-					CAT.Log(gst.LevelError, fmt.Sprintf("failed to parse track source info event: %v", err))
+					CAT.Log(gst.LevelError, fmt.Sprintf("failed to parse track source info event\nerr=%v", err))
 				}
 				return gst.PadProbeOK
 			}
@@ -177,9 +177,9 @@ func PadOnTrackSourceInfo(pad *gst.Pad, callback func(pad *gst.Pad, info TrackSo
 		}
 		parent := pad.GetParentElement()
 		if parent != nil {
-			parent.Log(CAT, gst.LevelError, fmt.Sprintf("failed to get initial track source info: %v", err))
+			parent.Log(CAT, gst.LevelError, fmt.Sprintf("failed to get initial track source info\nerr=%v", err))
 		} else {
-			CAT.Log(gst.LevelError, fmt.Sprintf("failed to get initial track source info: %v", err))
+			CAT.Log(gst.LevelError, fmt.Sprintf("failed to get initial track source info\nerr=%v", err))
 		}
 		return
 	}

@@ -66,7 +66,7 @@ func (p *Pipeline) ConnectRoom(wsUrl, token string, attributes map[string]string
 
 	for k, v := range attributes {
 		if err := attr.SetValue(k, v); err != nil {
-			p.Log.Warnw("failed to set participant attribute", err, "key", k, "value", v)
+			p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("failed to set participant attribute\nkey=%s\nvalue=%s\nerr=%v", k, v, err))
 		}
 	}
 
@@ -74,7 +74,7 @@ func (p *Pipeline) ConnectRoom(wsUrl, token string, attributes map[string]string
 		return fmt.Errorf("failed to set participant attributes: %w", err)
 	}
 
-	p.Log.Infow("Setting room options", "wsUrl", wsUrl)
+	p.pipeline.Log(CAT, gst.LevelInfo, fmt.Sprintf("Setting room options\nwsUrl=%s", wsUrl))
 	if err := p.WebrtcIo.LivekitBin.SetProperty("ws-url", wsUrl); err != nil {
 		return fmt.Errorf("failed to set ws-url property: %w", err)
 	}
@@ -105,12 +105,16 @@ func (p *Pipeline) ConnectRoom(wsUrl, token string, attributes map[string]string
 		return fmt.Errorf("failed to set participant attributes: %w", err)
 	}
 
-	p.Log.Infow("Joined room successfully", "wsUrl", wsUrl)
+	p.pipeline.Log(CAT, gst.LevelInfo, fmt.Sprintf("Joined room successfully\nwsUrl=%s", wsUrl))
 
 	return nil
 }
 
 func (p *Pipeline) PlayAudio(ctx context.Context, fd int) error {
+	pipeline := p.pipeline
+	if pipeline == nil {
+		return fmt.Errorf("pipeline is not initialized")
+	}
 	srcFd, err := unix.Open(
 		fmt.Sprintf("/proc/self/fd/%d", fd),
 		unix.O_RDONLY|unix.O_CLOEXEC,
@@ -134,7 +138,7 @@ func (p *Pipeline) PlayAudio(ctx context.Context, fd int) error {
 		defer wr.Close()
 
 		if _, err := io.Copy(wr, src); err != nil {
-			p.Log.Errorw("failed to copy audio data to pipe", err)
+			pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("failed to copy audio data to pipe\nerr=%v", err))
 		}
 	}()
 
@@ -144,7 +148,7 @@ func (p *Pipeline) PlayAudio(ctx context.Context, fd int) error {
 		if _, err := p.IOManager.LivekitController.Emit("play-audio-fd", pipeR); err != nil {
 			PlayErr = fmt.Errorf("failed to emit play-audio-fd: %w", err)
 		}
-		p.Log.Debugw("play-audio-fd ended", "fd", pipeR, "err", PlayErr)
+		pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("play-audio-fd ended\nfd=%d\nerr=%v", pipeR, PlayErr))
 		close(done)
 	}()
 

@@ -72,7 +72,7 @@ func (e *RtpCapsCodecFilter) SetProperty(instance *glib.Object, id uint, value *
 	case "caps":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting caps property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting caps property value\nerr=%v", err))
 			self.Error("Error getting caps property value", err)
 			return
 		}
@@ -114,6 +114,6 @@ func (e *RtpCapsCodecFilter) TransformCaps(self *base.GstBaseTransform, directio
 		result = result.Intersect(filter)
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("transform_caps dir=%d: %s", direction, result))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("transform_caps\ndir=%d\ncaps=%s", direction, result))
 	return result.Ref()
 }

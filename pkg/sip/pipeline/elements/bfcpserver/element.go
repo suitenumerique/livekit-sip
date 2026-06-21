@@ -149,11 +149,11 @@ func (e *BFCPServer) Constructed(instance *glib.Object) {
 		fallbackConfig.Address = ":0"
 		fallbackServer := bfcp.NewServer(fallbackConfig)
 		if fallbackServer.Listen() == nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to bind BFCP server to %s, but successfully bound to %s. Using fallback address.", addr, fallbackConfig.Address))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to bind BFCP server, but successfully bound to fallback address\naddr=%s\nfallback_addr=%s", addr, fallbackConfig.Address))
 			e.bfcpConfig = fallbackConfig
 			e.bfcpServer = fallbackServer
 		} else {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to start BFCP server: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to start BFCP server\nerr=%v", err))
 			self.Error("Failed to start BFCP server", err)
 			return
 		}
@@ -161,19 +161,19 @@ func (e *BFCPServer) Constructed(instance *glib.Object) {
 
 	host, portStr, err := net.SplitHostPort(e.bfcpServer.Addr().String())
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to split host and port: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to split host and port\nerr=%v", err))
 		self.Error("Failed to start BFCP server", err)
 		return
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse port: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse port\nerr=%v", err))
 		self.Error("Failed to start BFCP server", err)
 		return
 	}
 
 	if port <= 0 || port > 0xFFFF {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid port number: %d", port))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid port number\nport=%d", port))
 		self.Error("Failed to start BFCP server", fmt.Errorf("invalid port number: %d", port))
 		return
 	}
@@ -182,7 +182,7 @@ func (e *BFCPServer) Constructed(instance *glib.Object) {
 
 	e.SetupSignals(self)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP server started on %s:%d", host, port))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP server started\nhost=%s\nport=%d", host, port))
 
 	e.constructed = true
 }
@@ -225,7 +225,7 @@ func (e *BFCPServer) ChangeState(self *gst.Element, transition gst.StateChange) 
 	if transition == gst.StateChangeReadyToNull {
 		e.cancel()
 		if err := e.bfcpServer.Close(); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to close BFCP server: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to close BFCP server\nerr=%v", err))
 		}
 		e.wg.Wait()
 	}

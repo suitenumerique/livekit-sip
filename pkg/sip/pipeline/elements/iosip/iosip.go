@@ -16,17 +16,17 @@ func (e *IoManagerSip) RequestNewPad(instance *gst.Element, templ *gst.PadTempla
 
 	var session, ssrc, pt int
 	if _, err := fmt.Sscanf(name, "recv_rtp_sink_%d_%d_%d", &session, &ssrc, &pt); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name\npad=%s\nerr=%v", name, err))
 		return nil
 	}
 
 	if pt < 0 || pt > 127 {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid payload type in pad name %s: %d", name, pt))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid payload type in pad name\npad=%s\npt=%d", name, pt))
 		return nil
 	}
 
 	if session < 0 || session > int(livekit.TrackSource_SCREEN_SHARE_AUDIO) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid session kind in pad name %s: %d (%s)", name, session, livekit.TrackSource(session).String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid session kind in pad name\npad=%s\nsession=%d\nsource=%s", name, session, livekit.TrackSource(session).String()))
 		return nil
 	}
 
@@ -38,7 +38,7 @@ func (e *IoManagerSip) RequestNewPad(instance *gst.Element, templ *gst.PadTempla
 	case livekit.TrackSource_SCREEN_SHARE:
 		return e.requestNewPadScreenshareIn(self, templ, name, session, ssrc, pt)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name %s: %d (%s)", name, session, livekit.TrackSource(session).String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name\npad=%s\nsession=%d\nsource=%s", name, session, livekit.TrackSource(session).String()))
 		return nil
 	}
 }
@@ -48,21 +48,21 @@ func (e *IoManagerSip) requestNewPadAudioIn(self *gst.Bin, templ *gst.PadTemplat
 	defer e.inMu.Unlock()
 
 	if _, exists := e.AudioIn[name]; exists {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad with name %s already exists", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad with name already exists\npad=%s", name))
 		return nil
 	}
 
 	class := gst.ToElementClass(self.Class())
 	gpad := gst.NewGhostPadNoTargetFromTemplate(name, class.GetPadTemplate("recv_rtp_sink_%u_%u_%u"))
 	if gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for pad\npad=%s", name))
 		return nil
 	}
 	if !gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for pad\npad=%s", name))
 	}
 	if !self.AddPad(gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad\npad=%s", name))
 		return nil
 	}
 
@@ -75,7 +75,7 @@ func (e *IoManagerSip) requestNewPadAudioIn(self *gst.Bin, templ *gst.PadTemplat
 		return ptr.linkNewPadAudio(pad, info, name, session, ssrc, pt)
 	})
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully created new audio input pad %s for session %d", name, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully created new audio input pad\npad=%s\nsession=%d", name, session))
 	return gpad.Pad
 }
 
@@ -98,14 +98,14 @@ func (e *IoManagerSip) linkNewPadAudio(pad *gst.Pad, info *gst.PadProbeInfo, nam
 		return gst.PadProbeRemove
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Linking new audio pad %s in SIP IO element with caps: %s", gpad.GetName(), caps.String()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Linking new audio pad in SIP IO element\npad=%s\ncaps=%s", gpad.GetName(), caps.String()))
 
 	var err error
 	defer func() {
 		if err == nil {
 			return
 		}
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link new audio pad in SIP IO element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link new audio pad in SIP IO element\nerr=%v", err))
 		self.Error("Failed to link new audio pad in SIP IO element", err)
 	}()
 
@@ -189,15 +189,15 @@ func (e *IoManagerSip) linkNewPadAudioMicrophone(self *gst.Bin, pad *gst.Pad, na
 	}
 
 	if !audioIn.RtpAudio.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad\npad=%s", name))
 	}
 	if !audioIn.DtmfDetect.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of dtmfdetect element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of dtmfdetect element with parent for pad\npad=%s", name))
 	}
 
 	e.AudioIn[name] = audioIn
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully linked audio pad %s with factorybin element", name))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully linked audio pad with factorybin element\npad=%s", name))
 
 	return nil
 }
@@ -242,16 +242,16 @@ func (e *IoManagerSip) linkNewPadAudioDtmf(self *gst.Bin, pad *gst.Pad, name str
 	}
 
 	if !dtmfIn.RtpDtmfDepay.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of rtpdtmfdepay element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of rtpdtmfdepay element with parent for pad\npad=%s", name))
 	}
 
 	if !dtmfIn.FakeSink.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of fakesink element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of fakesink element with parent for pad\npad=%s", name))
 	}
 
 	e.DtmfIn[name] = dtmfIn
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully linked audio pad %s with rtpdtmfdepay element", name))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully linked audio pad with rtpdtmfdepay element\npad=%s", name))
 
 	return nil
 }
@@ -261,7 +261,7 @@ func (e *IoManagerSip) requestNewPadCameraIn(self *gst.Bin, templ *gst.PadTempla
 	defer e.inMu.Unlock()
 
 	if _, exists := e.CameraIn[name]; exists {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad with name %s already exists", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad with name already exists\npad=%s", name))
 		return nil
 	}
 
@@ -273,7 +273,7 @@ func (e *IoManagerSip) requestNewPadCameraIn(self *gst.Bin, templ *gst.PadTempla
 		properties.SetUint("*.video-width", e.videoWidth),
 		properties.SetUint("*.video-height", e.videoHeight),
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for camera input pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for camera input pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to set properties for factorybin element for camera input pad %s", name), err)
 		return nil
 	}
@@ -286,7 +286,7 @@ func (e *IoManagerSip) requestNewPadCameraIn(self *gst.Bin, templ *gst.PadTempla
 		"child-properties": properties,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to create factorybin element for pad %s", name), err)
 		return nil
 	}
@@ -297,61 +297,61 @@ func (e *IoManagerSip) requestNewPadCameraIn(self *gst.Bin, templ *gst.PadTempla
 		"leaky":            2, // downstream
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to create queue element for pad %s", name), err)
 		return nil
 	}
 
 	if err := self.AddMany(cameraIn.RTPVideo, cameraIn.Queue); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin and queue elements to SIP IO element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin and queue elements to SIP IO element for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to add factorybin and queue elements to SIP IO element for pad %s", name), err)
 		return nil
 	}
 
 	if err := cameraIn.RTPVideo.Link(cameraIn.Queue); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link factorybin element to queue for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link factorybin element to queue for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to link factorybin element to queue for pad %s", name), err)
 		return nil
 	}
 
 	cameraIn.pad = e.Compositor.GetRequestPad(fmt.Sprintf("sink_%d_%d_%d", session, ssrc, pt))
 	if cameraIn.pad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad from compositor for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad from compositor for pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to get request pad from compositor for pad %s", name), fmt.Errorf("compositor returned nil pad"))
 		return nil
 	}
 
 	if ret := cameraIn.Queue.GetStaticPad("src").Link(cameraIn.pad); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue src pad to compositor pad for pad %s: %v", name, ret))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue src pad to compositor pad for pad\npad=%s\nret=%v", name, ret))
 		self.Error(fmt.Sprintf("Failed to link queue src pad to compositor pad for pad %s", name), fmt.Errorf("failed to link pads"))
 		return nil
 	}
 
 	cameraIn.gpad = gst.NewGhostPadFromTemplate(name, cameraIn.RTPVideo.GetStaticPad("sink"), templ)
 	if cameraIn.gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to create ghost pad for pad %s", name), fmt.Errorf("gst.NewGhostPadFromTemplate returned nil"))
 		return nil
 	}
 	if !cameraIn.gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for pad\npad=%s", name))
 	}
 	if !self.AddPad(cameraIn.gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad %s", name), fmt.Errorf("self.AddPad returned false"))
 		return nil
 	}
 
 	if !cameraIn.RTPVideo.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad\npad=%s", name))
 	}
 	if !cameraIn.Queue.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of queue element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of queue element with parent for pad\npad=%s", name))
 	}
 
 	e.CameraIn[name] = cameraIn
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully created new camera input pad %s for session %d", name, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully created new camera input pad\npad=%s\nsession=%d", name, session))
 	return cameraIn.gpad.Pad
 }
 
@@ -360,7 +360,7 @@ func (e *IoManagerSip) requestNewPadScreenshareIn(self *gst.Bin, templ *gst.PadT
 	defer e.inMu.Unlock()
 
 	if _, exists := e.ScreenshareIn[name]; exists {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad with name %s already exists", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad with name already exists\npad=%s", name))
 		return nil
 	}
 
@@ -372,7 +372,7 @@ func (e *IoManagerSip) requestNewPadScreenshareIn(self *gst.Bin, templ *gst.PadT
 		properties.SetUint("*.video-width", e.videoWidth),
 		properties.SetUint("*.video-height", e.videoHeight),
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for screenshare input pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for screenshare input pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to set properties for factorybin element for screenshare input pad %s", name), err)
 		return nil
 	}
@@ -385,7 +385,7 @@ func (e *IoManagerSip) requestNewPadScreenshareIn(self *gst.Bin, templ *gst.PadT
 		"child-properties": properties,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to create factorybin element for pad %s", name), err)
 		return nil
 	}
@@ -396,61 +396,61 @@ func (e *IoManagerSip) requestNewPadScreenshareIn(self *gst.Bin, templ *gst.PadT
 		"leaky":            2, // downstream
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to create queue element for pad %s", name), err)
 		return nil
 	}
 
 	if err := self.AddMany(screenshareIn.RTPVideo, screenshareIn.Queue); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin and queue elements to SIP IO element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin and queue elements to SIP IO element for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to add factorybin and queue elements to SIP IO element for pad %s", name), err)
 		return nil
 	}
 
 	if err := screenshareIn.RTPVideo.Link(screenshareIn.Queue); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link factorybin element to queue for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link factorybin element to queue for pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to link factorybin element to queue for pad %s", name), err)
 		return nil
 	}
 
 	screenshareIn.pad = e.Compositor.GetRequestPad(fmt.Sprintf("sink_%d_%d_%d", session, ssrc, pt))
 	if screenshareIn.pad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad from compositor for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get request pad from compositor for pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to get request pad from compositor for pad %s", name), fmt.Errorf("compositor returned nil pad"))
 		return nil
 	}
 
 	if ret := screenshareIn.Queue.GetStaticPad("src").Link(screenshareIn.pad); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue src pad to compositor pad for pad %s: %v", name, ret))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue src pad to compositor pad for pad\npad=%s\nret=%v", name, ret))
 		self.Error(fmt.Sprintf("Failed to link queue src pad to compositor pad for pad %s", name), fmt.Errorf("failed to link pads"))
 		return nil
 	}
 
 	screenshareIn.gpad = gst.NewGhostPadFromTemplate(name, screenshareIn.RTPVideo.GetStaticPad("sink"), templ)
 	if screenshareIn.gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to create ghost pad for pad %s", name), fmt.Errorf("gst.NewGhostPadFromTemplate returned nil"))
 		return nil
 	}
 	if !screenshareIn.gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for pad\npad=%s", name))
 	}
 	if !self.AddPad(screenshareIn.gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to add ghost pad to SIP IO element for pad %s", name), fmt.Errorf("self.AddPad returned false"))
 		return nil
 	}
 
 	if !screenshareIn.RTPVideo.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad\npad=%s", name))
 	}
 	if !screenshareIn.Queue.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of queue element with parent for pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of queue element with parent for pad\npad=%s", name))
 	}
 
 	e.ScreenshareIn[name] = screenshareIn
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully created new screenshare input pad %s for session %d", name, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully created new screenshare input pad\npad=%s\nsession=%d", name, session))
 	return screenshareIn.gpad.Pad
 }
 
@@ -459,19 +459,19 @@ func (e *IoManagerSip) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 
 	pname := pad.GetName()
 	if !strings.HasPrefix(pname, "recv_rtp_sink_") {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid pad name %s, expected to start with recv_rtp_sink_", pname))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid pad name, expected to start with recv_rtp_sink_\npad=%s", pname))
 		return
 	}
 
 	gpad := pad.AsGhostPad()
 	if gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad %s is not a ghost pad, cannot release", pname))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Pad is not a ghost pad, cannot release\npad=%s", pname))
 		return
 	}
 
 	var session, ssrc, pt int
 	if _, err := fmt.Sscanf(pname, "recv_rtp_sink_%d_%d_%d", &session, &ssrc, &pt); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name %s: %v", pname, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse pad name\npad=%s\nerr=%v", pname, err))
 		return
 	}
 
@@ -483,20 +483,20 @@ func (e *IoManagerSip) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 	case livekit.TrackSource_SCREEN_SHARE:
 		e.releasePadScreenshareIn(self, gpad, pname, session, ssrc, pt)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name %s: %d (%s)", pname, session, livekit.TrackSource(session).String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in pad name\npad=%s\nsession=%d\nsource=%s", pname, session, livekit.TrackSource(session).String()))
 		return
 	}
 
 	if !gpad.SetActive(false) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to deactivate ghost pad %s", pname))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to deactivate ghost pad\npad=%s", pname))
 		return
 	}
 	if !self.RemovePad(gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove ghost pad %s from SIP IO element", pname))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove ghost pad from SIP IO element\npad=%s", pname))
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released pad %s for session %d", pname, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released pad\npad=%s\nsession=%d", pname, session))
 }
 
 func (e *IoManagerSip) releasePadAudioIn(self *gst.Bin, _ *gst.GhostPad, pname string, session int, _ int, _ int) {
@@ -509,17 +509,17 @@ func (e *IoManagerSip) releasePadAudioIn(self *gst.Bin, _ *gst.GhostPad, pname s
 			e.releasePadAudioDtmf(self, dtmfIn, pname)
 			return
 		}
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No audio input pad found with name %s", pname))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No audio input pad found with name\npad=%s", pname))
 		return
 	}
 
 	if audioIn.RtpAudio != nil {
 		if err := audioIn.RtpAudio.SetState(gst.StateNull); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set decoder element to NULL state for pad %s: %v", pname, err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set decoder element to NULL state for pad\npad=%s\nerr=%v", pname, err))
 		}
 		if audioIn.DtmfDetect != nil {
 			if err := audioIn.DtmfDetect.SetState(gst.StateNull); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set dtmfdetect element to NULL state for pad %s: %v", pname, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set dtmfdetect element to NULL state for pad\npad=%s\nerr=%v", pname, err))
 			}
 		}
 
@@ -528,35 +528,35 @@ func (e *IoManagerSip) releasePadAudioIn(self *gst.Bin, _ *gst.GhostPad, pname s
 		}
 
 		if err := self.Remove(audioIn.RtpAudio); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove decoder element from SIP IO element for pad %s: %v", pname, err))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove decoder element from SIP IO element for pad\npad=%s\nerr=%v", pname, err))
 		}
 		if audioIn.DtmfDetect != nil {
 			if err := self.Remove(audioIn.DtmfDetect); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove dtmfdetect element from SIP IO element for pad %s: %v", pname, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove dtmfdetect element from SIP IO element for pad\npad=%s\nerr=%v", pname, err))
 			}
 		}
 	}
 
 	delete(e.AudioIn, pname)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released audio input pad %s for session %d", pname, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released audio input pad\npad=%s\nsession=%d", pname, session))
 }
 
 func (e *IoManagerSip) releasePadAudioDtmf(self *gst.Bin, dtmfIn *SipDtmfInTranscode, pname string) {
 	for _, element := range []*gst.Element{dtmfIn.RtpDtmfDepay, dtmfIn.FakeSink} {
 		if element != nil {
 			if err := element.SetState(gst.StateNull); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set element %s to NULL state for pad %s: %v", element.GetName(), pname, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set element to NULL state for pad\nname=%s\npad=%s\nerr=%v", element.GetName(), pname, err))
 			}
 			if err := self.Remove(element); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove element %s from SIP IO element for pad %s: %v", element.GetName(), pname, err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove element from SIP IO element for pad\nname=%s\npad=%s\nerr=%v", element.GetName(), pname, err))
 			}
 		}
 	}
 
 	delete(e.DtmfIn, pname)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released DTMF input pad %s", pname))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released DTMF input pad\npad=%s", pname))
 }
 
 func (e *IoManagerSip) releasePadCameraIn(self *gst.Bin, _ *gst.GhostPad, pname string, session int, _ int, _ int) {
@@ -565,26 +565,26 @@ func (e *IoManagerSip) releasePadCameraIn(self *gst.Bin, _ *gst.GhostPad, pname 
 
 	cameraIn, exists := e.CameraIn[pname]
 	if !exists {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No camera input pad found with name %s", pname))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No camera input pad found with name\npad=%s", pname))
 		return
 	}
 
 	if err := cameraIn.RTPVideo.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad %s: %v", pname, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", pname, err))
 	}
 	if err := cameraIn.Queue.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad %s: %v", pname, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", pname, err))
 	}
 
 	e.Compositor.ReleaseRequestPad(cameraIn.pad)
 
 	if err := self.RemoveMany(cameraIn.RTPVideo, cameraIn.Queue); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin and queue element from SIP IO element for pad %s: %v", pname, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin and queue element from SIP IO element for pad\npad=%s\nerr=%v", pname, err))
 	}
 
 	delete(e.CameraIn, pname)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released camera input pad %s for session %d", pname, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released camera input pad\npad=%s\nsession=%d", pname, session))
 }
 
 func (e *IoManagerSip) releasePadScreenshareIn(self *gst.Bin, _ *gst.GhostPad, pname string, session int, _ int, _ int) {
@@ -593,26 +593,26 @@ func (e *IoManagerSip) releasePadScreenshareIn(self *gst.Bin, _ *gst.GhostPad, p
 
 	screenshareIn, exists := e.ScreenshareIn[pname]
 	if !exists {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No screenshare input pad found with name %s", pname))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No screenshare input pad found with name\npad=%s", pname))
 		return
 	}
 
 	if err := screenshareIn.RTPVideo.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad %s: %v", pname, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", pname, err))
 	}
 	if err := screenshareIn.Queue.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad %s: %v", pname, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", pname, err))
 	}
 
 	e.Compositor.ReleaseRequestPad(screenshareIn.pad)
 
 	if err := self.RemoveMany(screenshareIn.RTPVideo, screenshareIn.Queue); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin and queue element from SIP IO element for pad %s: %v", pname, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin and queue element from SIP IO element for pad\npad=%s\nerr=%v", pname, err))
 	}
 
 	delete(e.ScreenshareIn, pname)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released screenshare input pad %s for session %d", pname, session))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released screenshare input pad\npad=%s\nsession=%d", pname, session))
 }
 
 func (e *IoManagerSip) compositorPadAdded(self *gst.Bin, pad *gst.Pad) {
@@ -624,7 +624,7 @@ func (e *IoManagerSip) compositorPadAdded(self *gst.Bin, pad *gst.Pad) {
 
 	var session int
 	if _, err := fmt.Sscanf(pname, "src_%d", &session); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse compositor pad name %s: %v", pname, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse compositor pad name\npad=%s\nerr=%v", pname, err))
 		return
 	}
 
@@ -636,7 +636,7 @@ func (e *IoManagerSip) compositorPadAdded(self *gst.Bin, pad *gst.Pad) {
 	case livekit.TrackSource_SCREEN_SHARE:
 		e.padAddedScreenshareOut(self, pad, pname)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in compositor pad name %s: %d (%s)", pname, session, livekit.TrackSource(session).String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in compositor pad name\npad=%s\nsession=%d\nsource=%s", pname, session, livekit.TrackSource(session).String()))
 	}
 }
 
@@ -645,7 +645,7 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 	defer e.outMu.Unlock()
 
 	if e.AudioOut != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Audio output pad already exists, cannot add new pad %s", pad.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Audio output pad already exists, cannot add new pad\npad=%s", pad.GetName()))
 		return
 	}
 
@@ -661,12 +661,12 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 		}),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for audio output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for audio output pad\nerr=%v", err))
 		self.Error("Failed to create factorybin element for audio output pad", err)
 		return
 	}
 	if err := self.Add(audioOut.AudioRtp); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin element to SIP IO element for audio output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin element to SIP IO element for audio output pad\nerr=%v", err))
 		self.Error("Failed to add factorybin element to SIP IO element for audio output pad", err)
 		return
 	}
@@ -676,22 +676,22 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 	class := gst.ToElementClass(self.Class())
 
 	if ret := audioOut.pad.Link(audioOut.AudioRtp.GetStaticPad("sink")); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link audio output pad to factorybin sink pad: %v", ret))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link audio output pad to factorybin sink pad\nret=%v", ret))
 		self.Error("Failed to link audio output pad to factorybin sink pad", fmt.Errorf("failed to link pads"))
 		return
 	}
 
 	audioOut.gpad = gst.NewGhostPadFromTemplate(fmt.Sprintf("send_rtp_src_%d", livekit.TrackSource_MICROPHONE), audioOut.AudioRtp.GetStaticPad("src"), class.GetPadTemplate("send_rtp_src_%u"))
 	if audioOut.gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for audio output pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for audio output pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to create ghost pad for audio output pad %s", name), fmt.Errorf("gst.NewGhostPadFromTemplate returned nil"))
 		return
 	}
 	if !audioOut.gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for audio output pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for audio output pad\npad=%s", name))
 	}
 	if !self.AddPad(audioOut.gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for audio output pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for audio output pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to add ghost pad to SIP IO element for audio output pad %s", name), fmt.Errorf("self.AddPad returned false"))
 		return
 	}
@@ -702,7 +702,7 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 
 	e.AudioOut = audioOut
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully added audio output pad %s", pad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully added audio output pad\npad=%s", pad.GetName()))
 }
 
 func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name string) {
@@ -710,7 +710,7 @@ func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name strin
 	defer e.outMu.Unlock()
 
 	if e.CameraOut != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Camera output pad already exists, cannot add new pad %s", pad.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Camera output pad already exists, cannot add new pad\npad=%s", pad.GetName()))
 		return
 	}
 
@@ -725,7 +725,7 @@ func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name strin
 		"leaky":            2, // downstream
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for camera output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for camera output pad\nerr=%v", err))
 		self.Error("Failed to create queue element for camera output pad", err)
 		return
 	}
@@ -735,7 +735,7 @@ func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name strin
 		properties.SetUint("*.video-width", e.videoWidth),
 		properties.SetUint("*.video-height", e.videoHeight),
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for camera output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for camera output pad\nerr=%v", err))
 		self.Error("Failed to set properties for factorybin element for camera output pad", err)
 		return
 	}
@@ -748,19 +748,19 @@ func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name strin
 		"child-properties": properties,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for camera output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for camera output pad\nerr=%v", err))
 		self.Error("Failed to create factorybin element for camera output pad", err)
 		return
 	}
 
 	if err := self.AddMany(cameraOut.Queue, cameraOut.VideoRTP); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add queue and factorybin elements to SIP IO element for camera output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add queue and factorybin elements to SIP IO element for camera output pad\nerr=%v", err))
 		self.Error("Failed to add queue and factorybin elements to SIP IO element for camera output pad", err)
 		return
 	}
 
 	if err := cameraOut.Queue.Link(cameraOut.VideoRTP); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue element to factorybin element for camera output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue element to factorybin element for camera output pad\nerr=%v", err))
 		self.Error("Failed to link queue element to factorybin element for camera output pad", err)
 		return
 	}
@@ -770,22 +770,22 @@ func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name strin
 	class := gst.ToElementClass(self.Class())
 
 	if ret := cameraOut.pad.Link(cameraOut.Queue.GetStaticPad("sink")); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link camera output pad to queue sink pad: %v", ret))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link camera output pad to queue sink pad\nret=%v", ret))
 		self.Error("Failed to link camera output pad to queue sink pad", fmt.Errorf("failed to link pads"))
 		return
 	}
 
 	cameraOut.gpad = gst.NewGhostPadFromTemplate(fmt.Sprintf("send_rtp_src_%d", livekit.TrackSource_CAMERA), cameraOut.VideoRTP.GetStaticPad("src"), class.GetPadTemplate("send_rtp_src_%u"))
 	if cameraOut.gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for camera output pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for camera output pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to create ghost pad for camera output pad %s", name), fmt.Errorf("gst.NewGhostPadFromTemplate returned nil"))
 		return
 	}
 	if !cameraOut.gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for camera output pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for camera output pad\npad=%s", name))
 	}
 	if !self.AddPad(cameraOut.gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for camera output pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for camera output pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to add ghost pad to SIP IO element for camera output pad %s", name), fmt.Errorf("self.AddPad returned false"))
 		return
 	}
@@ -799,7 +799,7 @@ func (e *IoManagerSip) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name strin
 
 	e.CameraOut = cameraOut
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully added camera output pad %s", pad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully added camera output pad\npad=%s", pad.GetName()))
 }
 
 func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name string) {
@@ -807,7 +807,7 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 	defer e.outMu.Unlock()
 
 	if e.ScreenshareOut != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Screenshare output pad already exists, cannot add new pad %s", pad.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Screenshare output pad already exists, cannot add new pad\npad=%s", pad.GetName()))
 		return
 	}
 
@@ -821,7 +821,7 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 		"leaky":            2, // downstream
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for screenshare output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for screenshare output pad\nerr=%v", err))
 		self.Error("Failed to create queue element for screenshare output pad", err)
 		return
 	}
@@ -831,7 +831,7 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 		properties.SetUint("*.video-width", e.videoWidth),
 		properties.SetUint("*.video-height", e.videoHeight),
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for screenshare output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for screenshare output pad\nerr=%v", err))
 		self.Error("Failed to set properties for factorybin element for screenshare output pad", err)
 		return
 	}
@@ -844,18 +844,18 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 		"child-properties": properties,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for screenshare output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for screenshare output pad\nerr=%v", err))
 		self.Error("Failed to create factorybin element for screenshare output pad", err)
 		return
 	}
 	if err := self.AddMany(screenshareOut.Queue, screenshareOut.VideoRTP); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to SIP IO element for screenshare output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to SIP IO element for screenshare output pad\nerr=%v", err))
 		self.Error("Failed to add elements to SIP IO element for screenshare output pad", err)
 		return
 	}
 
 	if err := screenshareOut.Queue.Link(screenshareOut.VideoRTP); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue element to factorybin element for screenshare output pad: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue element to factorybin element for screenshare output pad\nerr=%v", err))
 		self.Error("Failed to link queue element to factorybin element for screenshare output pad", err)
 		return
 	}
@@ -865,22 +865,22 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 	class := gst.ToElementClass(self.Class())
 
 	if ret := screenshareOut.pad.Link(screenshareOut.Queue.GetStaticPad("sink")); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link screenshare output pad to queue sink pad: %v", ret))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link screenshare output pad to queue sink pad\nret=%v", ret))
 		self.Error("Failed to link screenshare output pad to queue sink pad", fmt.Errorf("failed to link pads"))
 		return
 	}
 
 	screenshareOut.gpad = gst.NewGhostPadFromTemplate(fmt.Sprintf("send_rtp_src_%d", livekit.TrackSource_SCREEN_SHARE), screenshareOut.VideoRTP.GetStaticPad("src"), class.GetPadTemplate("send_rtp_src_%u"))
 	if screenshareOut.gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for screenshare output pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for screenshare output pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to create ghost pad for screenshare output pad %s", name), fmt.Errorf("gst.NewGhostPadFromTemplate returned nil"))
 		return
 	}
 	if !screenshareOut.gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for screenshare output pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to activate ghost pad for screenshare output pad\npad=%s", name))
 	}
 	if !self.AddPad(screenshareOut.gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for screenshare output pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad to SIP IO element for screenshare output pad\npad=%s", name))
 		self.Error(fmt.Sprintf("Failed to add ghost pad to SIP IO element for screenshare output pad %s", name), fmt.Errorf("self.AddPad returned false"))
 		return
 	}
@@ -894,7 +894,7 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 
 	e.ScreenshareOut = screenshareOut
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully added screenshare output pad %s", pad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully added screenshare output pad\npad=%s", pad.GetName()))
 }
 
 func (e *IoManagerSip) compositorPadRemoved(self *gst.Bin, pad *gst.Pad) {
@@ -906,7 +906,7 @@ func (e *IoManagerSip) compositorPadRemoved(self *gst.Bin, pad *gst.Pad) {
 
 	var session int
 	if _, err := fmt.Sscanf(pname, "src_%d", &session); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse compositor pad name %s: %v", pname, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse compositor pad name\npad=%s\nerr=%v", pname, err))
 		return
 	}
 
@@ -918,7 +918,7 @@ func (e *IoManagerSip) compositorPadRemoved(self *gst.Bin, pad *gst.Pad) {
 	case livekit.TrackSource_SCREEN_SHARE:
 		e.padRemovedScreenshareOut(self, pad, pname)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in compositor pad name %s: %d (%s)", pname, session, livekit.TrackSource(session).String()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unsupported session kind in compositor pad name\npad=%s\nsession=%d\nsource=%s", pname, session, livekit.TrackSource(session).String()))
 	}
 }
 
@@ -927,25 +927,25 @@ func (e *IoManagerSip) padRemovedAudioOut(self *gst.Bin, pad *gst.Pad, name stri
 	defer e.outMu.Unlock()
 
 	if e.AudioOut == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No audio output pad exists, cannot remove pad %s", pad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No audio output pad exists, cannot remove pad\npad=%s", pad.GetName()))
 		return
 	}
 
 	if err := e.AudioOut.AudioRtp.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if err := self.Remove(e.AudioOut.AudioRtp); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin element from SIP IO element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin element from SIP IO element for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if !self.RemovePad(e.AudioOut.gpad.Pad) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for audio output pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for audio output pad\npad=%s", name))
 	}
 
 	e.AudioOut = nil
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed audio output pad %s", pad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed audio output pad\npad=%s", pad.GetName()))
 }
 
 func (e *IoManagerSip) padRemovedCameraOut(self *gst.Bin, pad *gst.Pad, name string) {
@@ -953,28 +953,28 @@ func (e *IoManagerSip) padRemovedCameraOut(self *gst.Bin, pad *gst.Pad, name str
 	defer e.outMu.Unlock()
 
 	if e.CameraOut == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No camera output pad exists, cannot remove pad %s", pad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No camera output pad exists, cannot remove pad\npad=%s", pad.GetName()))
 		return
 	}
 
 	if err := e.CameraOut.Queue.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 	if err := e.CameraOut.VideoRTP.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if err := self.RemoveMany(e.CameraOut.Queue, e.CameraOut.VideoRTP); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove elements from SIP IO element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove elements from SIP IO element for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if !self.RemovePad(e.CameraOut.gpad.Pad) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for camera output pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for camera output pad\npad=%s", name))
 	}
 
 	e.CameraOut = nil
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed camera output pad %s", pad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed camera output pad\npad=%s", pad.GetName()))
 }
 
 func (e *IoManagerSip) padRemovedScreenshareOut(self *gst.Bin, pad *gst.Pad, name string) {
@@ -982,26 +982,26 @@ func (e *IoManagerSip) padRemovedScreenshareOut(self *gst.Bin, pad *gst.Pad, nam
 	defer e.outMu.Unlock()
 
 	if e.ScreenshareOut == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No screenshare output pad exists, cannot remove pad %s", pad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No screenshare output pad exists, cannot remove pad\npad=%s", pad.GetName()))
 		return
 	}
 
 	if err := e.ScreenshareOut.Queue.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 	if err := e.ScreenshareOut.VideoRTP.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if err := self.RemoveMany(e.ScreenshareOut.Queue, e.ScreenshareOut.VideoRTP); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove elements from SIP IO element for pad %s: %v", name, err))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove elements from SIP IO element for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if !self.RemovePad(e.ScreenshareOut.gpad.Pad) {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for screenshare output pad %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove ghost pad for screenshare output pad\npad=%s", name))
 	}
 
 	e.ScreenshareOut = nil
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed screenshare output pad %s", pad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed screenshare output pad\npad=%s", pad.GetName()))
 }

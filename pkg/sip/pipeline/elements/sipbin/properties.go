@@ -85,7 +85,7 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 	case "port-start":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -94,14 +94,14 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-start property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-start property\nvalue=%d", val))
 			return
 		}
 		e.portStart = uint16(val)
 	case "port-end":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -110,14 +110,14 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-end property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for port-end property\nvalue=%d", val))
 			return
 		}
 		e.portEnd = uint16(val)
 	case "ip":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting ip property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting ip property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(string)
@@ -127,14 +127,14 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 		}
 		ip := net.ParseIP(val)
 		if ip == nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid IP address for ip property: %s", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid IP address for ip property\nvalue=%s", val))
 			return
 		}
 		e.ip = ip
 	case "bind-ip":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(string)
@@ -144,14 +144,14 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 		}
 		ip := net.ParseIP(val)
 		if ip == nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid IP address for bind-ip property: %s", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid IP address for bind-ip property\nvalue=%s", val))
 			return
 		}
 		e.bindIP = ip
 	case "formats":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting formats property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting formats property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(*glib.Array)
@@ -161,7 +161,7 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 		}
 		values, err := val.Values()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting values from formats property array: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting values from formats property array\nerr=%v", err))
 			return
 		}
 		formats := lo.Filter(lo.Map(values, func(v interface{}, _ int) *gst.Caps {
@@ -178,7 +178,7 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 		}
 		e.formats = formats
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nname=%s", param.Name()))
 	}
 }
 
@@ -191,14 +191,14 @@ func (e *SipBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 	case "port-start":
 		value, err := glib.GValue(uint(e.portStart))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-start property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "port-end":
 		value, err := glib.GValue(uint(e.portEnd))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value\nerr=%v", err))
 			return nil
 		}
 		return value
@@ -208,7 +208,7 @@ func (e *SipBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		}
 		value, err := glib.GValue(e.ip.String())
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting ip property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting ip property value\nerr=%v", err))
 			return nil
 		}
 		return value
@@ -218,26 +218,26 @@ func (e *SipBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		}
 		value, err := glib.GValue(e.bindIP.String())
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting bind-ip property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "formats":
 		arr, err := glib.NewArray(lo.Map(e.formats, func(c *gst.Caps, _ int) interface{} { return c }))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error creating array for formats property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error creating array for formats property\nerr=%v", err))
 			return nil
 		}
 		value, err := glib.GValue(arr)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting formats property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting formats property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	case "session-id":
 		value, err := glib.GValue(e.sessionID)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting session-id property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting session-id property value\nerr=%v", err))
 			return nil
 		}
 		return value
@@ -246,12 +246,12 @@ func (e *SipBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		defer unlock()
 		value, err := glib.GValue(int(pending))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting transaction-pending property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting transaction-pending property value\nerr=%v", err))
 			return nil
 		}
 		return value
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property %s", param.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nname=%s", param.Name()))
 		return nil
 	}
 }

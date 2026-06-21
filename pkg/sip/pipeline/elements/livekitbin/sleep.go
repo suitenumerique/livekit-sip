@@ -21,7 +21,7 @@ func (e *LivekitBin) cameraSleep(self *gst.Bin, p []lksdk.Participant) {
 	for _, part := range p {
 		rp, ok := part.(*lksdk.RemoteParticipant)
 		if !ok {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant %s is not a remote participant", part.Identity()))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant is not a remote participant\nidentity=%s", part.Identity()))
 			continue
 		}
 		camera, ok := rp.GetTrackPublication(livekit.TrackSource_CAMERA).(*lksdk.RemoteTrackPublication)
@@ -31,7 +31,7 @@ func (e *LivekitBin) cameraSleep(self *gst.Bin, p []lksdk.Participant) {
 
 		if !camera.IsSubscribed() {
 			if err := camera.SetSubscribed(true); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to camera track for participant %s: %v", rp.Identity(), err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to camera track\nidentity=%s\nerr=%v", rp.Identity(), err))
 			}
 		}
 

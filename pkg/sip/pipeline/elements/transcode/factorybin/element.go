@@ -170,13 +170,13 @@ func (e *FactoryBin) createChild(self *gst.Bin, fc *FactoryCaps) *gst.Element {
 
 	elem, err := gst.NewElementWithProperties(fc.Factory.GetName(), properties)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create element from factory %s: %v", fc.Factory.GetName(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create element from factory\nfactory=%s\nerr=%v", fc.Factory.GetName(), err))
 		self.Error("Failed to create element from factory", err)
 		return nil
 	}
 
 	if err := self.Add(elem); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add element %s to bin: %v", elem.GetName(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add element to bin\nelement=%s\nerr=%v", elem.GetName(), err))
 		self.Error("Failed to add element to bin", err)
 		return nil
 	}
@@ -192,17 +192,17 @@ func (e *FactoryBin) reconfigure(self *gst.Bin, caps *gst.Caps) bool {
 			e.mu.Unlock()
 			return true
 		}
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Current element %s no longer fits caps %q, trying to select a new factory", e.Elem.GetName(), caps.String()))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Current element no longer fits caps, trying to select a new factory\nelement=%s\ncaps=%q", e.Elem.GetName(), caps.String()))
 	}
 
 	fc := e.selectFactory(caps)
 	if fc == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No factory found for caps: %q", caps.String()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No factory found for caps\ncaps=%q", caps.String()))
 		e.mu.Unlock()
 		return false
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Selected factory %s for caps %q", fc.Factory.GetName(), caps.String()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Selected factory for caps\nfactory=%s\ncaps=%q", fc.Factory.GetName(), caps.String()))
 
 	elem := e.createChild(self, fc)
 	if elem == nil {
@@ -227,10 +227,10 @@ func (e *FactoryBin) reconfigure(self *gst.Bin, caps *gst.Caps) bool {
 
 		sinkPad.GetInternal().Pad.AddProbe(gst.PadProbeTypeIdle, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 			if err := oldElem.SetState(gst.StateNull); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set state of old element %s to NULL: %v", oldElem.GetName(), err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set state of old element to NULL\nelement=%s\nerr=%v", oldElem.GetName(), err))
 			}
 			if err := self.Remove(oldElem); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove old element %s from bin: %v", oldElem.GetName(), err))
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove old element from bin\nelement=%s\nerr=%v", oldElem.GetName(), err))
 			}
 			return gst.PadProbeRemove
 		})
@@ -240,14 +240,14 @@ func (e *FactoryBin) reconfigure(self *gst.Bin, caps *gst.Caps) bool {
 	sinkPad.SetTarget(elem.GetStaticPad("sink"))
 
 	if !elem.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state with parent for element %s", elem.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state with parent for element\nelement=%s", elem.GetName()))
 	}
 
 	if parkProbeID != 0 {
 		sinkPad.Pad.RemoveProbe(parkProbeID)
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Factory %s successfully configured for caps %q", fc.Factory.GetName(), caps.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Factory successfully configured for caps\nfactory=%s\ncaps=%q", fc.Factory.GetName(), caps.String()))
 
 	return true
 }
@@ -391,7 +391,7 @@ func (e *FactoryBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	case "factories":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting factories property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting factories property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(*glib.Strv)
@@ -407,7 +407,7 @@ func (e *FactoryBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 		for _, factoryName := range val.Strings() {
 			factory := gst.Find(factoryName)
 			if factory == nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Factory not found: %s", factoryName))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Factory not found\nfactory=%s", factoryName))
 				continue
 			}
 			factories = append(factories, factory)
@@ -416,7 +416,7 @@ func (e *FactoryBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 	case "child-properties":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting child-properties property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting child-properties property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(*gst.Structure)
@@ -432,7 +432,7 @@ func (e *FactoryBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 		for k, v := range properties {
 			parts := strings.SplitN(k, ".", 2)
 			if len(parts) != 2 {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid child property key: %s", k))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid child property key\nkey=%s", k))
 				continue
 			}
 			factoryName := parts[0]
@@ -461,7 +461,7 @@ func (e *FactoryBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		strv := glib.NewStrv(names)
 		value, err := glib.GValue(strv)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error creating GValue for factories property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error creating GValue for factories property\nerr=%v", err))
 			self.Error("Error creating GValue for factories property", err)
 			return nil
 		}
@@ -473,7 +473,7 @@ func (e *FactoryBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		factoryName := e.Elem.GetFactory().GetName()
 		value, err := glib.GValue(factoryName)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error creating GValue for selected-factory property: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error creating GValue for selected-factory property\nerr=%v", err))
 			self.Error("Error creating GValue for selected-factory property", err)
 			return nil
 		}
@@ -517,7 +517,7 @@ func (e *FactoryBin) Constructed(instance *glib.Object) {
 
 	e.FactoryCaps = slices.DeleteFunc(e.FactoryCaps, func(c FactoryCaps) bool {
 		if c.SrcCaps == nil || c.SinkCaps == nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Factory %s does not have both src and sink pads with always presence, skipping", c.Factory.GetName()))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Factory does not have both src and sink pads with always presence, skipping\nfactory=%s", c.Factory.GetName()))
 			return true
 		}
 		return false

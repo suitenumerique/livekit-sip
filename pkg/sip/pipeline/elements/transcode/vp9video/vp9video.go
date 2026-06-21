@@ -96,14 +96,14 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 
 	e.Vp9Depay, err = gst.NewElementWithProperties("rtpvp9depay", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpvp9depay element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpvp9depay element\nerr=%v", err))
 		self.Error("Failed to create rtpvp9depay element", err)
 		return
 	}
 
 	e.Vp9Parse, err = gst.NewElementWithProperties("vp9parse", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9parse element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9parse element\nerr=%v", err))
 		self.Error("Failed to create vp9parse element", err)
 		return
 	}
@@ -112,7 +112,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 
 	e.Vp9Dec, err = gst.NewElementWithProperties("vp9dec", map[string]interface{}{})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9dec element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9dec element\nerr=%v", err))
 		self.Error("Failed to create vp9dec element", err)
 		return
 	}
@@ -121,7 +121,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 		"add-borders": true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoscale element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videoscale element\nerr=%v", err))
 		self.Error("Failed to create videoscale element", err)
 		return
 	}
@@ -130,7 +130,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 		"drop-only": true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videorate element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create videorate element\nerr=%v", err))
 		self.Error("Failed to create videorate element", err)
 		return
 	}
@@ -139,7 +139,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],pixel-aspect-ratio=1/1", e.videoWidth, e.videoHeight)),
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element\nerr=%v", err))
 		self.Error("Failed to create capsfilter element", err)
 		return
 	}
@@ -152,7 +152,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 		e.VideoRate,
 		e.Filter,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
 		return
 	}
@@ -165,7 +165,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 		e.VideoRate,
 		e.Filter,
 	); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
 		return
 	}
@@ -186,7 +186,7 @@ func (e *Vp9Video) SetProperty(instance *glib.Object, id uint, value *glib.Value
 	case "video-width":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -195,14 +195,14 @@ func (e *Vp9Video) SetProperty(instance *glib.Object, id uint, value *glib.Value
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property\nvalue=%d", val))
 			return
 		}
 		e.videoWidth = val
 	case "video-height":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -211,7 +211,7 @@ func (e *Vp9Video) SetProperty(instance *glib.Object, id uint, value *glib.Value
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property\nvalue=%d", val))
 			return
 		}
 		e.videoHeight = val

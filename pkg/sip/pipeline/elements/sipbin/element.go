@@ -193,13 +193,13 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self := gst.ToGstBin(instance)
 		answerData, err := e.OnOfferSdp(self, []byte(offer))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to process offer: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to process offer\nerr=%v", err))
 			self.Error("failed to process offer", err)
 			return ""
 		}
 		return string(answerData)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect offer-sdp signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect offer-sdp signal\nerr=%v", err))
 		self.Error("failed to connect offer-sdp signal", err)
 		return
 	}
@@ -212,12 +212,12 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self := gst.ToGstBin(instance)
 		err := e.OnAnswerSdp(self, []byte(answer))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to process answer: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to process answer\nerr=%v", err))
 			self.Error("failed to process answer", err)
 			return
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect answer-sdp signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect answer-sdp signal\nerr=%v", err))
 		self.Error("failed to connect answer-sdp signal", err)
 		return
 	}
@@ -230,12 +230,12 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self := gst.ToGstBin(instance)
 		err := e.OnAckSDP(self, []byte(ack))
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to process ack: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to process ack\nerr=%v", err))
 			self.Error("failed to process ack", err)
 			return
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect ack-sdp signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect ack-sdp signal\nerr=%v", err))
 		self.Error("failed to connect ack-sdp signal", err)
 		return
 	}
@@ -261,13 +261,13 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self := gst.ToGstBin(instance)
 		offerData, err := e.OnCreateOfferSDP(self)
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to create offer: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to create offer\nerr=%v", err))
 			self.Error("failed to create offer", err)
 			return ""
 		}
 		return string(offerData)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect create-offer-sdp signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect create-offer-sdp signal\nerr=%v", err))
 		self.Error("failed to connect create-offer-sdp signal", err)
 		return
 	}
@@ -280,7 +280,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self := gst.ToGstBin(instance)
 		e.ToggleScreenshare(self, enable)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect toggle-screenshare signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect toggle-screenshare signal\nerr=%v", err))
 		self.Error("failed to connect toggle-screenshare signal", err)
 		return
 	}
@@ -293,7 +293,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self := gst.ToGstBin(instance)
 		return e.DumpStats(self)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect stats signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect stats signal\nerr=%v", err))
 		self.Error("failed to connect stats signal", err)
 		return
 	}
@@ -311,7 +311,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		"do-lost":                  true,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to create rtpbin element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to create rtpbin element\nerr=%v", err))
 		self.Error("failed to create rtpbin element", err)
 		return
 	}
@@ -323,7 +323,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		}
 		e.onRtpBinPadAdded(self, pad)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect pad-added signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect pad-added signal\nerr=%v", err))
 		self.Error("failed to connect pad-added signal", err)
 		return
 	}
@@ -335,7 +335,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		}
 		e.onRtpBinPadRemoved(self, pad)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect pad-removed signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect pad-removed signal\nerr=%v", err))
 		self.Error("failed to connect pad-removed signal", err)
 		return
 	}
@@ -347,7 +347,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		}
 		return e.onRtpBinRequestPtMap(self, session, pt)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect request-pt-map signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect request-pt-map signal\nerr=%v", err))
 		self.Error("failed to connect request-pt-map signal", err)
 		return
 	}
@@ -359,7 +359,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		}
 		e.onRtpBinSenderTimeout(self, session, ssrc)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-sender-timeout signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-sender-timeout signal\nerr=%v", err))
 		self.Error("failed to connect on-sender-timeout signal", err)
 		return
 	}
@@ -371,7 +371,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		}
 		e.onRtpBinSsrcCollision(self, session, ssrc)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-ssrc-collision signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-ssrc-collision signal\nerr=%v", err))
 		self.Error("failed to connect on-ssrc-collision signal", err)
 		return
 	}
@@ -383,13 +383,13 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		}
 		e.onRtpBinNewJitterbuffer(self, jitterbuffer, session, ssrc)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-ssrc-collision signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-ssrc-collision signal\nerr=%v", err))
 		self.Error("failed to connect on-ssrc-collision signal", err)
 		return
 	}
 
 	if err := self.Add(e.RtpBin); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to add rtpbin element to bin: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to add rtpbin element to bin\nerr=%v", err))
 		self.Error("failed to add rtpbin element to bin", err)
 		return
 	}
@@ -450,7 +450,7 @@ func (e *SipBin) Finalize(instance *glib.Object) {
 func (e *SipBin) RequestNewPad(instance *gst.Element, templ *gst.PadTemplate, name string, caps *gst.Caps) *gst.Pad {
 	self := gst.ToGstBin(instance)
 	if templ == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad %s from template: template is nil", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: template is nil\npad=%s", name))
 		return nil
 	}
 
@@ -458,7 +458,7 @@ func (e *SipBin) RequestNewPad(instance *gst.Element, templ *gst.PadTemplate, na
 	case "send_rtp_sink_%u":
 		return e.requestNewPadSendRtpSink(self, templ, name, caps)
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad %s from template %s: unrecognized template", name, templ.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: unrecognized template\npad=%s\ntemplate=%s", name, templ.GetName()))
 		return nil
 	}
 }
@@ -466,7 +466,7 @@ func (e *SipBin) RequestNewPad(instance *gst.Element, templ *gst.PadTemplate, na
 func (e *SipBin) requestNewPadSendRtpSink(self *gst.Bin, templ *gst.PadTemplate, name string, caps *gst.Caps) *gst.Pad {
 	var session int
 	if _, err := fmt.Sscanf(name, "send_rtp_sink_%d", &session); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad %s from template %s: failed to parse session number: %v", name, templ.GetName(), err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse session number for pad request\npad=%s\ntemplate=%s\nerr=%v", name, templ.GetName(), err))
 		return nil
 	}
 
@@ -475,7 +475,7 @@ func (e *SipBin) requestNewPadSendRtpSink(self *gst.Bin, templ *gst.PadTemplate,
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE,
 		livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad %s from template %s: unsupported track source %d", name, templ.GetName(), kind))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: unsupported track source\npad=%s\ntemplate=%s\nsource=%d", name, templ.GetName(), kind))
 		return nil
 	}
 
@@ -484,46 +484,46 @@ func (e *SipBin) requestNewPadSendRtpSink(self *gst.Bin, templ *gst.PadTemplate,
 
 	ti := e.Tracks[kind]
 	if ti == nil || ti.RtpFilter == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad %s from template %s: no track info found for track source %d", name, templ.GetName(), kind))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: no track info found for track source\npad=%s\ntemplate=%s\nsource=%d", name, templ.GetName(), kind))
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requesting new pad %s from template %s for track source %d", name, templ.GetName(), kind))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requesting new pad from template for track source\npad=%s\ntemplate=%s\nsource=%d", name, templ.GetName(), kind))
 	recvRtpSrc := e.RtpBin.GetRequestPad(fmt.Sprintf("send_rtp_sink_%d", ti.Kind))
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requested new pad %s from template %s for track source %d: got pad %s", name, templ.GetName(), kind, recvRtpSrc.GetName()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requested new pad from template for track source: got pad\npad=%s\ntemplate=%s\nsource=%d\ngot_pad=%s", name, templ.GetName(), kind, recvRtpSrc.GetName()))
 	if recvRtpSrc == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad %s from template %s: failed to get request pad for RTP source", name, templ.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: failed to get request pad for RTP source\npad=%s\ntemplate=%s", name, templ.GetName()))
 		return nil
 	}
 
 	if ret := ti.RtpFilter.GetStaticPad("src").Link(recvRtpSrc); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link RTP filter to RTP source: %v", ret))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link RTP filter to RTP source\nret=%v", ret))
 		return nil
 	}
 
 	gpad := gst.NewGhostPadFromTemplate(name, ti.RtpFilter.GetStaticPad("sink"), templ)
 	if gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for new pad %s from template %s", name, templ.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create ghost pad for new pad from template\npad=%s\ntemplate=%s", name, templ.GetName()))
 		return nil
 	}
 	if !self.AddPad(gpad.Pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad for new pad %s from template %s", name, templ.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add ghost pad for new pad from template\npad=%s\ntemplate=%s", name, templ.GetName()))
 		return nil
 	}
 	if !gpad.SetActive(true) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to activate ghost pad for new pad %s from template %s", name, templ.GetName()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to activate ghost pad for new pad from template\npad=%s\ntemplate=%s", name, templ.GetName()))
 		return nil
 	}
 
 	switch kind {
 	case livekit.TrackSource_CAMERA:
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for camera track: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for camera track\npad=%s", gpad.GetName()))
 	case livekit.TrackSource_SCREEN_SHARE:
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for screen share track: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for screen share track\npad=%s", gpad.GetName()))
 	case livekit.TrackSource_MICROPHONE:
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for microphone track: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for microphone track\npad=%s", gpad.GetName()))
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
-		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for screen share audio track: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created new RTP sink pad for screen share audio track\npad=%s", gpad.GetName()))
 	}
 
 	return gpad.Pad
@@ -535,7 +535,7 @@ func (e *SipBin) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 	name := pad.GetName()
 
 	if templ == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad %s: pad template is nil", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad: pad template is nil\npad=%s", name))
 		return
 	}
 
@@ -544,7 +544,7 @@ func (e *SipBin) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 		e.releasePadSendRtpSink(self, pad)
 		return
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad %s: unrecognized template", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad: unrecognized template\npad=%s", name))
 		return
 	}
 }
@@ -553,7 +553,7 @@ func (e *SipBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 	name := pad.GetName()
 	var session int
 	if _, err := fmt.Sscanf(name, "send_rtp_sink_%d", &session); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad %s: failed to parse session number: %v", name, err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse session number for pad release\npad=%s\nerr=%v", name, err))
 		return
 	}
 
@@ -562,7 +562,7 @@ func (e *SipBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE,
 		livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 	default:
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad %s: unsupported track source %d", name, kind))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad: unsupported track source\npad=%s\nsource=%d", name, kind))
 		return
 	}
 
@@ -571,7 +571,7 @@ func (e *SipBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 
 	ti := e.Tracks[kind]
 	if ti == nil || ti.RtpFilter == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad %s: no track info found for track source %d", name, kind))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad: no track info found for track source\npad=%s\nsource=%d", name, kind))
 		return
 	}
 
@@ -582,17 +582,17 @@ func (e *SipBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 	}
 
 	if !self.RemovePad(pad) {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove pad %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to remove pad\npad=%s", name))
 	}
 
 	switch kind {
 	case livekit.TrackSource_CAMERA:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for camera track: %s", name))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for camera track\npad=%s", name))
 	case livekit.TrackSource_SCREEN_SHARE:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for screen share track: %s", name))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for screen share track\npad=%s", name))
 	case livekit.TrackSource_MICROPHONE:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for microphone track: %s", name))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for microphone track\npad=%s", name))
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for screen share audio track: %s", name))
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for screen share audio track\npad=%s", name))
 	}
 }

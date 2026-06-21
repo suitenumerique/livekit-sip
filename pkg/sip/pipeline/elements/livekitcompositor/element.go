@@ -131,7 +131,7 @@ func (e *LivekitCompositor) Constructed(instance *glib.Object) {
 		}
 		ptr.onActiveSpeakersChanged(instance, structure)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect active-speakers-changed signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect active-speakers-changed signal\nerr=%v", err))
 		self.Error("Failed to connect active-speakers-changed signal", err)
 	}
 
@@ -142,7 +142,7 @@ func (e *LivekitCompositor) Constructed(instance *glib.Object) {
 		}
 		ptr.onParticipantJoin(instance, structure)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect participant-join signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect participant-join signal\nerr=%v", err))
 		self.Error("Failed to connect participant-join signal", err)
 	}
 
@@ -153,7 +153,7 @@ func (e *LivekitCompositor) Constructed(instance *glib.Object) {
 		}
 		ptr.onParticipantLeft(instance, structure)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect participant-left signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect participant-left signal\nerr=%v", err))
 		self.Error("Failed to connect participant-left signal", err)
 	}
 }
@@ -162,7 +162,7 @@ func (e *LivekitCompositor) RequestNewPad(instance *gst.Element, templ *gst.PadT
 	self := gst.ToGstBin(instance)
 
 	if templ == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown pad template for requested pad: %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown pad template for requested pad\nname=%s", name))
 		return nil
 	}
 
@@ -172,7 +172,7 @@ func (e *LivekitCompositor) RequestNewPad(instance *gst.Element, templ *gst.PadT
 	case "raw_sink_%u":
 		return e.requestNewRawSinkPad(self, templ, name)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No handler for requested pad template: %s", templ.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No handler for requested pad template\ntemplate=%s", templ.Name()))
 		return nil
 	}
 }
@@ -188,7 +188,7 @@ func (e *LivekitCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTempl
 
 	var session, ssrc, payload int
 	if _, err := fmt.Sscanf(name, "sink_%d_%d_%d", &session, &ssrc, &payload); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name: %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name\nname=%s", name))
 		return nil
 	}
 
@@ -204,12 +204,12 @@ func (e *LivekitCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTempl
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		pad = e.requestNewScreenShareAudioSinkPad(self, templ, name)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in pad name: %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in pad name\nname=%s", name))
 		return nil
 	}
 
 	if pad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create pad for name: %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create pad for name\nname=%s", name))
 		return nil
 	}
 
@@ -230,17 +230,17 @@ func (e *LivekitCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTempl
 
 		var session, ssrc, pt int
 		if _, err := fmt.Sscanf(pad.GetName(), "sink_%d_%d_%d", &session, &ssrc, &pt); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name in track source info callback: %s", pad.GetName()))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name in track source info callback\nname=%s", pad.GetName()))
 			return
 		}
 
 		if _, exist := e.participants[info.ParticipantSID]; !exist {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from track source info not found in participants map: %s", info.ParticipantSID))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from track source info not found in participants map\nsid=%s", info.ParticipantSID))
 			return
 		}
 
 		if ssrc != int(info.SSRC) || session != int(info.Source) || pt != int(info.PT) {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track source info does not match pad name: %s (info: session=%d, ssrc=%d, pt=%d)", pad.GetName(), info.Source, info.SSRC, info.PT))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track source info does not match pad name\nname=%s\nsession=%d\nssrc=%d\npt=%d", pad.GetName(), info.Source, info.SSRC, info.PT))
 			info.SSRC = uint(ssrc)
 			info.Source = livekit.TrackSource(kind)
 			info.PT = uint(pt)
@@ -262,13 +262,13 @@ func (e *LivekitCompositor) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 
 	gpad := pad.AsGhostPad()
 	if gpad == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Released pad is not a ghost pad: %s", pad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Released pad is not a ghost pad\npad=%s", pad.GetName()))
 		return
 	}
 
 	templ := gpad.Template()
 	if templ == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Released pad has no template: %s", pad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Released pad has no template\npad=%s", pad.GetName()))
 		return
 	}
 
@@ -278,7 +278,7 @@ func (e *LivekitCompositor) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 	case "raw_sink_%u":
 		e.releaseRawSinkPad(self, gpad)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No handler for released pad template: %s", templ.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No handler for released pad template\ntemplate=%s", templ.Name()))
 		return
 	}
 }
@@ -289,7 +289,7 @@ func (e *LivekitCompositor) releaseSinkPad(self *gst.Bin, gpad *gst.GhostPad) {
 
 	var session, ssrc, pt int
 	if _, err := fmt.Sscanf(gpad.GetName(), "sink_%d_%d_%d", &session, &ssrc, &pt); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name on release: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name on release\nname=%s", gpad.GetName()))
 		return
 	}
 
@@ -306,12 +306,12 @@ func (e *LivekitCompositor) releaseSinkPad(self *gst.Bin, gpad *gst.GhostPad) {
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		e.releaseScreenShareAudioSinkPad(self, gpad)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in released pad name: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in released pad name\nname=%s", gpad.GetName()))
 		return
 	}
 
 	if infoErr != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get track source info for released pad: %s, error: %v", gpad.GetName(), infoErr))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get track source info for released pad\nname=%s\nerr=%v", gpad.GetName(), infoErr))
 		return
 	}
 

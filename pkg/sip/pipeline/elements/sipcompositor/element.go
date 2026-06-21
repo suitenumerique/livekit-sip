@@ -79,12 +79,12 @@ func (e *SipCompositor) RequestNewPad(instance *gst.Element, templ *gst.PadTempl
 	self := gst.ToGstBin(instance)
 
 	if templ == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown pad template for requested pad: %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown pad template for requested pad\nname=%s", name))
 		return nil
 	}
 
 	if templ.Name() != "sink_%u_%u_%u" {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No handler for requested pad template: %s", templ.Name()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No handler for requested pad template\ntemplate=%s", templ.Name()))
 		return nil
 	}
 
@@ -102,7 +102,7 @@ func (e *SipCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTemplate,
 
 	var session, ssrc, payload int
 	if _, err := fmt.Sscanf(name, "sink_%d_%d_%d", &session, &ssrc, &payload); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name: %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name\nname=%s", name))
 		return nil
 	}
 
@@ -116,12 +116,12 @@ func (e *SipCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTemplate,
 	case livekit.TrackSource_SCREEN_SHARE:
 		pad = e.requestNewScreenshareSinkPad(self, templ, name)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in pad name: %s", name))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in pad name\nname=%s", name))
 		return nil
 	}
 
 	if pad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create pad for name: %s", name))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create pad for name\nname=%s", name))
 		return nil
 	}
 
@@ -133,7 +133,7 @@ func (e *SipCompositor) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 
 	gpad := pad.AsGhostPad()
 	if gpad == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Released pad is not a ghost pad: %s", pad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Released pad is not a ghost pad\npad=%s", pad.GetName()))
 		return
 	}
 
@@ -142,7 +142,7 @@ func (e *SipCompositor) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 
 	var session, ssrc, pt int
 	if _, err := fmt.Sscanf(gpad.GetName(), "sink_%d_%d_%d", &session, &ssrc, &pt); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name on release: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid pad name on release\npad=%s", gpad.GetName()))
 		return
 	}
 
@@ -155,7 +155,7 @@ func (e *SipCompositor) ReleasePad(instance *gst.Element, pad *gst.Pad) {
 	case livekit.TrackSource_SCREEN_SHARE:
 		e.releaseScreenshareSinkPad(self, gpad)
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in released pad name: %s", gpad.GetName()))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown track source in released pad name\npad=%s", gpad.GetName()))
 		return
 	}
 }

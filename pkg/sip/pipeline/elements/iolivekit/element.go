@@ -243,7 +243,7 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		"lang":         e.lang,
 	})
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create livekit_compositor element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create livekit_compositor element\nerr=%v", err))
 		self.Error("Failed to create livekit_compositor element", err)
 		return
 	}
@@ -254,7 +254,7 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 			e.compositorPadAdded(self, pad)
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-added signal of livekit_compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-added signal of livekit_compositor\nerr=%v", err))
 		self.Error("Failed to connect to pad-added signal of livekit_compositor", err)
 		return
 	}
@@ -265,13 +265,13 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 			e.compositorPadRemoved(self, pad)
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-removed signal of livekit_compositor: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to pad-removed signal of livekit_compositor\nerr=%v", err))
 		self.Error("Failed to connect to pad-removed signal of livekit_compositor", err)
 		return
 	}
 
 	if err := self.AddMany(e.Compositor); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add livekit_compositor element to SIP IO element: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add livekit_compositor element to SIP IO element\nerr=%v", err))
 		self.Error("Failed to add livekit_compositor element to SIP IO element", err)
 		return
 	}
@@ -281,12 +281,12 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		if e != nil && e.Compositor != nil {
 			if _, err := e.Compositor.Emit("active-speakers-changed", structure); err != nil {
 				self := gst.ToGstBin(instance)
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward active-speakers-changed signal from SIP IO element to compositor: %v", err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward active-speakers-changed signal from SIP IO element to compositor\nerr=%v", err))
 				self.Error("Failed to forward active-speakers-changed signal from SIP IO element to compositor", err)
 			}
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to active-speakers-changed signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to active-speakers-changed signal\nerr=%v", err))
 		self.Error("Failed to connect to active-speakers-changed signal", err)
 		return
 	}
@@ -296,12 +296,12 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		if e != nil && e.Compositor != nil {
 			if _, err := e.Compositor.Emit("participant-join", structure); err != nil {
 				self := gst.ToGstBin(instance)
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward participant-join signal from SIP IO element to compositor: %v", err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward participant-join signal from SIP IO element to compositor\nerr=%v", err))
 				self.Error("Failed to forward participant-join signal from SIP IO element to compositor", err)
 			}
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to participant-join signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to participant-join signal\nerr=%v", err))
 		self.Error("Failed to connect to participant-join signal", err)
 		return
 	}
@@ -311,12 +311,12 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		if e != nil && e.Compositor != nil {
 			if _, err := e.Compositor.Emit("participant-left", structure); err != nil {
 				self := gst.ToGstBin(instance)
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward participant-left signal from SIP IO element to compositor: %v", err))
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to forward participant-left signal from SIP IO element to compositor\nerr=%v", err))
 				self.Error("Failed to forward participant-left signal from SIP IO element to compositor", err)
 			}
 		}
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to participant-left signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to participant-left signal\nerr=%v", err))
 		self.Error("Failed to connect to participant-left signal", err)
 		return
 	}
@@ -330,7 +330,7 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		}
 		return e.playAudioFd(self, fd)
 	}); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to play-audio-fd signal: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to play-audio-fd signal\nerr=%v", err))
 		self.Error("Failed to connect to play-audio-fd signal", err)
 		return
 	}
@@ -358,7 +358,7 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 	case "video-width":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-width property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -367,14 +367,14 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-width property\nvalue=%d", val))
 			return
 		}
 		e.videoWidth = val
 	case "video-height":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting video-height property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -383,14 +383,14 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 			return
 		}
 		if val > 0xFFFF {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property: %d", val))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for video-height property\nvalue=%d", val))
 			return
 		}
 		e.videoHeight = val
 	case "framerate":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(uint)
@@ -402,7 +402,7 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 	case "lang":
 		gv, err := value.GoValue()
 		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting lang property value: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting lang property value\nerr=%v", err))
 			return
 		}
 		val, ok := gv.(string)
@@ -415,17 +415,17 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 		}
 	case "microphone":
 		if err := e.Compositor.SetProperty("microphone", value); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set microphone property on compositor: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set microphone property on compositor\nerr=%v", err))
 		}
 	case "camera":
 		if err := e.Compositor.SetProperty("camera", value); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set camera property on compositor: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set camera property on compositor\nerr=%v", err))
 		}
 	case "screenshare":
 		if err := e.Compositor.SetProperty("screenshare", value); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set screenshare property on compositor: %v", err))
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set screenshare property on compositor\nerr=%v", err))
 		}
 	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property ID %d", id))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property ID\nid=%d", id))
 	}
 }

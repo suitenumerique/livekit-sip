@@ -13,12 +13,12 @@ func (e *LivekitCompositor) onActiveSpeakersChanged(instance *gst.Element, struc
 
 	info, err := livekittracks.ActiveSpeakerChangeInfoFromStructure(structure)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse active speakers change info: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse active speakers change info\nerr=%v", err))
 		self.Error("Failed to parse active speakers change info", err)
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers changed: %v", info))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers changed\ninfo=%v", info))
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -30,7 +30,7 @@ func (e *LivekitCompositor) onActiveSpeakersChanged(instance *gst.Element, struc
 
 	info.ParticipantsSID = lo.Filter(info.ParticipantsSID, func(sid string, _ int) bool {
 		if _, exist := e.participants[sid]; !exist {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from active speaker change info not found in participants map: %s", sid))
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from active speaker change info not found in participants map\nsid=%s", sid))
 			return false
 		}
 		return true
@@ -78,12 +78,12 @@ func (e *LivekitCompositor) onParticipantJoin(instance *gst.Element, structure *
 
 	info, err := livekittracks.ParticipantInfoFromStructure(structure)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse participant info from structure: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse participant info from structure\nerr=%v", err))
 		self.Error("Failed to parse participant info from structure", err)
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant joined: %s", info.SID))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant joined\nsid=%s", info.SID))
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -96,12 +96,12 @@ func (e *LivekitCompositor) onParticipantLeft(instance *gst.Element, structure *
 
 	info, err := livekittracks.ParticipantInfoFromStructure(structure)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse participant info from structure: %v", err))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to parse participant info from structure\nerr=%v", err))
 		self.Error("Failed to parse participant info from structure", err)
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant left: %s", info.SID))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant left\nsid=%s", info.SID))
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
