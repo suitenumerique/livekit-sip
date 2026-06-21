@@ -81,6 +81,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create track for media %d: %v", i, err))
 				continue
 			}
+			e.Tracks[kind] = track
 			track.parseDirection(media)
 			if ret := media.SetProto(track.Proto); ret != gstsdp.SDPResultOk {
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set proto on media %d: %v", i, ret))
@@ -94,9 +95,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 			}
 			medias[i] = localMedia
 			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Added media %d to answer with caps %s", i, caps.String()))
-			e.Tracks[kind] = track
 			if err := track.Init(e, self, media, offer, caps); err != nil {
-				e.Tracks[kind] = nil
 				medias[i] = nil
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize track for media %d: %v", i, err))
 			}
@@ -131,8 +130,8 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create BFCP track for media %d: %v", i, err))
 				continue
 			}
+			e.Bfcp = track
 			if err := track.Init(e, self, media, offer); err != nil {
-				e.Bfcp = nil
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize BFCP track for media %d: %v", i, err))
 				continue
 			}
@@ -141,7 +140,6 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to make answer media for BFCP media %d: %v", i, err))
 				continue
 			}
-			e.Bfcp = track
 			medias[i] = localMedia
 			continue
 		}
@@ -174,7 +172,12 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 			if err := e.CleanupTrack(self, track); err != nil {
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for media index %d: %v", i, err))
 			}
-			e.Tracks[i] = nil
+		}
+	}
+	if e.Bfcp != nil && (e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx].GetPort() == 0) {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up BFCP track because media index %d is disabled in answer", e.Bfcp.Idx))
+		if err := e.CleanupBfcp(self, e.Bfcp); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup BFCP track: %v", err))
 		}
 	}
 
@@ -271,7 +274,6 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 			}
 			medias[i] = localMedia
 			if err := e.Tracks[kind].Init(e, self, media, answer, caps); err != nil {
-				e.Tracks[kind] = nil
 				medias[i] = nil
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize track for media %d: %v", i, err))
 			}
@@ -282,7 +284,6 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 				continue
 			}
 			if err := e.Bfcp.Init(e, self, media, answer); err != nil {
-				e.Bfcp = nil
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to initialize BFCP track for media %d: %v", i, err))
 				continue
 			}
@@ -314,22 +315,14 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 			if err := e.CleanupTrack(self, track); err != nil {
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for media index %d: %v", i, err))
 			}
-			e.Tracks[i] = nil
 		}
 	}
-
-	// if len(e.Medias) > len(medias) {
-	// 	tracks := lo.Filter(e.Tracks[:], func(t *SipTrack, _ int) bool { return t != nil && t.Idx >= len(medias) })
-	// 	var errs []error
-	// 	for _, track := range tracks {
-	// 		if err := e.CleanupTrack(self, track); err != nil {
-	// 			errs = append(errs, err)
-	// 		}
-	// 	}
-	// 	if len(errs) > 0 {
-	// 		return fmt.Errorf("failed to cleanup tracks: %v", errs)
-	// 	}
-	// }
+	if e.Bfcp != nil && (e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx].GetPort() == 0) {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Cleaning up BFCP track because media index %d is disabled in answer", e.Bfcp.Idx))
+		if err := e.CleanupBfcp(self, e.Bfcp); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup BFCP track: %v", err))
+		}
+	}
 
 	e.Medias = medias
 

@@ -104,6 +104,10 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 		return nil, fmt.Errorf("failed to connect on-floor-requested signal: %w", err)
 	}
 
+	if err := self.Add(bfcpServer); err != nil {
+		return nil, fmt.Errorf("failed to add BFCP server element to bin: %w", err)
+	}
+
 	return &BfcpTrack{
 		Idx:         idx,
 		Proto:       proto,
@@ -131,10 +135,6 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 		} else {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to parse BFCP version from media attribute: %v", err))
 		}
-	}
-
-	if err := self.Add(b.BfcpServer); err != nil {
-		return fmt.Errorf("failed to add BFCP server element to bin: %w", err)
 	}
 
 	if !b.BfcpServer.SyncStateWithParent() {
@@ -204,6 +204,30 @@ func (e *SipBin) makeBfcpMedia(bfcp *BfcpTrack) (*gstsdp.Media, error) {
 	}
 
 	return media, nil
+}
+
+func (e *SipBin) CleanupBfcp(self *gst.Bin, bfcp *BfcpTrack) error {
+	if bfcp == nil {
+		return nil
+	}
+
+	var errs []error
+	if bfcp.BfcpServer != nil {
+		if err := bfcp.BfcpServer.SetState(gst.StateNull); err != nil {
+			errs = append(errs, fmt.Errorf("failed to set BFCP server element to NULL state: %w", err))
+		}
+		if err := self.Remove(bfcp.BfcpServer); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove BFCP server element from bin: %w", err))
+		}
+	}
+
+	bfcp.initialized = false
+	e.Bfcp = nil
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to cleanup BFCP track: %v", errs)
+	}
+	return nil
 }
 
 func (e *SipBin) bfcpMediaAddStreams(medias []*gstsdp.Media) error {

@@ -316,12 +316,11 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 
 	e.Tracks[track.Kind] = nil
 	e.PtMap[track.Kind] = make(map[uint8]*gst.Caps)
+	track.initialized = false
 
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to cleanup track: %v", errs)
 	}
-
-	track.initialized = false
 
 	return nil
 }
