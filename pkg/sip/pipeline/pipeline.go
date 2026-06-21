@@ -196,11 +196,9 @@ func (p *Pipeline) getStats() (*CallStats, error) {
 var pid = os.Getpid()
 
 func (p *Pipeline) Close() error {
-	if p.Closed() {
-		p.Log.Debugw("Pipeline already closed")
+	if !p.closed.Break() {
 		return nil
 	}
-	p.closed.Break()
 	p.Log.Debugw("Closing pipeline")
 
 	p.getStats()
@@ -360,6 +358,11 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		publishCoders:         sipOpt.PublishCodecs,
 	}
 	p.cleanup = p.cleanupChains
+
+	go func() {
+		<-p.ctx.Done()
+		p.Close()
+	}()
 
 	p.SetLogHandler()
 

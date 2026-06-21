@@ -9,6 +9,7 @@ import (
 	protoCodecs "github.com/livekit/protocol/codecs"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/apperror"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
 	"github.com/pion/webrtc/v4"
 	"github.com/samber/lo"
@@ -66,13 +67,13 @@ func (e *LivekitBin) OnConnectSignal(instance *gst.Element) {
 		lksdk.WithCodecs(codecs),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to LiveKit room: %v", err))
-		self.Error("Error connecting to LiveKit room", err)
+		self.ErrorMessage(apperror.AppErrorDomain, apperror.AppFatalError, fmt.Sprintf("Error connecting to LiveKit room: %v", err), "")
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, "Successfully joined LiveKit room, waiting for connection to be established...")
 	if err := roomWaitConnected(e.room); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error waiting for LiveKit room connection: %v", err))
-		self.Error("Error waiting for LiveKit room connection", err)
+		self.ErrorMessage(apperror.AppErrorDomain, apperror.AppFatalError, "Error waiting for LiveKit room connection", err.Error())
 		return
 	}
 

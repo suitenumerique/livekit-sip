@@ -3,9 +3,11 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"time"
 	"weak"
 
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/apperror"
 )
 
 func (p *Pipeline) SetupBus() {
@@ -34,15 +36,6 @@ func (p *Pipeline) SetupBus() {
 	}
 }
 
-func BusFilter(msg *gst.Message) gst.BusSyncReply {
-	switch msg.Type() {
-	case gst.MessageError, gst.MessageLatency, gst.MessageElement:
-		return gst.BusPass
-	default:
-		return gst.BusDrop
-	}
-}
-
 func (p *Pipeline) CloseBus() {
 	if p.bus == nil {
 		p.Log.Warnw("Bus not set up, cannot close", nil)
@@ -62,6 +55,10 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 		gErr := msg.ParseError()
 		p.Log.Errorw("Pipeline error", gErr, "debug", gErr.DebugString())
 		p.dumpCH <- true
+		time.Sleep(500 * time.Millisecond)
+		if gErr.Domain() == apperror.AppErrorDomain.ToDomainQuark() && gErr.Code() == apperror.AppFatalError {
+			p.Close()
+		}
 	case gst.MessageLatency:
 		p.Log.Debugw("Pipeline latency changed")
 		if !p.Pipeline().RecalculateLatency() {

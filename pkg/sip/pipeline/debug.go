@@ -36,6 +36,17 @@ func (p *Pipeline) DumpDotLoop() error {
 			count++
 			done := make(chan struct{})
 			if _, err := glib.IdleAdd(func() {
+				if p.Closed() {
+					p.Log.Debugw("Pipeline closed, skipping dump")
+					close(done)
+					return
+				}
+				pipeline := p.Pipeline()
+				if pipeline == nil {
+					p.Log.Debugw("Pipeline is nil, skipping dump")
+					close(done)
+					return
+				}
 				data := p.Pipeline().DebugBinToDotData(gst.DebugGraphShowAll | gst.DebugGraphShowFullParams)
 				filename := fmt.Sprintf("%s/pipeline-%s-%d.dot", p.dumpDir, p.sipCallID, count)
 				if err := os.WriteFile(filename, []byte(data), 0644); err != nil {
