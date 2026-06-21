@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"weak"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -50,9 +51,18 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	if err != nil {
 		return fmt.Errorf("failed to create new local track: %w", err)
 	}
+
+	pweak := weak.Make(p)
+	wself := glib.WeakRefInit(self)
+
 	track.OnBind(func() {
+		p := pweak.Value()
+		self := gst.ToGstBin(wself.Get())
 		caps := mimeTypeToCaps(mimeType)
-		if p != nil && p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
+		if p == nil || self == nil {
+			return
+		}
+		if p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
 			if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter\nsource=%s\nerr=%v", kind.String(), err))
 			}
@@ -72,8 +82,13 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 		}
 
 		backupTrack.OnBind(func() {
+			p := pweak.Value()
+			self := gst.ToGstBin(wself.Get())
+			if p == nil || self == nil {
+				return
+			}
 			caps := mimeTypeToCaps(backupMimeType)
-			if p != nil && p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
+			if p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
 				if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
 					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter\nsource=%s\nerr=%v", kind.String(), err))
 				}
