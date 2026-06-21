@@ -12,8 +12,12 @@ import (
 func (e *SipBin) OnAckSDP(self *gst.Bin, b []byte) error {
 	unlock, err := e.transaction.Ack(TransactionPendingKindAck)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to ack transaction\nerr=%v", err))
-		return err
+		// A stray/unexpected ACK (e.g. the ACK of a glare-rejected re-INVITE, or one
+		// arriving while a re-INVITE renegotiation is pending) must not be fatal:
+		// returning an error escalates to self.Error() and tears down the whole
+		// pipeline. Log and ignore it instead.
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Ignoring unexpected ACK (no matching pending transaction)\nerr=%v", err))
+		return nil
 	}
 	defer unlock()
 

@@ -384,6 +384,7 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 		offerData := req.Body()
 		if existing.medias != nil && existing.medias.ReInvitePending() {
 			existing.log().Infow("re-INVITE glare, responding 491 Request Pending", "cseq", cc.InviteCSeq())
+			existing.cc.markReInviteRejected(cc.InviteCSeq())
 			cc.RejectReInvite(statusRequestPending, "Request Pending")
 			return nil
 		}
@@ -397,6 +398,7 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 			answerData, err := existing.medias.AnswerSDP(offerData)
 			if err != nil {
 				existing.log().Errorw("Cannot create SDP answer for re-INVITE", err)
+				existing.cc.markReInviteRejected(cc.InviteCSeq())
 				if existing.medias.ReInvitePending() {
 					cc.RejectReInvite(statusRequestPending, "Request Pending")
 				} else {
@@ -1561,6 +1563,15 @@ func (c *inboundCall) transferCall(ctx context.Context, transferTo string, heade
 // answer), not just the first one. The fuse (c.cc.AcceptAck) is idempotent, so calling
 // it on every ACK is safe.
 func (c *inboundCall) AcceptAck(req *sip.Request, tx sip.ServerTransaction) {
+	// The ACK of a glare-rejected (non-2xx) re-INVITE acknowledges a rejected
+	// transaction; forwarding it to the media orchestrator would hit OnAckSDP while
+	// the SIP transaction is mid-renegotiation (pending=Answer) and corrupt its
+	// state. Such an ACK is handled at the dialog layer only.
+	if h := req.CSeq(); h != nil && c.cc.takeReInviteRejected(h.SeqNo) {
+		c.log().Debugw("Ignoring ACK for glare-rejected re-INVITE", "cseq", h.SeqNo)
+		c.cc.AcceptAck(req, tx)
+		return
+	}
 	if c.medias != nil {
 		c.log().Debugw("Forwarding ACK SDP to media orchestrator")
 		if err := c.medias.AckSDP(req, tx); err != nil {
@@ -1682,6 +1693,10 @@ type sipInbound struct {
 	acked           core.Fuse
 	call            *inboundCall
 
+	// rejectedReInviteCSeqs holds CSeqs of re-INVITEs rejected with a non-2xx
+	// response (e.g. 491 on glare); their ACK must not reach the media orchestrator.
+	rejectedReInviteCSeqs map[uint32]struct{}
+
 	sessionExpires uint32
 	minSe          uint32
 	refresher      string
@@ -1795,6 +1810,31 @@ func (c *sipInbound) SIPCallID() string {
 
 func (c *sipInbound) InviteCSeq() uint32 {
 	return c.inviteCSeq
+}
+
+// markReInviteRejected records the CSeq of a re-INVITE we rejected with a non-2xx
+// final response (e.g. 491 on glare). Its ACK is a transaction-layer ACK for a
+// rejected request and must not be forwarded to the media orchestrator.
+func (c *sipInbound) markReInviteRejected(seq uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rejectedReInviteCSeqs == nil {
+		c.rejectedReInviteCSeqs = make(map[uint32]struct{})
+	}
+	c.rejectedReInviteCSeqs[seq] = struct{}{}
+}
+
+// takeReInviteRejected reports (and clears) whether seq is the CSeq of a re-INVITE
+// rejected with a non-2xx response — i.e. whether its ACK must be handled at the
+// dialog layer only and not forwarded to the media orchestrator.
+func (c *sipInbound) takeReInviteRejected(seq uint32) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.rejectedReInviteCSeqs[seq]; ok {
+		delete(c.rejectedReInviteCSeqs, seq)
+		return true
+	}
+	return false
 }
 
 func (c *sipInbound) RemoteHeaders() Headers {

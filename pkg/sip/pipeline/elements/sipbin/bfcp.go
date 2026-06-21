@@ -265,8 +265,19 @@ func (e *SipBin) bfcpMediaAddStreams(self *gst.Bin, medias []*gstsdp.Media) erro
 
 func (e *SipBin) mediaAddBfcpLabel(self *gst.Bin, bfcpMedia *gstsdp.Media, media *gstsdp.Media, label string) error {
 	floorID := fmt.Sprintf("%d mstrm:%s", e.Bfcp.FloorID, label)
-	if ret := bfcpMedia.AddAttribute("floorid", floorID); ret != gstsdp.SDPResultOk {
-		return fmt.Errorf("failed to add floorid attribute to BFCP media: %v", ret)
+	floorIDExists := false
+	for i := 0; ; i += 1 {
+		if v := bfcpMedia.GetAttributeValN("floorid", i); v == "" {
+			break
+		} else if v == floorID {
+			floorIDExists = true
+			break
+		}
+	}
+	if !floorIDExists {
+		if ret := bfcpMedia.AddAttribute("floorid", floorID); ret != gstsdp.SDPResultOk {
+			return fmt.Errorf("failed to add floorid attribute to BFCP media: %v", ret)
+		}
 	}
 	if media == nil {
 		return nil
