@@ -185,7 +185,7 @@ func (o *MediaOrchestrator) Close() error {
 }
 
 func (o *MediaOrchestrator) AnswerSDP(offer []byte) (answer []byte, err error) {
-	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
+	if err := o.okStates(MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return nil, err
 	}
 	return o.answerSDP(offer)
@@ -208,7 +208,7 @@ func (o *MediaOrchestrator) answerSDP(offerData []byte) ([]byte, error) {
 }
 
 func (o *MediaOrchestrator) AckSDP(req *sip.Request, tx sip.ServerTransaction) error {
-	if err := o.okStates(MediaStateFailed, MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
+	if err := o.okStates(MediaStateOK, MediaStateReady, MediaStateStarted); err != nil {
 		return err
 	}
 
