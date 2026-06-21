@@ -1268,7 +1268,7 @@ func (c *sipOutbound) setupSessionTimer() {
 
 func (c *sipOutbound) addSessionTimerRequestHeaders(req *sip.Request) {
 	if req.GetHeader("Supported") == nil {
-		req.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
+		req.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 	se, minSe, refresher := c.sessionExpires, c.minSe, c.refresher
 	if se == 0 {
@@ -1290,22 +1290,12 @@ func (c *sipOutbound) addSessionTimerHeaders(r *sip.Response) {
 	is2xx := r.StatusCode >= 200 && r.StatusCode < 300
 
 	if is2xx && (method == sip.INVITE || method == sip.UPDATE || method == sip.OPTIONS) {
-		if r.GetHeader("Allow") == nil {
-			r.AppendHeader(sip.HeaderClone(allowHeader))
-		}
-		if r.GetHeader("Supported") == nil {
-			r.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
-		}
+			r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 	if is2xx && (method == sip.INVITE || method == sip.UPDATE) && c.sessionExpires != 0 {
-		if r.GetHeader("Session-Expires") == nil {
 			r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
-		}
-		if r.GetHeader("Min-SE") == nil {
-			r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
-		}
 	}
-	if r.StatusCode == 422 && c.sessionExpires != 0 && r.GetHeader("Min-SE") == nil {
+	if r.StatusCode == 422 && c.sessionExpires != 0 {
 		r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
 	}
 }
