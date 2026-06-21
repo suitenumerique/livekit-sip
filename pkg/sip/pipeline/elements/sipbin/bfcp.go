@@ -124,16 +124,28 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 		return nil
 	}
 
-	// if err := b.BfcpServer.SetProperty("floor-id", uint(b.FloorID)); err != nil {
-	// 	return fmt.Errorf("failed to set floor-id property on BFCP server: %w", err)
-	// }
-
 	if version := media.GetAttributeVal("bfcpver"); version != "" {
 		version, _, _ = strings.Cut(version, " ")
 		if v, err := strconv.Atoi(version); err == nil {
 			b.BfcpVersion = v
 		} else {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to parse BFCP version from media attribute: %v", err))
+		}
+	}
+
+	if setup := media.GetAttributeVal("setup"); setup != "" {
+		switch setup {
+		case "active", "actpass":
+		default:
+			return fmt.Errorf("Failed to initialize BFCP track: unsupported setup attribute value %q", setup)
+		}
+	}
+
+	if floorCtrl := media.GetAttributeVal("floorctrl"); floorCtrl != "" {
+		switch floorCtrl {
+		case "c-only", "c-s":
+		default:
+			return fmt.Errorf("Failed to initialize BFCP track: unsupported floorctrl attribute value %q", floorCtrl)
 		}
 	}
 
@@ -196,7 +208,7 @@ func (e *SipBin) makeBfcpMedia(bfcp *BfcpTrack) (*gstsdp.Media, error) {
 		return nil, fmt.Errorf("failed to add userid attribute to BFCP media: %v", ret)
 	}
 
-	if ret := media.AddAttribute("setup", "actpass"); ret != gstsdp.SDPResultOk {
+	if ret := media.AddAttribute("setup", "passive"); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to add setup attribute to BFCP media: %v", ret)
 	}
 	if ret := media.AddAttribute("connection", "new"); ret != gstsdp.SDPResultOk {
