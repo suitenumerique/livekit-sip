@@ -60,14 +60,13 @@ type CallHandler interface {
 }
 
 type MediaOrchestrator struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	log             logger.Logger
-	sipCallID       string
-	opts            *MediaOptions
-	handler         CallHandler
-	closed          atomic.Bool
-	reinvitePending atomic.Bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	log       logger.Logger
+	sipCallID string
+	opts      *MediaOptions
+	handler   CallHandler
+	closed    atomic.Bool
 
 	pipeline *pipeline.Pipeline
 
@@ -340,12 +339,6 @@ func (o *MediaOrchestrator) loopEvents() {
 	}
 }
 
-// ReInvitePending reports whether an outgoing re-INVITE is awaiting its
-// response.
-func (o *MediaOrchestrator) ReInvitePending() bool {
-	return o.reinvitePending.Load()
-}
-
 // abortOffer releases the pipeline negotiation state held by a failed
 // outgoing offer.
 func (o *MediaOrchestrator) abortOffer() {
@@ -355,9 +348,6 @@ func (o *MediaOrchestrator) abortOffer() {
 }
 
 func (o *MediaOrchestrator) handleSendOffer(offer string) error {
-	o.reinvitePending.Store(true)
-	defer o.reinvitePending.Store(false)
-
 	resp, err := o.handler.SendReInvite(o.ctx, []byte(offer))
 	if err != nil {
 		o.log.Errorw("re-INVITE failed", err)
