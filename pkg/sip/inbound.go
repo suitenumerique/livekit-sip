@@ -64,7 +64,6 @@ const (
 	authChallengeTimeout       = 30 * time.Second
 
 	// Session timer (RFC 4028).
-	sipSupportedTags = "timer"
 	sessionTimerSecs = 1800 // default Session-Expires we offer, in seconds
 	minSESecs        = 90   // Min-SE floor (RFC 4028 minimum)
 )
@@ -2013,37 +2012,27 @@ func (c *sipInbound) addSessionTimerHeaders(r *sip.Response) {
 	is2xx := r.StatusCode >= 200 && r.StatusCode < 300
 
 	if is2xx && (method == sip.INVITE || method == sip.UPDATE || method == sip.OPTIONS) {
-		if r.GetHeader("Allow") == nil {
-			r.AppendHeader(sip.HeaderClone(allowHeader))
+		if c.sessionExpires != 0 {
+			r.AppendHeader(sip.NewHeader("Require", "timer"))
 		}
-		if r.GetHeader("Supported") == nil {
-			r.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
-		}
+		r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 	if is2xx && (method == sip.INVITE || method == sip.UPDATE) && c.sessionExpires != 0 {
-		if r.GetHeader("Session-Expires") == nil {
-			r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
-		}
-		if r.GetHeader("Min-SE") == nil {
-			r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
-		}
+		r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
 	}
-	if r.StatusCode == 422 && c.sessionExpires != 0 && r.GetHeader("Min-SE") == nil {
+	if r.StatusCode == 422 && c.sessionExpires != 0 {
 		r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
 	}
 }
 
 func (c *sipInbound) addSessionTimerRequestHeaders(req *sip.Request) {
-	if req.GetHeader("Supported") == nil {
-		req.AppendHeader(sip.NewHeader("Supported", sipSupportedTags))
-	}
 	if c.sessionExpires != 0 {
-		if req.GetHeader("Session-Expires") == nil {
-			req.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
-		}
-		if req.GetHeader("Min-SE") == nil {
-			req.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
-		}
+		req.AppendHeader(sip.NewHeader("Require", "timer"))
+	}
+	req.AppendHeader(sip.NewHeader("Supported", "timer"))
+	if c.sessionExpires != 0 {
+		req.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
+		req.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
 	}
 }
 
@@ -2051,6 +2040,7 @@ func (c *sipInbound) handleTimerRefresh(req *sip.Request, tx sip.ServerTransacti
 	// Bodyless UPDATE: answer 200 OK and reset the session timer if one is armed.
 	r := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 	c.addSessionTimerHeaders(r)
+	r.AppendHeader(c.contact)
 	if err := tx.Respond(r); err != nil {
 		c.log.Errorw("failed to send 200 OK for UPDATE refresh", err)
 		return
@@ -2158,7 +2148,7 @@ func (c *sipInbound) Accept(ctx context.Context, sdpData []byte, headers map[str
 
 	// This will effectively redirect future SIP requests to this server instance (if host address is not LB).
 	r.AppendHeader(c.contact)
-
+	r.AppendHeader(sip.HeaderClone(allowHeader))
 	c.addExtraHeaders(r)
 
 	r.AppendHeader(&contentTypeHeaderSDP)
