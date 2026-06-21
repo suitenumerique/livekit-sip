@@ -66,6 +66,8 @@ const (
 	// Session timer (RFC 4028).
 	sessionTimerSecs = 1800 // default Session-Expires we offer, in seconds
 	minSESecs        = 90   // Min-SE floor (RFC 4028 minimum)
+
+	callTimeout = 2 * time.Minute
 )
 
 var allowHeader = sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, UPDATE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE")
@@ -1070,6 +1072,8 @@ func (c *inboundCall) waitForCallEnd(ctx context.Context, ackReceived <-chan str
 		case <-ackTimeout:
 			// Only warn, the other side still thinks the call is active, media may be flowing.
 			c.log().Warnw("Call accepted, but no ACK received", errNoACK)
+		case <-c.cc.callTimeout.C:
+			c.mediaTimeout(ctx)
 		}
 	}
 }
@@ -1639,8 +1643,9 @@ func (s *Server) newInbound(invite *sip.Request, inviteTx sip.ServerTransaction,
 		contact: &sip.ContactHeader{
 			Address: *contact.GetContactURI(),
 		},
-		cancelled: make(chan struct{}),
-		referDone: make(chan error), // Do not buffer the channel to avoid reading a result for an old request
+		cancelled:   make(chan struct{}),
+		referDone:   make(chan error), // Do not buffer the channel to avoid reading a result for an old request
+		callTimeout: time.NewTimer(callTimeout),
 	}
 	if h := invite.CSeq(); h != nil {
 		c.inviteCSeq = h.SeqNo
@@ -1681,6 +1686,8 @@ type sipInbound struct {
 	minSe          uint32
 	refresher      string
 	refreshTimer   *time.Timer
+
+	callTimeout *time.Timer
 }
 
 func (c *sipInbound) SetCall(call *inboundCall) {
@@ -1887,7 +1894,13 @@ func (c *sipInbound) accepted(ctx context.Context, inviteOK *sip.Response) {
 	go func() {
 		select {
 		case <-c.refreshTimer.C:
-			c.log.Warnw("session refresh timer expired, not closing call", nil)
+			c.callTimeout.Reset(callTimeout)
+			// c.log.Warnw("session refresh timer expired, closing call", nil)
+			// if c.call != nil {
+			// 	c.call.Close()
+			// } else {
+			// 	c.CloseWithStatus(ctx, sip.StatusOK, "Session Timer Expired")
+			// }
 		case <-ctx.Done():
 		}
 	}()
@@ -2273,6 +2286,10 @@ func (c *sipInbound) setCSeq(req *sip.Request) {
 	setCSeq(req, c.nextRequestCSeq)
 
 	c.nextRequestCSeq++
+}
+
+func (c *sipInbound) ResetRtpTimeout() {
+	c.callTimeout.Reset(callTimeout)
 }
 
 // sendReInvite sends a re-INVITE with the given SDP offer and waits for the response.

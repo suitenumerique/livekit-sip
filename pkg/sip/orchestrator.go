@@ -22,7 +22,8 @@ var (
 )
 
 const (
-	ScreenshareMSTreamID = 2
+	RtpMediaTimeout              = 30 * time.Second
+	RtpMediaTimeoutCheckInterval = 10 * time.Second
 )
 
 type MediaState int
@@ -55,6 +56,7 @@ func (ms MediaState) String() string {
 
 type CallHandler interface {
 	SendReInvite(ctx context.Context, offer []byte) (*sip.Response, error)
+	ResetRtpTimeout()
 }
 
 type MediaOrchestrator struct {
@@ -69,7 +71,10 @@ type MediaOrchestrator struct {
 
 	pipeline *pipeline.Pipeline
 
-	stats atomic.Pointer[pipeline.CallStats]
+	stats            atomic.Pointer[pipeline.CallStats]
+	totalRxBytes     int64
+	totalTxBytesTime time.Time
+	lastSr           time.Time
 
 	state MediaState
 	wg    sync.WaitGroup
@@ -125,10 +130,42 @@ func (o *MediaOrchestrator) init() error {
 	if err := o.pipeline.SetState(gst.StateReady); err != nil {
 		return fmt.Errorf("failed to set pipeline to ready state: %w", err)
 	}
+	o.rtpTimeout()
 
 	o.state = MediaStateOK
 
 	return nil
+}
+
+func (o *MediaOrchestrator) isRtpStalled() bool {
+	o.UpdateStats()
+	if o.stats.Load() == nil {
+		return false
+	}
+	if o.stats.Load().OnHold {
+		return false
+	}
+	if (o.totalTxBytesTime.IsZero() || time.Since(o.totalTxBytesTime) > RtpMediaTimeout) && (o.lastSr.IsZero() || time.Since(o.lastSr) > RtpMediaTimeout) {
+		return true
+	}
+	return false
+}
+
+func (o *MediaOrchestrator) rtpTimeout() {
+	ticker := time.NewTicker(RtpMediaTimeoutCheckInterval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-o.ctx.Done():
+				return
+			case <-ticker.C:
+				if !o.isRtpStalled() {
+					o.handler.ResetRtpTimeout()
+				}
+			}
+		}
+	}()
 }
 
 func (o *MediaOrchestrator) UpdateStats() {
@@ -140,6 +177,13 @@ func (o *MediaOrchestrator) UpdateStats() {
 		}
 		if stats == nil {
 			return
+		}
+		if stats.TotalRxBytes > o.totalRxBytes {
+			o.totalRxBytes = stats.TotalRxBytes
+			o.totalTxBytesTime = time.Now()
+		}
+		if stats.LastSR.After(o.lastSr) {
+			o.lastSr = stats.LastSR
 		}
 		o.stats.Store(stats)
 	}

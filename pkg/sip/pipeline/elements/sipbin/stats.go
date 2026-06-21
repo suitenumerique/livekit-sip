@@ -97,6 +97,8 @@ type ReceiverReport struct {
 
 func (e *SipBin) DumpStats(self *gst.Bin) *gst.Structure {
 	st := gst.NewStructure("call-stats")
+	totalRxBytes := uint64(0)
+	lastSr := uint64(0)
 
 	for i := range e.Tracks {
 		if i == 0 || e.Tracks[i] == nil {
@@ -112,6 +114,14 @@ func (e *SipBin) DumpStats(self *gst.Bin) *gst.Structure {
 		if stats == nil {
 			continue
 		}
+		for _, src := range stats.Sources {
+			if !src.Internal {
+				totalRxBytes += src.BytesReceived
+			}
+			if src.HaveSR && src.SRNTPTime > lastSr {
+				lastSr = src.SRNTPTime
+			}
+		}
 
 		if err := st.SetValue(kind.String(), glib.ArbitraryValue{Data: stats}); err != nil {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set stats structure for track source\nsource=%s\nerr=%v", kind, err))
@@ -124,6 +134,9 @@ func (e *SipBin) DumpStats(self *gst.Bin) *gst.Structure {
 		}
 	}
 
+	st.SetValue("total-rx-bytes", int64(totalRxBytes))
+	st.SetValue("last-sr", int64(lastSr))
+	st.SetValue("on-hold", e.onHold)
 	return st
 }
 

@@ -283,11 +283,11 @@ func (c *outboundCall) waitClose(ctx context.Context, tid traceid.ID) error {
 			// c.CloseWithReason(ctx, callDropped, term, livekit.DisconnectReason_CLIENT_INITIATED)
 			c.close(ctx, nil, callDropped, stats.ClientError("disconnected"), livekit.DisconnectReason_CLIENT_INITIATED)
 			return nil
-		// case <-c.media.Timeout():
-		// 	c.closeWithTimeout(ctx)
-		// 	err := psrpc.NewErrorf(psrpc.DeadlineExceeded, "media timeout")
-		// 	c.setErrStatus(ctx, err)
-		// 	return err
+		case <-c.cc.callTimeout.C:
+			c.closeWithTimeout(ctx)
+			err := psrpc.NewErrorf(psrpc.DeadlineExceeded, "media timeout")
+			c.setErrStatus(ctx, err)
+			return err
 		case <-c.Closed():
 			return nil
 		}
@@ -798,15 +798,16 @@ func (c *Client) newOutbound(log logger.Logger, id LocalTag, from, contact URI, 
 	}
 	fromHeader.Params.Add("tag", string(id))
 	return &sipOutbound{
-		log:        log,
-		c:          c,
-		id:         id,
-		callID:     guid.HashedID(string(id)),
-		from:       fromHeader,
-		contact:    contactHeader,
-		referDone:  make(chan error), // Do not buffer the channel to avoid reading a result for an old request
-		nextCSeq:   1,
-		getHeaders: getHeaders,
+		log:         log,
+		c:           c,
+		id:          id,
+		callID:      guid.HashedID(string(id)),
+		from:        fromHeader,
+		contact:     contactHeader,
+		referDone:   make(chan error), // Do not buffer the channel to avoid reading a result for an old request
+		nextCSeq:    1,
+		getHeaders:  getHeaders,
+		callTimeout: time.NewTimer(callTimeout),
 	}
 }
 
@@ -838,6 +839,8 @@ type sipOutbound struct {
 	refresher      string
 	refreshTimer   *time.Timer
 	timerCancel    context.CancelFunc
+
+	callTimeout *time.Timer
 }
 
 func (c *sipOutbound) From() sip.Uri {
@@ -1144,6 +1147,10 @@ func (c *sipOutbound) setCSeq(req *sip.Request) {
 	c.nextCSeq++
 }
 
+func (c *sipOutbound) ResetRtpTimeout() {
+	c.callTimeout.Reset(callTimeout)
+}
+
 func (c *sipOutbound) fillHeaders(headers map[string]string) map[string]string {
 	if c == nil {
 		return headers
@@ -1290,10 +1297,10 @@ func (c *sipOutbound) addSessionTimerHeaders(r *sip.Response) {
 	is2xx := r.StatusCode >= 200 && r.StatusCode < 300
 
 	if is2xx && (method == sip.INVITE || method == sip.UPDATE || method == sip.OPTIONS) {
-			r.AppendHeader(sip.NewHeader("Supported", "timer"))
+		r.AppendHeader(sip.NewHeader("Supported", "timer"))
 	}
 	if is2xx && (method == sip.INVITE || method == sip.UPDATE) && c.sessionExpires != 0 {
-			r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
+		r.AppendHeader(sip.NewHeader("Session-Expires", fmt.Sprintf("%d;refresher=%s", c.sessionExpires, c.refresher)))
 	}
 	if r.StatusCode == 422 && c.sessionExpires != 0 {
 		r.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprintf("%d", c.minSe)))
@@ -1487,12 +1494,13 @@ func (c *sipOutbound) accepted(ctx context.Context) {
 	go func() {
 		select {
 		case <-refreshTimer.C:
-			c.log.Warnw("session refresh timer expired, closing call", nil)
-			if oc := c.c.getActiveCall(c.id); oc != nil {
-				oc.CloseWithReason(ctx, callDropped, stats.ClientError("session-timer-expired"), livekit.DisconnectReason_CLIENT_INITIATED)
-			} else {
-				c.Close(ctx)
-			}
+			c.callTimeout.Reset(callTimeout)
+			// c.log.Warnw("session refresh timer expired, closing call", nil)
+			// if oc := c.c.getActiveCall(c.id); oc != nil {
+			// 	oc.CloseWithReason(ctx, callDropped, stats.ClientError("session-timer-expired"), livekit.DisconnectReason_CLIENT_INITIATED)
+			// } else {
+			// 	c.Close(ctx)
+			// }
 		case <-ctx.Done():
 		}
 	}()

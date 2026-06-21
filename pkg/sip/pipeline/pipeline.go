@@ -32,6 +32,9 @@ type CallStats struct {
 	CameraPtCaps      map[int]string
 	ScreenShare       *sipbin.RTPSessionStats
 	ScreenSharePtCaps map[int]string
+	TotalRxBytes      int64
+	LastSR            time.Time
+	OnHold            bool
 }
 
 type Pipeline struct {
@@ -190,7 +193,14 @@ func (p *Pipeline) getStats() (*CallStats, error) {
 		}
 		caps = nil
 	}
+	totalRxBytes, _ := structure.GetInt64("total-rx-bytes")
+	lastSr, _ := structure.GetInt64("last-sr")
+	stats.TotalRxBytes = totalRxBytes
+	if lastSr > 0 {
+		stats.LastSR = time.Unix(0, lastSr)
+	}
 
+	stats.OnHold, _ = structure.GetBool("on-hold")
 	p.pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received call stats update\nstats=%+v", stats))
 	p.stats.Store(stats)
 	return stats, nil

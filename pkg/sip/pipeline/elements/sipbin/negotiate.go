@@ -212,14 +212,10 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Generated answer SDP\nsdp=%s", answerData))
 
-	self.Log(CAT, gst.LevelDebug, "Emitting available media")
 	e.emitAvailableMedia(self)
-
-	self.Log(CAT, gst.LevelDebug, "Scheduling early reinvite if needed")
 	e.earlyReinvite(self)
-
-	self.Log(CAT, gst.LevelDebug, "Scheduling track cleanup for inactive tracks")
 	e.clearTracks(self)
+	e.checkHold(self)
 
 	self.Log(CAT, gst.LevelDebug, "Offer SDP processing complete")
 
@@ -732,4 +728,22 @@ func (e *SipBin) clearTracks(self *gst.Bin) {
 		}
 		wg.Wait()
 	}()
+}
+
+func (e *SipBin) checkHold(self *gst.Bin) {
+	onHold := true
+	for _, track := range e.Tracks {
+		if track != nil && (track.recv || track.send) {
+			onHold = false
+			break
+		}
+	}
+	if onHold != e.onHold {
+		if onHold {
+			self.Log(CAT, gst.LevelInfo, "Call is on hold")
+		} else {
+			self.Log(CAT, gst.LevelInfo, "Call is no longer on hold")
+		}
+	}
+	e.onHold = onHold
 }

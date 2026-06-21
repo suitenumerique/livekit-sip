@@ -45,6 +45,7 @@ type SipBin struct {
 	transactionID atomic.Uint64
 	pendingOffer  *pendingOffer
 	sdpVersion    uint64 // o= line version, incremented per generated SDP (RFC 3264 §8)
+	onHold        bool
 
 	wg sync.WaitGroup
 }

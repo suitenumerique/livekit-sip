@@ -50,10 +50,16 @@ func (o *MediaOrchestrator) Connect(conf *config.Config, rconf RoomConfig) error
 }
 
 func (o *MediaOrchestrator) Closed() <-chan struct{} {
+	if o == nil {
+		return nil
+	}
 	return o.pipeline.WebrtcIo.Closed()
 }
 
 func (o *MediaOrchestrator) Subscribed() <-chan struct{} {
+	if o == nil {
+		return nil
+	}
 	return o.pipeline.WebrtcIo.Connected()
 }
 
