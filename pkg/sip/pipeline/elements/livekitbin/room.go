@@ -6,12 +6,27 @@ import (
 	"time"
 
 	"github.com/go-gst/go-gst/gst"
+	protoCodecs "github.com/livekit/protocol/codecs"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
 	"github.com/pion/webrtc/v4"
 	"github.com/samber/lo"
 )
+
+func supportedCodecs(in []livekit.Codec) []livekit.Codec {
+	seen := make(map[webrtc.PayloadType]bool, len(in))
+	out := make([]livekit.Codec, 0, len(in))
+	for _, c := range in {
+		p := protoCodecs.ToWebrtcCodecParameters(&c) // protoCodecs "github.com/livekit/protocol/codecs"
+		if p.MimeType == "" || seen[p.PayloadType] {
+			continue // unmapped (e.g. G722) or PT already taken
+		}
+		seen[p.PayloadType] = true
+		out = append(out, c)
+	}
+	return out
+}
 
 func (e *LivekitBin) OnConnectSignal(instance *gst.Element) {
 	self := gst.ToGstBin(instance)
@@ -37,10 +52,18 @@ func (e *LivekitBin) OnConnectSignal(instance *gst.Element) {
 		return
 	}
 
+	codecs := lo.Map(append(AudioCodecMimeTypes, VideoCodecMimeTypes...), func(mimeType string, _ int) livekit.Codec {
+		return livekit.Codec{
+			Mime: mimeType,
+		}
+	})
+	codecs = supportedCodecs(codecs)
+
 	self.Log(CAT, gst.LevelInfo, "Connecting to LiveKit room...")
 	if err := e.room.JoinWithToken(e.wsURL, e.token,
 		lksdk.WithAutoSubscribe(false),
 		lksdk.WithExtraAttributes(e.defaultParticipantAttributes),
+		lksdk.WithCodecs(codecs),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to LiveKit room: %v", err))
 		self.Error("Error connecting to LiveKit room", err)

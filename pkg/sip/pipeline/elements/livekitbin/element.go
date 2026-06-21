@@ -26,6 +26,18 @@ func init() {
 const MAX_ACTIVE_PARTICIPANTS = 100
 const NbTracks = int(livekit.TrackSource_SCREEN_SHARE_AUDIO) + 1
 
+var AudioCodecMimeTypes = []string{
+	webrtc.MimeTypeOpus,
+	webrtc.MimeTypePCMU,
+	webrtc.MimeTypePCMA,
+}
+
+var VideoCodecMimeTypes = []string{
+	webrtc.MimeTypeH264,
+	webrtc.MimeTypeVP8,
+	webrtc.MimeTypeVP9,
+}
+
 type config struct {
 	wsURL                        string
 	token                        string
