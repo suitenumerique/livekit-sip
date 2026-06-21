@@ -1326,7 +1326,9 @@ func (c *inboundCall) close(ctx context.Context, status CallStatus, t stats.Term
 	// attributes_to_headers mapping in the setHeaders callback.
 	// See: https://github.com/livekit/sip/issues/404
 	c.cc.CloseWithStatus(ctx, sipCode, sipStatus)
+	log.Debugw("Closing media orchestrator")
 	c.closeMedia()
+	log.Debugw("Media orchestrator closed")
 	if callDurFn := c.callDur; callDurFn != nil {
 		callDurFn()
 	}
