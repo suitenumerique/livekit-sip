@@ -84,16 +84,6 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 		})
 	}
 
-	// pub, err := e.room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{
-	// 	Name:   fmt.Sprintf("%s_%s", e.room.LocalParticipant.Identity(), kind.String()),
-	// 	Source: kind,
-	// })
-	// if err != nil {
-	// 	return fmt.Errorf("failed to create sink track: %w", err)
-	// }
-
-	// self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Published camera track with SID %s", pub.SID()))
-
 	queue, err := gst.NewElementWithProperties("queue", map[string]interface{}{})
 	if err != nil {
 		return fmt.Errorf("failed to create track queue element: %w", err)
@@ -143,7 +133,7 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 func (e *LivekitBin) onRtpBinPadAddedSendRtp(self *gst.Bin, pad *gst.Pad, pname string) {
 	// sync operation so lock is already held
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Publishing track\npad=%s", pname))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Publishing track\npad=%s", pname))
 
 	var session int
 	_, err := fmt.Sscanf(pname, "send_rtp_src_%d", &session)
@@ -170,7 +160,7 @@ func (e *LivekitBin) onRtpBinPadAddedSendRtp(self *gst.Bin, pad *gst.Pad, pname 
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Added sink track\npad=%s", pname))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Added sink track\npad=%s", pname))
 }
 
 func (r *LivekitBinRtcp) Init(e *LivekitBin, self *gst.Bin) error {
@@ -310,7 +300,7 @@ func (e *LivekitBin) requestNewPadSendRtp(instance *gst.Element, templ *gst.PadT
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Forwarding publish track\nsession=%d", session))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Forwarding publish track\nsession=%d", session))
 
 	pub = &LivekitBinPublication{}
 	var err error
@@ -347,7 +337,7 @@ func (e *LivekitBin) requestNewPadSendRtp(instance *gst.Element, templ *gst.PadT
 			self.Error(fmt.Sprintf("Error linking pad for track source %s", kind.String()), err)
 			return nil
 		}
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Linked pad for track source immediately since room is already joined\nsource=%s", kind.String()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Linked pad for track source immediately since room is already joined\nsource=%s", kind.String()))
 	}
 
 	class := gst.ToElementClass(self.Class())
@@ -370,7 +360,7 @@ func (e *LivekitBin) requestNewPadSendRtp(instance *gst.Element, templ *gst.PadT
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created ghost pad for requested pad\npad=%s", name))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Created ghost pad for requested pad\npad=%s", name))
 
 	return gpad.Pad
 }
@@ -412,10 +402,10 @@ func (e *LivekitBin) deferLinkPadSendRtp(kind livekit.TrackSource) {
 	if pub.probeID != 0 {
 		pub.FormatFilter.GetStaticPad("sink").RemoveProbe(pub.probeID)
 		pub.probeID = 0
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Removed buffer drop probe after linking pad\nsource=%s", kind.String()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Removed buffer drop probe after linking pad\nsource=%s", kind.String()))
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Linked pad for track source after room joined\nsource=%s", kind.String()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Linked pad for track source after room joined\nsource=%s", kind.String()))
 }
 
 func (e *LivekitBin) linkPadSendRtp(self *gst.Bin, pub *LivekitBinPublication, kind livekit.TrackSource) error {
@@ -580,7 +570,7 @@ func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remote
 		self.Error(fmt.Sprintf("Error linking source pad to sink funnel for track %s", track.ID()), fmt.Errorf("link error: %v", ret))
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Linked source pad to sink funnel\ntrack=%s", track.ID()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Linked source pad to sink funnel\ntrack=%s", track.ID()))
 
 	if ret := element.GetStaticPad("src_rtcp").Link(funnel.RtcpFunnel.GetRequestPad(fmt.Sprintf("sink_%d", track.SSRC()))); ret != gst.PadLinkOK {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error linking RTCP source pad to sink funnel for track\ntrack=%s\nret=%v", track.ID(), ret))
@@ -603,7 +593,7 @@ func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remote
 	e.tracks[pub.SID()] = srcTrack
 	e.sidBySsrc[uint32(track.SSRC())] = pub.SID()
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Linked RTCP source pad to sink funnel\ntrack=%s", track.ID()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Linked RTCP source pad to sink funnel\ntrack=%s", track.ID()))
 }
 
 func (e *LivekitBin) onRtpBinPadAddedRecvRtp(self *gst.Bin, pad *gst.Pad, pname string) {
@@ -658,7 +648,7 @@ func (e *LivekitBin) onRtpBinPadAddedRecvRtp(self *gst.Bin, pad *gst.Pad, pname 
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("new track\npad=%s", pname))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("new track\npad=%s", pname))
 }
 
 func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -845,22 +835,7 @@ func (e *LivekitBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 		e.RtpBin.ReleaseRequestPad(pad)
 	}
 
-	// sid := ""
-	// if e.room.LocalParticipant != nil {
-	// 	tp := e.room.LocalParticipant.GetTrackPublication(kind)
-	// 	if tp != nil {
-	// 		sid = tp.SID()
-	// 	}
-	// }
-	// if sid != "" {
-	// 	if err := e.room.LocalParticipant.UnpublishTrack(sid); err != nil {
-	// 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unpublish track for track source %s when releasing pad %s: %v", kind.String(), gpad.GetName(), err))
-	// 	}
-	// } else {
-	// 	self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Publication SID is empty for track source %s when releasing pad %s, skipping unpublish: sid=%q", kind.String(), gpad.GetName(), sid))
-	// }
-
 	e.publications[kind] = nil
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released and cleaned up resources for track source after pad was released\nsource=%s\npad=%s", kind.String(), gpad.GetName()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Released and cleaned up resources for track source after pad was released\nsource=%s\npad=%s", kind.String(), gpad.GetName()))
 }

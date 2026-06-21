@@ -273,9 +273,6 @@ func (e *SipBin) onRtpBinPadRemovedRecvRtpSrc(self *gst.Bin, pad *gst.Pad) {
 }
 
 func (e *SipBin) onRtpBinPadRemovedSendRtpSrc(self *gst.Bin, pad *gst.Pad) {
-	// e.mu.Lock()
-	// defer e.mu.Unlock()
-
 	var session int
 	if _, err := fmt.Sscanf(pad.GetName(), "send_rtp_src_%d", &session); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Pad removed from rtpbin, but failed to parse session number\npad=%s\nerr=%v", pad.GetName(), err))
@@ -297,11 +294,5 @@ func (e *SipBin) onRtpBinPadRemovedSendRtpSrc(self *gst.Bin, pad *gst.Pad) {
 		return
 	}
 
-	// if err := e.CleanupTrack(self, ti); err != nil {
-	// 	self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to cleanup track for track source %d after pad %s removed from rtpbin: %v", kind, pad.GetName(), err))
-	// 	self.Error(fmt.Sprintf("Failed to cleanup track for track source %d after pad %s removed from rtpbin", kind, pad.GetName()), err)
-	// 	return
-	// }
-
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Pad removed from rtpbin, cleaned up track for track source\npad=%s\nsource=%d", pad.GetName(), kind))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Pad removed from rtpbin, cleaned up track for track source\npad=%s\nsource=%d", pad.GetName(), kind))
 }

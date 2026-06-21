@@ -587,12 +587,12 @@ func (e *SipBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 
 	switch kind {
 	case livekit.TrackSource_CAMERA:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for camera track\npad=%s", name))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Released RTP sink pad for camera track\npad=%s", name))
 	case livekit.TrackSource_SCREEN_SHARE:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for screen share track\npad=%s", name))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Released RTP sink pad for screen share track\npad=%s", name))
 	case livekit.TrackSource_MICROPHONE:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for microphone track\npad=%s", name))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Released RTP sink pad for microphone track\npad=%s", name))
 	case livekit.TrackSource_SCREEN_SHARE_AUDIO:
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released RTP sink pad for screen share audio track\npad=%s", name))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Released RTP sink pad for screen share audio track\npad=%s", name))
 	}
 }

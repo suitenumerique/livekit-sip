@@ -196,7 +196,7 @@ func (s *SrcTrack) stop(self *gst.Bin) gst.StateChangeReturn {
 		self.Log(CAT, gst.LevelWarning, "Timeout waiting for SendRtcpBye to complete")
 	}
 
-	self.Log(CAT, gst.LevelInfo, "Stopped SrcTrack element and sent RTCP BYE")
+	self.Log(CAT, gst.LevelDebug, "Stopped SrcTrack element and sent RTCP BYE")
 
 	return gst.StateChangeSuccess
 }

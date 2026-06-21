@@ -121,17 +121,17 @@ func roomWaitConnected(room *lksdk.Room) error {
 
 func (e *LivekitBin) Close() {
 	self := gst.ToGstBin(e.self.Get())
-	if self == nil || self.Instance() == nil {
+	if self == nil || self.Instance() == nil || e.Is(RoomStateClosed) {
 		return
 	}
-
-	self.Log(CAT, gst.LevelInfo, "Closing LivekitBin and disconnecting from LiveKit room")
 
 	e.Set(RoomStateClosed)
 
 	if e.room == nil {
 		return
 	}
+
+	self.Log(CAT, gst.LevelInfo, "Closing LivekitBin and disconnecting from LiveKit room")
 
 	if e.room.ConnectionState() != lksdk.ConnectionStateDisconnected {
 		e.room.Disconnect()

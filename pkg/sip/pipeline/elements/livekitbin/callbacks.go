@@ -18,7 +18,7 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 			if self == nil || self.Instance() == nil {
 				return
 			}
-			self.Log(CAT, gst.LevelInfo, "Disconnected from LiveKit room, closing LivekitBin")
+			self.Log(CAT, gst.LevelDebug, "Disconnected from LiveKit room, closing LivekitBin")
 			e.livekitMu.Lock()
 			if _, err := glib.IdleAdd(func() {
 				defer e.livekitMu.Unlock()

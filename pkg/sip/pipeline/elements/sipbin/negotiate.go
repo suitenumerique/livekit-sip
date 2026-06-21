@@ -81,7 +81,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 						continue
 					}
 					medias[i] = localMedia
-					self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Reusing existing track for duplicate media index\nmedia=%d\ncaps=%s", i, e.Tracks[kind].Caps.String()))
+					self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Reusing existing track for media index\nmedia=%d\ncaps=%s", i, e.Tracks[kind].Caps.String()))
 					continue
 				}
 			}

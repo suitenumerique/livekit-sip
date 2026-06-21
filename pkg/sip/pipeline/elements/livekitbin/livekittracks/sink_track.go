@@ -217,11 +217,11 @@ func (s *SinkTrack) Event(self *base.GstBaseSink, event *gst.Event) bool {
 		structure := event.GetStructure()
 		switch structure.Name() {
 		case sipbin.EventOOBStreamOff:
-			self.Log(CAT, gst.LevelInfo, "Received OOB Stream Off event, stopping track")
+			self.Log(CAT, gst.LevelDebug, "Received OOB Stream Off event, stopping track")
 			s.unPublish(self)
 			return true
 		case sipbin.EventOOBStreamOn:
-			self.Log(CAT, gst.LevelInfo, "Received OOB Stream On event, starting track")
+			self.Log(CAT, gst.LevelDebug, "Received OOB Stream On event, starting track")
 			s.publish(self)
 			return true
 		}

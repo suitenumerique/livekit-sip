@@ -171,7 +171,7 @@ func (s *SrcTrackRtp) Constructed(instance *glib.Object) {
 
 	s.unblock.Store(false)
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Constructed SrcTrackRtp\ntrack=%s\nparticipant=%s", s.Track.ID(), s.Rp.Identity()))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Constructed SrcTrackRtp\ntrack=%s\nparticipant=%s", s.Track.ID(), s.Rp.Identity()))
 }
 
 func (s *SrcTrackRtp) SetCaps(self *base.GstBaseSrc, caps *gst.Caps) bool {
@@ -223,7 +223,7 @@ func (s *SrcTrackRtp) Stop(self *base.GstBaseSrc) bool {
 
 func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, buffer *gst.Buffer) gst.FlowReturn {
 	if s.unblock.Load() {
-		self.Log(CAT, gst.LevelInfo, "Fill called but unblock is set, returning EOS")
+		self.Log(CAT, gst.LevelDebug, "Fill called but unblock is set, returning EOS")
 		return gst.FlowFlushing
 	}
 
@@ -235,7 +235,7 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 
 	n, _, err := s.Track.Read(data)
 	if s.unblock.Load() {
-		self.Log(CAT, gst.LevelInfo, "Fill unblocked, returning Flushing")
+		self.Log(CAT, gst.LevelDebug, "Fill unblocked, returning Flushing")
 		return gst.FlowFlushing
 	}
 	if err != nil {
@@ -260,7 +260,7 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 }
 
 func (s *SrcTrackRtp) Unlock(self *base.GstBaseSrc) bool {
-	self.Log(CAT, gst.LevelInfo, "SrcTrackRtp Unlock called, unblocking Fill and sending EOS")
+	self.Log(CAT, gst.LevelDebug, "SrcTrackRtp Unlock called, unblocking Fill and sending EOS")
 
 	s.unblock.Store(true)
 
@@ -274,7 +274,7 @@ func (s *SrcTrackRtp) Unlock(self *base.GstBaseSrc) bool {
 }
 
 func (s *SrcTrackRtp) UnlockStop(self *base.GstBaseSrc) bool {
-	self.Log(CAT, gst.LevelInfo, "SrcTrackRtp UnlockStop called")
+	self.Log(CAT, gst.LevelDebug, "SrcTrackRtp UnlockStop called")
 	s.unblock.Store(false)
 	if err := s.Track.SetReadDeadline(time.Time{}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to reset read deadline on track\nerr=%v", err))
