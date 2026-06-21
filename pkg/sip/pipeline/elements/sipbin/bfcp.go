@@ -242,29 +242,34 @@ func (e *SipBin) CleanupBfcp(self *gst.Bin, bfcp *BfcpTrack) error {
 	return nil
 }
 
-func (e *SipBin) bfcpMediaAddStreams(medias []*gstsdp.Media) error {
+func (e *SipBin) bfcpMediaAddStreams(self *gst.Bin, medias []*gstsdp.Media) error {
 	if e.Bfcp == nil || e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx] == nil {
 		return nil
 	}
 
+	label := strconv.FormatUint(uint64(livekit.TrackSource_SCREEN_SHARE), 10)
+
 	screenshare := e.Tracks[livekit.TrackSource_SCREEN_SHARE]
 	if screenshare != nil && screenshare.Idx < len(medias) && medias[screenshare.Idx] != nil {
-		label := strconv.Itoa(screenshare.Idx)
-		if screenshare.Label != "" {
-			label = screenshare.Label
-		}
-		if err := e.mediaAddBfcpLabel(medias[e.Bfcp.Idx], medias[screenshare.Idx], label); err != nil {
+		if err := e.mediaAddBfcpLabel(self, medias[e.Bfcp.Idx], medias[screenshare.Idx], label); err != nil {
 			return fmt.Errorf("failed to add BFCP label for screenshare: %w", err)
+		}
+	} else {
+		if err := e.mediaAddBfcpLabel(self, medias[e.Bfcp.Idx], nil, label); err != nil {
+			return fmt.Errorf("failed to add BFCP label: %w", err)
 		}
 	}
 
 	return nil
 }
 
-func (e *SipBin) mediaAddBfcpLabel(bfcpMedia *gstsdp.Media, media *gstsdp.Media, label string) error {
+func (e *SipBin) mediaAddBfcpLabel(self *gst.Bin, bfcpMedia *gstsdp.Media, media *gstsdp.Media, label string) error {
 	floorID := fmt.Sprintf("%d mstrm:%s", e.Bfcp.FloorID, label)
 	if ret := bfcpMedia.AddAttribute("floorid", floorID); ret != gstsdp.SDPResultOk {
 		return fmt.Errorf("failed to add floorid attribute to BFCP media: %v", ret)
+	}
+	if media == nil {
+		return nil
 	}
 	for i := 0; ; i += 1 {
 		if l := media.GetAttributeValN("label", i); l == "" {

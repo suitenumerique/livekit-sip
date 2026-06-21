@@ -20,7 +20,6 @@ type SipTrack struct {
 	recv        bool
 	send        bool
 	Proto       string
-	Label       string
 	Caps        *gst.Caps
 	rtpConn     *net.UDPConn
 	rtcpConn    *net.UDPConn
@@ -184,10 +183,6 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	}
 	if conn == nil {
 		return fmt.Errorf("no connection information found in SDP for media index %d", t.Idx)
-	}
-
-	if label := media.GetAttributeVal("label"); label != "" {
-		t.Label = label
 	}
 
 	t.Caps = caps

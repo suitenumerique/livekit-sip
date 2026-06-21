@@ -393,12 +393,6 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 		return nil, fmt.Errorf("failed to set proto on media: %v", ret)
 	}
 
-	if track.Label != "" {
-		if ret := media.AddAttribute("label", track.Label); ret != gstsdp.SDPResultOk {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add label attribute to media: %v", ret))
-		}
-	}
-
 	switch track.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
 		if ret := media.AddAttribute("rtcp-fb", "* nack pli"); ret != gstsdp.SDPResultOk {

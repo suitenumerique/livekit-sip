@@ -146,7 +146,7 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 		medias[i] = nil
 	}
 
-	if err := e.bfcpMediaAddStreams(medias); err != nil {
+	if err := e.bfcpMediaAddStreams(self, medias); err != nil {
 		return nil, fmt.Errorf("failed to add BFCP streams: %w", err)
 	}
 
@@ -453,7 +453,7 @@ func (e *SipBin) buildOfferSdp(self *gst.Bin) ([]byte, error) {
 		e.Medias = append(e.Medias, bfcpMedia)
 	}
 
-	if err := e.bfcpMediaAddStreams(e.Medias); err != nil {
+	if err := e.bfcpMediaAddStreams(self, e.Medias); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer: %v", err))
 		return nil, fmt.Errorf("failed to add BFCP streams to offer: %w", err)
 	}
@@ -629,7 +629,7 @@ func (e *SipBin) earlyReinvite(self *gst.Bin) {
 		e.Medias = append(e.Medias, screenshareMedia)
 		e.pendingOffer = &pendingOffer{prevMediasLen: prevMediasLen}
 
-		if err := e.bfcpMediaAddStreams(e.Medias); err != nil {
+		if err := e.bfcpMediaAddStreams(self, e.Medias); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add BFCP streams to offer: %v", err))
 			e.rollbackPendingOffer(self)
 			return
