@@ -356,8 +356,15 @@ func (o *MediaOrchestrator) handleSendOffer(offer string) error {
 	}
 
 	if resp.StatusCode != 200 {
-		o.log.Errorw("re-INVITE rejected", nil, "status", resp.StatusCode)
 		o.abortOffer()
+		// 491 Request Pending = glare: the device sent its own re-INVITE
+		// concurrently with ours. Expected — our offer is rolled back and the
+		// device's re-INVITE is handled on the inbound path. Not an error.
+		if resp.StatusCode == 491 {
+			o.log.Infow("re-INVITE superseded by concurrent device re-INVITE (glare); rolled back", "status", resp.StatusCode)
+			return nil
+		}
+		o.log.Errorw("re-INVITE rejected", nil, "status", resp.StatusCode)
 		return fmt.Errorf("re-INVITE rejected with status %d", resp.StatusCode)
 	}
 
