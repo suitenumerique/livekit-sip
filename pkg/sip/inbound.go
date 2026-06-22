@@ -2208,7 +2208,13 @@ func (c *sipInbound) AcceptBye(req *sip.Request, tx sip.ServerTransaction) {
 // routedDestination is the in-dialog request destination derived from the
 // remote Contact / Record-Route headers.
 func (c *sipInbound) routedDestination() string {
-	dest := c.inviteOk.Destination()
+	var dest string
+	if c.inviteOk != nil {
+		dest = c.inviteOk.Destination()
+	}
+	if c.invite == nil {
+		return dest
+	}
 	if contact := c.invite.Contact(); contact != nil {
 		dest = ConvertURI(&contact.Address).GetDest()
 	}
