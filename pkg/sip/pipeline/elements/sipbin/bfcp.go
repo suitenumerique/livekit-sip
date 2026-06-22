@@ -142,9 +142,14 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 	}
 
 	if floorCtrl := media.GetAttributeVal("floorctrl"); floorCtrl != "" {
-		switch floorCtrl {
-		case "c-only", "c-s":
-		default:
+		clientCapable := false
+		for _, role := range strings.Fields(floorCtrl) {
+			if role == "c-only" || role == "c-s" {
+				clientCapable = true
+				break
+			}
+		}
+		if !clientCapable {
 			return fmt.Errorf("Failed to initialize BFCP track: unsupported floorctrl attribute value %q", floorCtrl)
 		}
 	}

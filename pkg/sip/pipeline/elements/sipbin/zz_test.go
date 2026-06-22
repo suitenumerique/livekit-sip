@@ -756,6 +756,35 @@ func TestNegotiate_TelephoneEvent_NoMatchWithoutFormat(t *testing.T) {
 	f.close()
 }
 
+// Multi-role floorctrl (Pexip sends "c-only s-only") is accepted: the device can act
+// as the floor client, livekit as the server.
+func TestNegotiate_BFCP_MultiRoleFloorctrl(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+
+	offer := makeSDP("192.168.1.1", "m=application 5000 UDP/BFCP *\r\na=floorctrl:c-only s-only\r\na=confid:1\r\na=userid:2\r\na=bfcpver:1")
+	answer := f.emitOffer(t, offer)
+	if answer == "" {
+		t.Fatal("expected non-empty answer")
+	}
+	f.emitAck(t)
+
+	msg := parseAnswer(t, answer)
+	if msg.MediasLen() != 1 {
+		t.Fatalf("expected 1 media in answer, got %d", msg.MediasLen())
+	}
+	media := msg.Media(0)
+	if media.GetPort() == 0 {
+		t.Error("expected BFCP port > 0 for multi-role floorctrl, got 0")
+	}
+	if media.GetProto() != "UDP/BFCP" {
+		t.Errorf("expected proto 'UDP/BFCP', got '%s'", media.GetProto())
+	}
+
+	f.close()
+}
+
 func TestNegotiate_BFCP(t *testing.T) {
 	defer testutils.AssertNoLeaks(t)
 

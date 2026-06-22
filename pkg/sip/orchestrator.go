@@ -349,6 +349,10 @@ func (o *MediaOrchestrator) abortOffer() {
 
 func (o *MediaOrchestrator) handleSendOffer(offer string) error {
 	resp, err := o.handler.SendReInvite(o.ctx, []byte(offer))
+	// Bail if the orchestrator was closed during SendReInvite.
+	if o.ctx.Err() != nil {
+		return nil
+	}
 	if err != nil {
 		o.log.Errorw("re-INVITE failed", err)
 		o.abortOffer()
