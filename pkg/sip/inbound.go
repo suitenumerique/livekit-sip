@@ -772,6 +772,72 @@ func (c *inboundCall) mediaTimeout(ctx context.Context) error {
 	return nil // logged as a warning in close
 }
 
+// sdpOriginUsername returns the username field of the SDP o= line (e.g. "X30"), or "" if
+// absent or anonymous ("-").
+func sdpOriginUsername(sdp []byte) string {
+	for _, line := range strings.Split(string(sdp), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "o=") {
+			continue
+		}
+		fields := strings.Fields(line[2:])
+		if len(fields) == 0 || fields[0] == "-" {
+			return ""
+		}
+		return fields[0]
+	}
+	return ""
+}
+
+// sipIdentitySlug keeps [a-zA-Z0-9] and collapses any other run to a single '-'.
+func sipIdentitySlug(s string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevDash = false
+		case !prevDash:
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// sipFallbackParticipant builds a unique identity (SDP o= model + Contact host + From host)
+// and a friendly name (model + host) for a device that supplied no From user. Returns an
+// empty identity when there is nothing to key on.
+func sipFallbackParticipant(req *sip.Request) (identity, name string) {
+	var lanIP, pubHost string
+	if from := req.From(); from != nil {
+		lanIP = from.Address.Host
+	}
+	if ct := req.Contact(); ct != nil {
+		pubHost = ct.Address.Host
+	}
+	model := sdpOriginUsername(req.Body())
+	var parts []string
+	for _, s := range []string{model, pubHost, lanIP} {
+		if sl := sipIdentitySlug(strings.ToLower(s)); sl != "" {
+			parts = append(parts, sl)
+		}
+	}
+	if len(parts) == 0 {
+		return "", ""
+	}
+	label := model
+	if label == "" {
+		label = "Phone"
+	}
+	host := lanIP
+	if host == "" {
+		host = pubHost
+	}
+	return "sip_" + strings.Join(parts, "_"), strings.TrimSpace(label + " " + host)
+}
+
 func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip.Request, trunkID string, conf *config.Config) error {
 	ctx, span := Tracer.Start(ctx, "sip.inbound.handleInvite")
 	defer span.End()
@@ -985,6 +1051,14 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		}
 	}
 	p := &disp.Room.Participant
+	// No From user: derive a unique identity/name from the SIP/SDP instead of the proxy IP.
+	if c.cc.From().User == "" {
+		if id, name := sipFallbackParticipant(req); id != "" {
+			p.Identity = id
+			p.Name = name
+			c.log().Infow("derived participant from SIP/SDP (no From user)", "participant", id, "participantName", name)
+		}
+	}
 	p.Attributes = HeadersToAttrs(p.Attributes, disp.HeadersToAttributes, disp.IncludeHeaders, c.cc, nil)
 	if disp.MaxCallDuration <= 0 || disp.MaxCallDuration > maxCallDuration {
 		disp.MaxCallDuration = maxCallDuration
