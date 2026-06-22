@@ -227,6 +227,15 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 var offerReadyTimeout = 5 * time.Second
 
 func (e *SipBin) OnOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error) {
+	// Concurrent incoming offer (glare): drop our pending outgoing offer and answer this one.
+	if e.transaction.TakeOverIfPending(TransactionPendingKindAnswer) {
+		e.mu.Lock()
+		e.transactionID.Add(1)
+		e.rollbackPendingOffer(self)
+		e.mu.Unlock()
+		self.Log(CAT, gst.LevelInfo, "Yielded pending outgoing offer to incoming device re-INVITE (glare)")
+	}
+
 	unlock, err := e.transaction.WaitReadyTimeout(offerReadyTimeout)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to wait for transaction to be ready\nerr=%v", err))
@@ -352,8 +361,10 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 func (e *SipBin) OnAnswerSdp(self *gst.Bin, answerData []byte) error {
 	unlock, err := e.transaction.Ack(TransactionPendingKindAnswer)
 	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to acknowledge transaction\nerr=%v", err))
-		return fmt.Errorf("failed to acknowledge transaction: %w", err)
+		// Ignore a stray/late answer with no matching pending transaction (e.g. an offer
+		// already yielded to a glare re-INVITE).
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Ignoring unexpected answer (no matching pending transaction)\nerr=%v", err))
+		return nil
 	}
 	defer unlock()
 

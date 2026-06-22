@@ -106,6 +106,20 @@ func (t *SipTransaction) Ack(kind TransactionPendingKind) (unlock func(), err er
 	}, nil
 }
 
+// TakeOverIfPending resets a transaction whose pending == kind to idle,
+// returning true if it did.
+func (t *SipTransaction) TakeOverIfPending(kind TransactionPendingKind) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || t.pending != kind {
+		return false
+	}
+	t.active = false
+	t.pending = TransactionPendingKindNone
+	t.cond.Broadcast()
+	return true
+}
+
 func (t *SipTransaction) GetPending() (pending TransactionPendingKind, unlock func()) {
 	t.mu.Lock()
 	pending = t.pending
