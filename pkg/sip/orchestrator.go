@@ -308,16 +308,19 @@ func (o *MediaOrchestrator) ackSDP(req *sip.Request, _ sip.ServerTransaction) er
 
 func (o *MediaOrchestrator) loopEvents() {
 	defer o.wg.Done()
+	// Resolve the channels once instead of dereferencing o.pipeline on each select iteration.
+	sendOfferCh := o.pipeline.SendOfferCh()
+	dtmfCh := o.pipeline.DTMF()
 	for {
 		select {
 		case <-o.ctx.Done():
 			o.close()
 			return
-		case offer := <-o.pipeline.SendOfferCh():
+		case offer := <-sendOfferCh:
 			if err := o.handleSendOffer(offer); err != nil {
 				o.log.Errorw("failed to handle send-offer-sdp", err)
 			}
-		case nb, ok := <-o.pipeline.DTMF():
+		case nb, ok := <-dtmfCh:
 			if !ok {
 				continue
 			}
