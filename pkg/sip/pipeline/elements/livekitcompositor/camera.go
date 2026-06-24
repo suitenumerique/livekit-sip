@@ -220,19 +220,35 @@ func (e *LivekitCompositor) releaseCameraSinkPad(self *gst.Bin, gpad *gst.GhostP
 }
 
 func (e *LivekitCompositor) findPadForParticipant(self *gst.Bin, sid string, kind livekit.TrackSource) (*gst.Pad, livekittracks.TrackSourceInfo, bool) {
-	info, ok := e.tracks[kind][sid]
-	if !ok {
+	if info, ok := e.tracks[kind][sid]; ok {
+		pname := fmt.Sprintf("sink_%d_%d_%d", kind, info.SSRC, info.PT)
+		if pad := self.GetStaticPad(pname); pad != nil {
+			return pad, info, true
+		}
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No pad for stored track source info, rescanning sink pads\nsid=%s\nsource=%s\nexpected_pad=%s", sid, kind.String(), pname))
+	}
+
+	pads, err := self.GetSinkPads()
+	if err != nil {
 		return nil, livekittracks.TrackSourceInfo{}, false
 	}
-
-	pname := fmt.Sprintf("sink_%d_%d_%d", kind, info.SSRC, info.PT)
-	pad := self.GetStaticPad(pname)
-	if pad == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No pad found for participant SID and track source\nsid=%s\nsource=%s\nexpected_pad=%s", sid, kind.String(), pname))
-		return nil, info, false
+	for _, pad := range pads {
+		var s, ssrc, pt int
+		if _, scanErr := fmt.Sscanf(pad.GetName(), "sink_%d_%d_%d", &s, &ssrc, &pt); scanErr != nil {
+			continue
+		}
+		if livekit.TrackSource(s) != kind {
+			continue
+		}
+		info, infoErr := livekittracks.PadGetTrackSourceInfo(pad)
+		if infoErr != nil || info.ParticipantSID != sid {
+			continue
+		}
+		e.tracks[kind][sid] = info
+		return pad, info, true
 	}
 
-	return pad, info, true
+	return nil, livekittracks.TrackSourceInfo{}, false
 }
 
 func (e *LivekitCompositor) applyCameraLayout(self *gst.Bin, layout []string) {

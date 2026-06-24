@@ -246,6 +246,7 @@ func (e *LivekitCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTempl
 			info.PT = uint(pt)
 		}
 		e.tracks[info.Source][info.ParticipantSID] = info
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Mapped track to participant from source info\nsid=%s\nsource=%d\nssrc=%d\npt=%d", info.ParticipantSID, info.Source, info.SSRC, info.PT))
 
 		if lo.Contains(e.currentLayout, info.ParticipantSID) {
 			e.applyCameraLayout(self, e.currentLayout)
@@ -311,7 +312,13 @@ func (e *LivekitCompositor) releaseSinkPad(self *gst.Bin, gpad *gst.GhostPad) {
 	}
 
 	if infoErr != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get track source info for released pad\nname=%s\nerr=%v", gpad.GetName(), infoErr))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get track source info for released pad, cleaning by pad name\nname=%s\nerr=%v", gpad.GetName(), infoErr))
+		for sid, ti := range e.tracks[kind] {
+			if int(ti.SSRC) == ssrc && int(ti.PT) == pt {
+				delete(e.tracks[kind], sid)
+				break
+			}
+		}
 		return
 	}
 
