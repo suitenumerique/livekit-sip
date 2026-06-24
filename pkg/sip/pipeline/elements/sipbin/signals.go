@@ -229,6 +229,20 @@ func (e *SipBin) onRtpBinPadAddedRecvRtpSrc(self *gst.Bin, pad *gst.Pad) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to activate ghost pad for new RTP source pad\npad=%s", pad.GetName()))
 		return
 	}
+
+	switch kind {
+	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
+		if ti := e.Tracks[kind]; ti != nil {
+			keyframeSSRC := uint32(ssrc)
+			gpad.Pad.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+				if ev := info.GetEvent(); ev != nil && ev.HasName("GstForceKeyUnit") {
+					ti.RequestKeyframe(self, keyframeSSRC)
+				}
+				return gst.PadProbeOK
+			})
+			ti.StartPeriodicKeyframe(self, keyframeSSRC)
+		}
+	}
 }
 
 func (e *SipBin) onRtpBinPadRemoved(self *gst.Bin, pad *gst.Pad) {

@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/go-gst/go-gst/gst/gstsdp"
 	"github.com/livekit/protocol/livekit"
+	"github.com/pion/rtcp"
 )
+
+const keyframeRequestSSRC uint32 = 0xCAFE
+
+const keyframePeriod = 2 * time.Second
 
 type SipTrack struct {
 	initialized bool
@@ -28,6 +34,14 @@ type SipTrack struct {
 	RtpSink     *gst.Element
 	RtcpSink    *gst.Element
 	RtpFilter   *gst.Element
+
+	deviceRtcpAddr  *net.UDPAddr
+	keyframeMu      sync.Mutex
+	lastKeyframeReq time.Time
+	firSeq          uint8
+	videoSSRC       uint32
+	keyframeStop    chan struct{}
+	keyframeStarted bool
 }
 
 func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, proto string) (*SipTrack, error) {
@@ -207,6 +221,12 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	}
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("track remote media address resolved\ntrack=%d\nkind=%d\naddr=%s\nrtp=%d\nrtcp=%d\nsdp_addrtype=%s\nsdp_address=%s", t.Idx, t.Kind, host, media.GetPort(), rtcpPort, conn.Addrtype(), conn.Address()))
 
+	if addr, raErr := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(int(rtcpPort)))); raErr == nil {
+		t.deviceRtcpAddr = addr
+	} else {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to resolve device RTCP address for keyframe requests\nhost=%s\nrtcp=%d\nerr=%v", host, rtcpPort, raErr))
+	}
+
 	if err := errors.Join(
 		t.RtpSink.SetProperty("host", host),
 		t.RtpSink.SetProperty("port", int(media.GetPort())),
@@ -266,6 +286,84 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	return nil
 }
 
+func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
+	if t.rtcpConn == nil || t.deviceRtcpAddr == nil {
+		return
+	}
+
+	t.keyframeMu.Lock()
+	now := time.Now()
+	if !t.lastKeyframeReq.IsZero() && now.Sub(t.lastKeyframeReq) < time.Second {
+		t.keyframeMu.Unlock()
+		return
+	}
+	t.lastKeyframeReq = now
+	t.firSeq++
+	firSeq := t.firSeq
+	t.keyframeMu.Unlock()
+
+	raw, err := rtcp.Marshal([]rtcp.Packet{
+		&rtcp.PictureLossIndication{SenderSSRC: keyframeRequestSSRC, MediaSSRC: ssrc},
+		&rtcp.FullIntraRequest{
+			SenderSSRC: keyframeRequestSSRC,
+			MediaSSRC:  ssrc,
+			FIR:        []rtcp.FIREntry{{SSRC: ssrc, SequenceNumber: firSeq}},
+		},
+	})
+	if err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to marshal RTCP keyframe request\nerr=%v", err))
+		return
+	}
+
+	if _, err := t.rtcpConn.WriteToUDP(raw, t.deviceRtcpAddr); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to send RTCP keyframe request to device\nerr=%v", err))
+		return
+	}
+
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sent RTCP PLI/FIR keyframe request to device\nssrc=%d\nrtcp_addr=%s", ssrc, t.deviceRtcpAddr))
+}
+
+func (t *SipTrack) StartPeriodicKeyframe(self *gst.Bin, ssrc uint32) {
+	t.keyframeMu.Lock()
+	t.videoSSRC = ssrc
+	if t.keyframeStarted {
+		t.keyframeMu.Unlock()
+		return
+	}
+	t.keyframeStarted = true
+	stop := make(chan struct{})
+	t.keyframeStop = stop
+	t.keyframeMu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(keyframePeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				t.keyframeMu.Lock()
+				ssrc := t.videoSSRC
+				t.keyframeMu.Unlock()
+				if ssrc != 0 {
+					t.RequestKeyframe(self, ssrc)
+				}
+			}
+		}
+	}()
+}
+
+func (t *SipTrack) stopPeriodicKeyframe() {
+	t.keyframeMu.Lock()
+	if t.keyframeStarted && t.keyframeStop != nil {
+		close(t.keyframeStop)
+		t.keyframeStop = nil
+		t.keyframeStarted = false
+	}
+	t.keyframeMu.Unlock()
+}
+
 func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
 	t.Caps = caps
 	if err := t.RtpFilter.SetProperty("caps", caps); err != nil {
@@ -275,6 +373,8 @@ func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
 }
 
 func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
+	track.stopPeriodicKeyframe()
+
 	var errs []error
 	for _, elem := range [](*gst.Element){track.RtpSrc, track.RtcpSrc, track.RtpSink, track.RtcpSink, track.RtpFilter} {
 		if elem == nil {
