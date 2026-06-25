@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -100,6 +101,7 @@ func (e *Vp8Video) Constructed(instance *glib.Object) {
 		self.Error("Failed to create vp8dec element", err)
 		return
 	}
+	keyframe.RequestOnBadBuffer(e.Vp8Dec.GetStaticPad("src"))
 
 	e.VideoScale, err = gst.NewElementWithProperties("videoscale", map[string]interface{}{
 		"add-borders": true,

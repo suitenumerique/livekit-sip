@@ -1,69 +1,11 @@
 package h264video
 
-/*
-#cgo pkg-config: gstreamer-1.0 gstreamer-video-1.0
-#include <gst/gst.h>
-#include <gst/video/video.h>
-
-typedef struct {
-    GstClockTime last_request;   // monotonic ns; GST_CLOCK_TIME_NONE = never
-    GstClockTime last_pts;       // PTS of previous output buffer
-} h264_video_probe_state;
-
-static GstPadProbeReturn
-h264_video_probe_bad_buffers(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
-    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
-    if (G_UNLIKELY(buf == NULL))
-        return GST_PAD_PROBE_OK;
-
-    h264_video_probe_state *st = (h264_video_probe_state *)user_data;
-
-    guint flags = 0;
-    if (GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_DISCONT))
-        flags |= 1;
-    if (GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_CORRUPTED))
-        flags |= 2;
-
-    GstClockTime pts = GST_BUFFER_PTS(buf);
-    if (GST_CLOCK_TIME_IS_VALID(pts) &&
-        GST_CLOCK_TIME_IS_VALID(st->last_pts) &&
-        pts <= st->last_pts) {
-        flags |= 4;
-    }
-    if (GST_CLOCK_TIME_IS_VALID(pts))
-        st->last_pts = pts;
-
-    if (G_LIKELY(flags == 0))
-        return GST_PAD_PROBE_OK;
-
-    GstClockTime now = gst_util_get_timestamp();
-    if (st->last_request == GST_CLOCK_TIME_NONE ||
-        now - st->last_request > 5 * GST_SECOND) {
-        gst_pad_send_event(pad,
-            gst_video_event_new_upstream_force_key_unit(
-                GST_CLOCK_TIME_NONE, TRUE, 0));
-        st->last_request = now;
-    }
-    return GST_PAD_PROBE_OK;
-}
-
-static void
-h264_video_add_probe_bad_buffers(GstPad *pad) {
-    h264_video_probe_state *st = g_new(h264_video_probe_state, 1);
-    st->last_request = GST_CLOCK_TIME_NONE;
-    st->last_pts     = GST_CLOCK_TIME_NONE;
-    gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER,
-        h264_video_probe_bad_buffers, st, g_free);
-}
-*/
-import "C"
-
 import (
 	"fmt"
-	"unsafe"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -175,7 +117,7 @@ func (e *H264Video) Constructed(instance *glib.Object) {
 		self.Error("Failed to create avdec_h264 element", err)
 		return
 	}
-	C.h264_video_add_probe_bad_buffers((*C.GstPad)(unsafe.Pointer(e.H264Dec.GetStaticPad("src").Instance())))
+	keyframe.RequestOnBadBuffer(e.H264Dec.GetStaticPad("src"))
 
 	e.VideoConvert, err = gst.NewElementWithProperties("videoconvert", map[string]interface{}{})
 	if err != nil {

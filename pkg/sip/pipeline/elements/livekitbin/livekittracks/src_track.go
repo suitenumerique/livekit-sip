@@ -3,6 +3,7 @@ package livekittracks
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
@@ -58,6 +59,9 @@ type SrcTrack struct {
 	Rp    *lksdk.RemoteParticipant
 
 	src *gst.Element
+
+	keyframeMu      sync.Mutex
+	lastKeyframeReq time.Time
 }
 
 func (*SrcTrack) New() glib.GoObjectSubclass {
@@ -126,10 +130,35 @@ func (s *SrcTrack) Constructed(instance *glib.Object) {
 	gsrcPad := gst.NewGhostPadFromTemplate("src", s.src.GetStaticPad("src"), class.GetPadTemplate("src"))
 	self.AddPad(gsrcPad.Pad)
 
+	gsrcPad.Pad.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		if ev := info.GetEvent(); ev != nil && ev.HasName("GstForceKeyUnit") {
+			s.requestKeyframe()
+		}
+		return gst.PadProbeOK
+	})
+
 	// rtcp
 	rtcpPad := gst.NewPadFromTemplate(class.GetPadTemplate("src_rtcp"), "src_rtcp")
 	rtcpPad.UseFixedCaps()
 	self.AddPad(rtcpPad)
+}
+
+func (s *SrcTrack) requestKeyframe() {
+	if s.Rp == nil || s.Track == nil {
+		return
+	}
+
+	s.keyframeMu.Lock()
+	now := time.Now()
+	if !s.lastKeyframeReq.IsZero() && now.Sub(s.lastKeyframeReq) < time.Second {
+		s.keyframeMu.Unlock()
+		return
+	}
+	s.lastKeyframeReq = now
+	s.keyframeMu.Unlock()
+
+	s.Rp.WritePLI(s.Track.SSRC())
+	CAT.Log(gst.LevelDebug, fmt.Sprintf("Requested keyframe (PLI) from participant\nparticipant=%s\nssrc=%d", s.Rp.Identity(), s.Track.SSRC()))
 }
 
 func (s *SrcTrack) open(self *gst.Bin) gst.StateChangeReturn {
