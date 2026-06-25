@@ -188,14 +188,17 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		if caps == nil || caps.IsEmpty() {
 			return
 		}
-		bitrateStr, err := caps.GetStructureAt(0).GetString("max-br")
-		if err != nil {
-			return
+		s := caps.GetStructureAt(0)
+		bitrate := 0
+		if v, err := s.GetString("max-br"); err == nil {
+			if n, convErr := strconv.Atoi(v); convErr == nil && n > 0 {
+				bitrate = n
+			}
 		}
-		bitrate, err := strconv.Atoi(bitrateStr)
-		if err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid max-br value in RTP codec filter sink caps\nerr=%v", err))
-			return
+		if v, err := s.GetString("max-bandwidth"); err == nil {
+			if n, convErr := strconv.Atoi(v); convErr == nil && n > 0 && (bitrate == 0 || n < bitrate) {
+				bitrate = n
+			}
 		}
 		if bitrate > 0 {
 			if err := e.X264Enc.SetProperty("bitrate", uint(bitrate)); err != nil {

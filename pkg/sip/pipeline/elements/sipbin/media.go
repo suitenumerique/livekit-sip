@@ -294,7 +294,28 @@ func mediaCapsRtcpFeedback(self *gst.Bin, caps *gst.Caps) *gst.Caps {
 	return caps
 }
 
+func mediaBandwidthKbps(media *gstsdp.Media) int {
+	tias, as := 0, 0
+	for i := 0; i < media.BandwidthsLen(); i++ {
+		bw := media.GetBandwidth(i)
+		if bw == nil {
+			continue
+		}
+		switch bw.BWType() {
+		case "TIAS":
+			tias = int(bw.Value() / 1000)
+		case "AS":
+			as = int(bw.Value())
+		}
+	}
+	if tias > 0 {
+		return tias
+	}
+	return as
+}
+
 func (e *SipBin) selectCapsForMedia(self *gst.Bin, media *gstsdp.Media, kind livekit.TrackSource) (*gst.Caps, error) {
+	bwKbps := mediaBandwidthKbps(media)
 	mediaCaps := make([]*gst.Caps, 0, media.FormatsLen())
 	for _, format := range media.Formats() {
 		pt, err := strconv.Atoi(format)
@@ -315,6 +336,12 @@ func (e *SipBin) selectCapsForMedia(self *gst.Bin, media *gstsdp.Media, kind liv
 			caps = mediaCapsRtcpFeedback(self, caps)
 		}
 		caps = mediaCapsFixBareFmtp(caps)
+
+		if bwKbps > 0 && (kind == livekit.TrackSource_CAMERA || kind == livekit.TrackSource_SCREEN_SHARE) {
+			if err := caps.GetStructureAt(0).SetString("max-bandwidth", strconv.Itoa(bwKbps)); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set max-bandwidth on caps\nerr=%v", err))
+			}
+		}
 
 		info := rtp.PayloadInfoForPt(uint8(pt))
 		if info != nil && info.PayloadType() < 96 {
