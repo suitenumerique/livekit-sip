@@ -410,7 +410,10 @@ func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
 
 	sendPad := self.GetStaticPad(fmt.Sprintf("send_rtp_sink_%d", int(t.Kind)))
 	if sendPad == nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No send_rtp_sink pad to forward link feedback\nkind=%d", t.Kind))
+		return
+	}
+	peer := sendPad.GetPeer()
+	if peer == nil {
 		return
 	}
 
@@ -421,7 +424,7 @@ func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
 	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
 		return
 	}
-	sendPad.SendEvent(gst.NewCustomEvent(gst.EventTypeCustomUpstream, st))
+	peer.SendEvent(gst.NewCustomEvent(gst.EventTypeCustomUpstream, st.Transfer()))
 }
 
 func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, hasFeedback bool) {
