@@ -392,7 +392,7 @@ func (t *SipTrack) installLinkFeedbackProbe(self *gst.Bin) {
 }
 
 func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
-	tmmbrKbps, fractionLost, hasFeedback := parseLinkFeedback(raw)
+	tmmbrKbps, fractionLost, rttMs, hasFeedback := parseLinkFeedback(raw)
 	if !hasFeedback {
 		return
 	}
@@ -406,7 +406,7 @@ func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
 	t.lastLinkFeedback = now
 	t.keyframeMu.Unlock()
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\ntmmbr_kbps=%d\nfraction_lost=%d", t.Kind, tmmbrKbps, fractionLost))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\ntmmbr_kbps=%d\nfraction_lost=%d\nrtt_ms=%d", t.Kind, tmmbrKbps, fractionLost, rttMs))
 
 	sendPad := self.GetStaticPad(fmt.Sprintf("send_rtp_sink_%d", int(t.Kind)))
 	if sendPad == nil {
@@ -424,10 +424,13 @@ func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
 	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
 		return
 	}
+	if err := st.SetValue("rtt-ms", rttMs); err != nil {
+		return
+	}
 	peer.SendEvent(gst.NewCustomEvent(gst.EventTypeCustomUpstream, st.Transfer()))
 }
 
-func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, hasFeedback bool) {
+func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, rttMs int, hasFeedback bool) {
 	for len(raw) >= 4 {
 		pt := raw[1]
 		length := int(binary.BigEndian.Uint16(raw[2:4]))
@@ -447,6 +450,11 @@ func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, hasFeedba
 			for i, off := 0, reportOff; i < rc && off+24 <= len(pkt); i, off = i+1, off+24 {
 				if fl := pkt[off+4]; fl > fractionLost {
 					fractionLost = fl
+				}
+				lsr := binary.BigEndian.Uint32(pkt[off+16 : off+20])
+				dlsr := binary.BigEndian.Uint32(pkt[off+20 : off+24])
+				if r := rttFromReport(lsr, dlsr); r > rttMs {
+					rttMs = r
 				}
 			}
 			hasFeedback = true
@@ -468,6 +476,21 @@ func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, hasFeedba
 		raw = raw[pktLen:]
 	}
 	return
+}
+
+func rttFromReport(lsr, dlsr uint32) int {
+	if lsr == 0 {
+		return 0
+	}
+	now := time.Now()
+	ntpSec := uint64(now.Unix()) + 2208988800
+	ntpFrac := uint64(now.Nanosecond()) << 32 / 1_000_000_000
+	compactNow := uint32(ntpSec<<16) | uint32(ntpFrac>>16)
+	delta := compactNow - lsr - dlsr
+	if delta > 20*65536 {
+		return 0
+	}
+	return int(uint64(delta) * 1000 / 65536)
 }
 
 func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {

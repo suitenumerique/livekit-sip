@@ -330,6 +330,7 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 	}
 	tmmbr := structIntField(st, "tmmbr-kbps")
 	loss := structIntField(st, "fraction-lost")
+	rtt := structIntField(st, "rtt-ms")
 
 	e.bitrateMu.Lock()
 	defer e.bitrateMu.Unlock()
@@ -353,8 +354,9 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 		ceiling = uint(tmmbr)
 	}
 
+	const rttHigh = 500
 	target := e.curBitrate
-	if loss > 5 {
+	if loss > 5 || rtt > rttHigh {
 		target = target * 85 / 100
 	} else {
 		target += target * 5 / 100
@@ -374,7 +376,7 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set adaptive x264enc bitrate\nerr=%v", err))
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nfraction_lost=%d", target, ceiling, tmmbr, loss))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nfraction_lost=%d\nrtt_ms=%d", target, ceiling, tmmbr, loss, rtt))
 }
 
 func structIntField(st *gst.Structure, key string) int {
