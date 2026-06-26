@@ -3,6 +3,8 @@ package videoh264
 import (
 	"fmt"
 	"strconv"
+	"sync"
+	"time"
 	"weak"
 
 	"github.com/go-gst/go-glib/glib"
@@ -46,6 +48,11 @@ type VideoH264 struct {
 	X264Enc        *gst.Element
 	H264RtpPayBin  *gst.Element
 	RtpCodecFilter *gst.Element
+
+	bitrateMu         sync.Mutex
+	maxBitrate        uint
+	curBitrate        uint
+	lastBitrateAdjust time.Time
 }
 
 func (e *VideoH264) New() glib.GoObjectSubclass {
@@ -201,6 +208,10 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 			}
 		}
 		if bitrate > 0 {
+			e.bitrateMu.Lock()
+			e.maxBitrate = uint(bitrate)
+			e.curBitrate = uint(bitrate)
+			e.bitrateMu.Unlock()
 			if err := e.X264Enc.SetProperty("bitrate", uint(bitrate)); err != nil {
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set x264enc bitrate\nerr=%v", err))
 				self.Error("Failed to set x264enc bitrate", err)
@@ -246,6 +257,20 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 
 	ghostSrc := gst.NewGhostPadFromTemplate("src", e.RtpCodecFilter.GetStaticPad("src"), elemClass.GetPadTemplate("src"))
 	self.AddPad(ghostSrc.Pad)
+
+	ghostSrc.Pad.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		ev := info.GetEvent()
+		if ev == nil || !ev.HasName("vopenia-link-feedback") {
+			return gst.PadProbeOK
+		}
+		self := gst.ToGstBin(wself.Get())
+		e := eweak.Value()
+		if self == nil || e == nil {
+			return gst.PadProbeOK
+		}
+		e.onLinkFeedback(self, ev.GetStructure())
+		return gst.PadProbeOK
+	})
 }
 
 func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Value) {
@@ -297,4 +322,78 @@ func (e *VideoH264) Finalize(instance *glib.Object) {
 	e.X264Enc = nil
 	e.H264RtpPayBin = nil
 	e.RtpCodecFilter = nil
+}
+
+func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
+	if st == nil {
+		return
+	}
+	tmmbr := structIntField(st, "tmmbr-kbps")
+	loss := structIntField(st, "fraction-lost")
+
+	e.bitrateMu.Lock()
+	defer e.bitrateMu.Unlock()
+
+	if e.maxBitrate == 0 {
+		return
+	}
+	if e.curBitrate == 0 {
+		e.curBitrate = e.maxBitrate
+	}
+
+	now := time.Now()
+	if !e.lastBitrateAdjust.IsZero() && now.Sub(e.lastBitrateAdjust) < time.Second {
+		return
+	}
+	e.lastBitrateAdjust = now
+
+	const floor = uint(300)
+	ceiling := e.maxBitrate
+	if tmmbr > 0 && uint(tmmbr) < ceiling {
+		ceiling = uint(tmmbr)
+	}
+
+	target := e.curBitrate
+	if loss > 5 {
+		target = target * 85 / 100
+	} else {
+		target += target * 5 / 100
+	}
+	if target > ceiling {
+		target = ceiling
+	}
+	if target < floor {
+		target = floor
+	}
+	if target == e.curBitrate {
+		return
+	}
+
+	e.curBitrate = target
+	if err := e.X264Enc.SetProperty("bitrate", target); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set adaptive x264enc bitrate\nerr=%v", err))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nfraction_lost=%d", target, ceiling, tmmbr, loss))
+}
+
+func structIntField(st *gst.Structure, key string) int {
+	v, err := st.GetValue(key)
+	if err != nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case int32:
+		return int(n)
+	case int64:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint32:
+		return int(n)
+	default:
+		return 0
+	}
 }

@@ -1,6 +1,7 @@
 package sipbin
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -42,6 +43,9 @@ type SipTrack struct {
 	videoSSRC       uint32
 	keyframeStop    chan struct{}
 	keyframeStarted bool
+
+	lastLinkFeedback time.Time
+	linkProbeStarted bool
 }
 
 func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, proto string) (*SipTrack, error) {
@@ -253,6 +257,14 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 		return fmt.Errorf("failed to link RTCP source to RTCP sink: %v", ret)
 	}
 
+	switch t.Kind {
+	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
+		if !t.linkProbeStarted {
+			t.linkProbeStarted = true
+			t.installLinkFeedbackProbe(self)
+		}
+	}
+
 	sendRtcpSrc := e.RtpBin.GetRequestPad(fmt.Sprintf("send_rtcp_src_%d", t.Kind))
 	if sendRtcpSrc == nil {
 		return fmt.Errorf("failed to get request pad for RTCP source")
@@ -362,6 +374,97 @@ func (t *SipTrack) stopPeriodicKeyframe() {
 		t.keyframeStarted = false
 	}
 	t.keyframeMu.Unlock()
+}
+
+func (t *SipTrack) installLinkFeedbackProbe(self *gst.Bin) {
+	pad := t.RtcpSrc.GetStaticPad("src")
+	if pad == nil {
+		return
+	}
+	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		buf := info.GetBuffer()
+		if buf == nil {
+			return gst.PadProbeOK
+		}
+		t.handleDeviceRtcp(self, buf.Bytes())
+		return gst.PadProbeOK
+	})
+}
+
+func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
+	tmmbrKbps, fractionLost, hasFeedback := parseLinkFeedback(raw)
+	if !hasFeedback {
+		return
+	}
+
+	t.keyframeMu.Lock()
+	now := time.Now()
+	if !t.lastLinkFeedback.IsZero() && now.Sub(t.lastLinkFeedback) < time.Second {
+		t.keyframeMu.Unlock()
+		return
+	}
+	t.lastLinkFeedback = now
+	t.keyframeMu.Unlock()
+
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\ntmmbr_kbps=%d\nfraction_lost=%d", t.Kind, tmmbrKbps, fractionLost))
+
+	sendPad := self.GetStaticPad(fmt.Sprintf("send_rtp_sink_%d", int(t.Kind)))
+	if sendPad == nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No send_rtp_sink pad to forward link feedback\nkind=%d", t.Kind))
+		return
+	}
+
+	st := gst.NewStructure("vopenia-link-feedback")
+	if err := st.SetValue("tmmbr-kbps", tmmbrKbps); err != nil {
+		return
+	}
+	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
+		return
+	}
+	sendPad.SendEvent(gst.NewCustomEvent(gst.EventTypeCustomUpstream, st))
+}
+
+func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, hasFeedback bool) {
+	for len(raw) >= 4 {
+		pt := raw[1]
+		length := int(binary.BigEndian.Uint16(raw[2:4]))
+		pktLen := (length + 1) * 4
+		if pktLen < 4 || pktLen > len(raw) {
+			break
+		}
+		pkt := raw[:pktLen]
+
+		switch pt {
+		case 200, 201:
+			reportOff := 8
+			if pt == 200 {
+				reportOff = 28
+			}
+			rc := int(pkt[0] & 0x1f)
+			for i, off := 0, reportOff; i < rc && off+24 <= len(pkt); i, off = i+1, off+24 {
+				if fl := pkt[off+4]; fl > fractionLost {
+					fractionLost = fl
+				}
+			}
+			hasFeedback = true
+		case 205:
+			if pkt[0]&0x1f == 3 && len(pkt) >= 20 {
+				for off := 12; off+8 <= len(pkt); off += 8 {
+					v := binary.BigEndian.Uint32(pkt[off+4 : off+8])
+					exp := (v >> 26) & 0x3f
+					mantissa := (v >> 9) & 0x1ffff
+					kbps := (int(mantissa) << exp) / 1000
+					if kbps > 0 && (tmmbrKbps == 0 || kbps < tmmbrKbps) {
+						tmmbrKbps = kbps
+					}
+				}
+				hasFeedback = true
+			}
+		}
+
+		raw = raw[pktLen:]
+	}
+	return
 }
 
 func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {

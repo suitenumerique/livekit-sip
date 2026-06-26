@@ -218,6 +218,9 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 	if ret := media.AddAttribute("rtcp-fb", "* ccm fir"); ret != gstsdp.SDPResultOk {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 	}
+	if ret := media.AddAttribute("rtcp-fb", "* ccm tmmbr"); ret != gstsdp.SDPResultOk {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
+	}
 
 	switch kind {
 	case livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
@@ -288,6 +291,11 @@ func mediaCapsRtcpFeedback(self *gst.Bin, caps *gst.Caps) *gst.Caps {
 		if !structure.HasField("rtcp-fb-ccm-fir") {
 			if err := structure.SetBool("rtcp-fb-ccm-fir", true); err != nil {
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set rtcp-fb-ccm-fir attribute on caps structure\nerr=%v", err))
+			}
+		}
+		if !structure.HasField("rtcp-fb-ccm-tmmbr") {
+			if err := structure.SetBool("rtcp-fb-ccm-tmmbr", true); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set rtcp-fb-ccm-tmmbr attribute on caps structure\nerr=%v", err))
 			}
 		}
 	}
@@ -426,6 +434,9 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 		}
 		if ret := media.AddAttribute("rtcp-fb", "* ccm fir"); ret != gstsdp.SDPResultOk {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
+		}
+		if ret := media.AddAttribute("rtcp-fb", "* ccm tmmbr"); ret != gstsdp.SDPResultOk {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add rtcp-fb attribute to media\nerr=%v", ret))
 		}
 	}
