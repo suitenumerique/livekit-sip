@@ -621,7 +621,23 @@ func (s *Server) onBye(log *slog.Logger, req *sip.Request, tx sip.ServerTransact
 		ok = s.sipUnhandled(req, tx)
 	}
 	if !ok {
-		s.log.Infow("BYE for non-existent call", "callID", tag)
+		sipCallID := ""
+		if h := req.CallID(); h != nil {
+			sipCallID = h.Value()
+		}
+		from := ""
+		if h := req.From(); h != nil {
+			from = h.Address.String()
+		}
+		to := ""
+		if h := req.To(); h != nil {
+			to = h.Address.String()
+		}
+		s.log.Warnw("BYE for non-existent call", nil,
+			"callID", tag,
+			"sipCallID", sipCallID,
+			"from", from,
+			"to", to)
 		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call does not exist", nil))
 	}
 }

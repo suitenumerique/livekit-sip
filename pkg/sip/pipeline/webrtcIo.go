@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"weak"
 
 	"github.com/frostbyte73/core"
@@ -15,9 +16,10 @@ import (
 
 func NewWebrtcIo(log logger.Logger, parent *Pipeline) *WebrtcIo {
 	return &WebrtcIo{
-		log:      log.WithComponent("webrtc_io"),
-		pipeline: parent,
-		hops:     make(map[string]*Hop),
+		log:         log.WithComponent("webrtc_io"),
+		pipeline:    parent,
+		hops:        make(map[string]*Hop),
+		lastRemoval: make(map[uint]time.Time),
 	}
 }
 
@@ -30,8 +32,9 @@ type WebrtcIo struct {
 
 	LivekitBin *gst.Element
 
-	hopMu sync.Mutex
-	hops  map[string]*Hop
+	hopMu       sync.Mutex
+	hops        map[string]*Hop
+	lastRemoval map[uint]time.Time
 }
 
 var _ GstChain = (*WebrtcIo)(nil)
@@ -199,6 +202,12 @@ func (wio *WebrtcIo) binPadAdded(_ *gst.Element, pad *gst.Pad) {
 	}
 
 	wio.log.Infow("Linked WebRTC RTP pad to IO Manager", "pad", padName, "session", session, "ssrc", ssrc, "payloadType", pt)
+
+	if removedAt, ok := wio.lastRemoval[ssrc]; ok {
+		delete(wio.lastRemoval, ssrc)
+		wio.log.Infow("WebRTC recv source re-linked after gap (same SSRC = source timeout/DTX, not unsubscribe)",
+			"session", session, "ssrc", ssrc, "gapMs", time.Since(removedAt).Milliseconds())
+	}
 }
 
 func (wio *WebrtcIo) binPadRemoved(_ *gst.Element, pad *gst.Pad) {
@@ -239,6 +248,7 @@ func (wio *WebrtcIo) binPadRemoved(_ *gst.Element, pad *gst.Pad) {
 	}
 	wio.hops[hopKey] = nil
 	delete(wio.hops, hopKey)
+	wio.lastRemoval[ssrc] = time.Now()
 
 	wio.log.Infow("Unlinked and removed hop for removed recv RTP src pad on rtpbin", "session", session, "ssrc", ssrc, "pt", pt)
 }
@@ -285,6 +295,7 @@ func (wio *WebrtcIo) Close() error {
 		}
 	}
 	wio.hops = make(map[string]*Hop)
+	wio.lastRemoval = make(map[uint]time.Time)
 
 	return nil
 }
