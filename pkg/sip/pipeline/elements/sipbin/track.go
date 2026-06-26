@@ -1,7 +1,6 @@
 package sipbin
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -44,8 +43,8 @@ type SipTrack struct {
 	keyframeStop    chan struct{}
 	keyframeStarted bool
 
-	lastLinkFeedback time.Time
-	linkProbeStarted bool
+	linkFeedbackStop    chan struct{}
+	linkFeedbackStarted bool
 }
 
 func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, proto string) (*SipTrack, error) {
@@ -259,10 +258,7 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 
 	switch t.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
-		if !t.linkProbeStarted {
-			t.linkProbeStarted = true
-			t.installLinkFeedbackProbe(self)
-		}
+		t.StartLinkFeedback(e, self)
 	}
 
 	sendRtcpSrc := e.RtpBin.GetRequestPad(fmt.Sprintf("send_rtcp_src_%d", t.Kind))
@@ -376,37 +372,46 @@ func (t *SipTrack) stopPeriodicKeyframe() {
 	t.keyframeMu.Unlock()
 }
 
-func (t *SipTrack) installLinkFeedbackProbe(self *gst.Bin) {
-	pad := t.RtcpSrc.GetStaticPad("src")
-	if pad == nil {
-		return
-	}
-	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-		buf := info.GetBuffer()
-		if buf == nil {
-			return gst.PadProbeOK
-		}
-		t.handleDeviceRtcp(self, buf.Bytes())
-		return gst.PadProbeOK
-	})
-}
-
-func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
-	tmmbrKbps, fractionLost, rttMs, hasFeedback := parseLinkFeedback(raw)
-	if !hasFeedback {
-		return
-	}
-
+func (t *SipTrack) StartLinkFeedback(e *SipBin, self *gst.Bin) {
 	t.keyframeMu.Lock()
-	now := time.Now()
-	if !t.lastLinkFeedback.IsZero() && now.Sub(t.lastLinkFeedback) < time.Second {
+	if t.linkFeedbackStarted {
 		t.keyframeMu.Unlock()
 		return
 	}
-	t.lastLinkFeedback = now
+	t.linkFeedbackStarted = true
+	stop := make(chan struct{})
+	t.linkFeedbackStop = stop
 	t.keyframeMu.Unlock()
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\ntmmbr_kbps=%d\nfraction_lost=%d\nrtt_ms=%d", t.Kind, tmmbrKbps, fractionLost, rttMs))
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				t.pushLinkFeedback(e, self)
+			}
+		}
+	}()
+}
+
+func (t *SipTrack) stopLinkFeedback() {
+	t.keyframeMu.Lock()
+	if t.linkFeedbackStarted && t.linkFeedbackStop != nil {
+		close(t.linkFeedbackStop)
+		t.linkFeedbackStop = nil
+		t.linkFeedbackStarted = false
+	}
+	t.keyframeMu.Unlock()
+}
+
+func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
+	rttMs, fractionLost := e.linkFeedback(t.Kind)
+	if rttMs == 0 && fractionLost == 0 {
+		return
+	}
 
 	sendPad := self.GetStaticPad(fmt.Sprintf("send_rtp_sink_%d", int(t.Kind)))
 	if sendPad == nil {
@@ -417,10 +422,9 @@ func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
 		return
 	}
 
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\nrtt_ms=%d", t.Kind, fractionLost, rttMs))
+
 	st := gst.NewStructure("vopenia-link-feedback")
-	if err := st.SetValue("tmmbr-kbps", tmmbrKbps); err != nil {
-		return
-	}
 	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
 		return
 	}
@@ -430,67 +434,23 @@ func (t *SipTrack) handleDeviceRtcp(self *gst.Bin, raw []byte) {
 	peer.SendEvent(gst.NewCustomEvent(gst.EventTypeCustomUpstream, st.Transfer()))
 }
 
-func parseLinkFeedback(raw []byte) (tmmbrKbps int, fractionLost uint8, rttMs int, hasFeedback bool) {
-	for len(raw) >= 4 {
-		pt := raw[1]
-		length := int(binary.BigEndian.Uint16(raw[2:4]))
-		pktLen := (length + 1) * 4
-		if pktLen < 4 || pktLen > len(raw) {
-			break
-		}
-		pkt := raw[:pktLen]
-
-		switch pt {
-		case 200, 201:
-			reportOff := 8
-			if pt == 200 {
-				reportOff = 28
+func (e *SipBin) linkFeedback(kind livekit.TrackSource) (rttMs int, fractionLost uint8) {
+	st, err := e.getStats(kind)
+	if err != nil || st == nil {
+		return 0, 0
+	}
+	var maxRtt uint32
+	for _, src := range st.Sources {
+		for _, rr := range src.ReceivedRR {
+			if rr.RoundTrip > maxRtt {
+				maxRtt = rr.RoundTrip
 			}
-			rc := int(pkt[0] & 0x1f)
-			for i, off := 0, reportOff; i < rc && off+24 <= len(pkt); i, off = i+1, off+24 {
-				if fl := pkt[off+4]; fl > fractionLost {
-					fractionLost = fl
-				}
-				lsr := binary.BigEndian.Uint32(pkt[off+16 : off+20])
-				dlsr := binary.BigEndian.Uint32(pkt[off+20 : off+24])
-				if r := rttFromReport(lsr, dlsr); r > rttMs {
-					rttMs = r
-				}
-			}
-			hasFeedback = true
-		case 205:
-			if pkt[0]&0x1f == 3 && len(pkt) >= 20 {
-				for off := 12; off+8 <= len(pkt); off += 8 {
-					v := binary.BigEndian.Uint32(pkt[off+4 : off+8])
-					exp := (v >> 26) & 0x3f
-					mantissa := (v >> 9) & 0x1ffff
-					kbps := (int(mantissa) << exp) / 1000
-					if kbps > 0 && (tmmbrKbps == 0 || kbps < tmmbrKbps) {
-						tmmbrKbps = kbps
-					}
-				}
-				hasFeedback = true
+			if rr.FractionLost > fractionLost {
+				fractionLost = rr.FractionLost
 			}
 		}
-
-		raw = raw[pktLen:]
 	}
-	return
-}
-
-func rttFromReport(lsr, dlsr uint32) int {
-	if lsr == 0 {
-		return 0
-	}
-	now := time.Now()
-	ntpSec := uint64(now.Unix()) + 2208988800
-	ntpFrac := uint64(now.Nanosecond()) << 32 / 1_000_000_000
-	compactNow := uint32(ntpSec<<16) | uint32(ntpFrac>>16)
-	delta := compactNow - lsr - dlsr
-	if delta > 20*65536 {
-		return 0
-	}
-	return int(uint64(delta) * 1000 / 65536)
+	return int(uint64(maxRtt) * 1000 / 65536), fractionLost
 }
 
 func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
@@ -503,6 +463,7 @@ func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
 
 func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 	track.stopPeriodicKeyframe()
+	track.stopLinkFeedback()
 
 	var errs []error
 	for _, elem := range [](*gst.Element){track.RtpSrc, track.RtcpSrc, track.RtpSink, track.RtcpSink, track.RtpFilter} {
