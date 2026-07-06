@@ -88,10 +88,11 @@ func (wio *WebrtcIo) Create() error {
 
 	if _, err := wio.LivekitBin.Connect("active-speakers-changed", func(_ *gst.Element, structure *gst.Structure) {
 		ptr := wiow.Value()
-		if ptr != nil {
-			if _, err := ptr.pipeline.LivekitController.Emit("active-speakers-changed", structure); err != nil {
-				ptr.log.Errorw("Failed to emit active-speakers-changed signal from livekitbin to io manager", err)
-			}
+		if ptr == nil || ptr.pipeline == nil || ptr.pipeline.IOManager == nil || ptr.pipeline.LivekitController == nil {
+			return
+		}
+		if _, err := ptr.pipeline.LivekitController.Emit("active-speakers-changed", structure); err != nil {
+			ptr.log.Errorw("Failed to emit active-speakers-changed signal from livekitbin to io manager", err)
 		}
 	}); err != nil {
 		return fmt.Errorf("failed to connect to livekitbin active-speakers-changed signal: %w", err)
@@ -99,10 +100,11 @@ func (wio *WebrtcIo) Create() error {
 
 	if _, err := wio.LivekitBin.Connect("participant-join", func(_ *gst.Element, structure *gst.Structure) {
 		ptr := wiow.Value()
-		if ptr != nil {
-			if _, err := ptr.pipeline.LivekitController.Emit("participant-join", structure); err != nil {
-				ptr.log.Errorw("Failed to emit participant-join signal from livekitbin to io manager", err)
-			}
+		if ptr == nil || ptr.pipeline == nil || ptr.pipeline.IOManager == nil || ptr.pipeline.LivekitController == nil {
+			return
+		}
+		if _, err := ptr.pipeline.LivekitController.Emit("participant-join", structure); err != nil {
+			ptr.log.Errorw("Failed to emit participant-join signal from livekitbin to io manager", err)
 		}
 	}); err != nil {
 		return fmt.Errorf("failed to connect to livekitbin participant-join signal: %w", err)
@@ -110,10 +112,11 @@ func (wio *WebrtcIo) Create() error {
 
 	if _, err := wio.LivekitBin.Connect("participant-left", func(_ *gst.Element, structure *gst.Structure) {
 		ptr := wiow.Value()
-		if ptr != nil {
-			if _, err := ptr.pipeline.LivekitController.Emit("participant-left", structure); err != nil {
-				ptr.log.Errorw("Failed to emit participant-left signal from livekitbin to io manager", err)
-			}
+		if ptr == nil || ptr.pipeline == nil || ptr.pipeline.IOManager == nil || ptr.pipeline.LivekitController == nil {
+			return
+		}
+		if _, err := ptr.pipeline.LivekitController.Emit("participant-left", structure); err != nil {
+			ptr.log.Errorw("Failed to emit participant-left signal from livekitbin to io manager", err)
 		}
 	}); err != nil {
 		return fmt.Errorf("failed to connect to livekitbin participant-left signal: %w", err)
@@ -233,7 +236,7 @@ func (wio *WebrtcIo) binPadRemoved(_ *gst.Element, pad *gst.Pad) {
 		return
 	}
 
-	if hop.sinkPad.GetParent().Instance() != nil {
+	if wio.pipeline.IOManager != nil && wio.pipeline.IOManager.LivekitController != nil && hop.sinkPad.GetParent().Instance() != nil {
 		wio.log.Infow("Releasing request pad from IO Manager for removed recv RTP pad", "session", session, "ssrc", ssrc, "pt", pt)
 		wio.pipeline.IOManager.LivekitController.ReleaseRequestPad(hop.sinkPad)
 	}

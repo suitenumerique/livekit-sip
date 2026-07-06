@@ -397,7 +397,7 @@ func (e *LivekitBin) updateActiveSpeakers(self *gst.Bin, p []lksdk.Participant) 
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers updated\nspeakers=%v", activeSpeakers))
 
 	structure := livekittracks.NewActiveSpeakerChangeInfo(p).Structure()
-	if _, err := self.Emit("active-speakers-changed", structure.Transfer()); err != nil {
+	if _, err := self.Emit("active-speakers-changed", structure); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting active-speakers-changed signal\nerr=%v", err))
 		self.Error("Error emitting active-speakers-changed signal", err)
 		return
