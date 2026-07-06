@@ -155,4 +155,4 @@ require (
 
 replace github.com/go-gst/go-gst => github.com/vopenia-io/go-gst v0.0.0-20260618125001-7c94d3bb0444
 
-replace github.com/go-gst/go-glib => github.com/vopenia-io/go-glib v0.0.0-20260519120019-03a8b66c8c02
+replace github.com/go-gst/go-glib => github.com/vopenia-io/go-glib v0.0.0-20260706071437-2414f54cd914
