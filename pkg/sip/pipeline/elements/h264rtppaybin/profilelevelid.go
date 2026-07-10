@@ -116,11 +116,9 @@ func isLevel1b(profileIDC, profileIOP, levelIDC uint8) bool {
 	}
 }
 
-// gstH264ProfileName maps an RFC 6184 profile to the string GStreamer's
-// h264parse/x264enc expect in `video/x-h264, profile=...`. Constrained
-// High is collapsed to "high" because x264enc has no constrained-high
-// mode and the two share profile_idc=0x64 (the csf4/csf5 flags only
-// signal a tool subset, not a different bitstream profile).
+// gstH264ProfileName maps an RFC 6184 profile to the `profile=...` string
+// set on the room→device x264enc capsfilter. High and Constrained-High map
+// to constrained-baseline; Main and the Baseline variants map through as-is.
 func gstH264ProfileName(p profile) string {
 	switch p {
 	case profileConstrainedBaseline:
@@ -130,7 +128,7 @@ func gstH264ProfileName(p profile) string {
 	case profileMain:
 		return "main"
 	case profileHigh, profileConstrainedHigh:
-		return "high"
+		return "constrained-baseline"
 	}
 	return ""
 }

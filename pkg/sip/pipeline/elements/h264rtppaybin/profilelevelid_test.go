@@ -21,8 +21,9 @@ func TestParseProfileLevelID(t *testing.T) {
 		// Main 3.1
 		{"4d001f", profileMain, 31, false, false},
 		// 640c1f is constrained-high per RFC 6184 (csf4+csf5 set); it
-		// still encodes as profile_idc=0x64 so it maps to "high" for the
-		// encoder's capsfilter (see gstH264ProfileName).
+		// parses as profile_idc=0x64 (profileConstrainedHigh) and the
+		// encoder capsfilter maps it to constrained-baseline (see
+		// gstH264ProfileName).
 		{"640c1f", profileConstrainedHigh, 31, false, false},
 		// High 4.2
 		{"64002a", profileHigh, 42, false, false},
@@ -68,9 +69,9 @@ func TestH264CapsStringForPLID(t *testing.T) {
 		{"42e01f", "constrained-baseline", "3.1"},
 		{"42001f", "baseline", "3.1"},
 		{"4d001f", "main", "3.1"},
-		{"640c1f", "high", "3.1"},
-		{"64002a", "high", "4.2"},
-		{"640c28", "high", "4"},
+		{"640c1f", "constrained-baseline", "3.1"},
+		{"64002a", "constrained-baseline", "4.2"},
+		{"640c28", "constrained-baseline", "4"},
 	}
 
 	for _, tc := range tests {
