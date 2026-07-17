@@ -118,8 +118,9 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 	// 1280x720 source targeting [1,854]x[1,480]) and x264enc refuses to
 	// initialize on odd widths. Without the PAR constraint videoscale
 	// fills the range exactly and picks even dimensions.
+	// format=I420: x264enc takes 4:2:0 only.
 	e.ScaleFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d]", e.videoWidth, e.videoHeight)),
+		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],format=I420", e.videoWidth, e.videoHeight)),
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create scale capsfilter\nerr=%v", err))
@@ -165,7 +166,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		}
 		w = max(1, min(w, int(e.videoWidth)))
 		h = max(1, min(h, int(e.videoHeight)))
-		if err := e.ScaleFilter.SetProperty("caps", gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d]", w, h))); err != nil {
+		if err := e.ScaleFilter.SetProperty("caps", gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],format=I420", w, h))); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set scale filter caps\nerr=%v", err))
 			self.Error("Failed to set scale filter caps", err)
 		}
