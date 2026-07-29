@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Builds a small "transport" image: the livekit-sip binary linked against
-# GStreamer 1.28.3 (/opt/gst-1.28), with RPATH baked in. The image does NOT
-# ship GStreamer — DevOps extracts the binary and runs it under systemd on a
-# VM that carries the gstreamer-1.28-opt deb. See build/sip/DEPLOY.md.
+# Builds the livekit-sip binary linked against GStreamer 1.28.3
+# (/opt/gst-1.28), RPATH baked in. Two runtime targets:
 #
-# The gstreamer deb is provided via the `gst` build context, produced by
-# build/sip/Dockerfile.gstreamer. Build with:
+#   * transport (default): binary only, no GStreamer — runs on a VM carrying
+#     the gstreamer-1.28-opt deb. See build/sip/DEPLOY.md.
+#   * standalone: binary + GStreamer deb installed in-image.
+#
+# The gstreamer deb comes from the `gst` build context, produced by
+# build/sip/Dockerfile.gstreamer:
 #
 #   docker buildx build --build-context gst=./out -f build/sip/Dockerfile .
+#   docker buildx build --build-context gst=./out --target standalone \
+#       -f build/sip/Dockerfile .
 #
 # (CI wires this in .github/workflows/docker.yaml.)
 
@@ -81,8 +85,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends binutils \
     && readelf -d /out/livekit-sip | grep -E "R(UN)?PATH.*\[/opt/gst-1\.28/lib\]" \
     && rm -rf /var/lib/apt/lists/*
 
+# ---- runtime: standalone image (GStreamer 1.28 included) ----
+FROM ubuntu:24.04 AS standalone
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# gstreamer deb (its deps resolved by apt) + the binary's runtime libs
+COPY --from=gst gstreamer-1.28-opt_*.deb /tmp/gst.deb
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        /tmp/gst.deb ca-certificates libopusfile0 libsoxr0 zlib1g \
+    && rm /tmp/gst.deb \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/livekit-sip /bin/
+
+# gstreamer registry cache under /tmp
+ENV XDG_CACHE_HOME=/tmp
+
+# sanity check: plugin registry builds, x264enc resolves
+RUN /opt/gst-1.28/bin/gst-inspect-1.0 --version \
+    && /opt/gst-1.28/bin/gst-inspect-1.0 x264enc >/dev/null \
+    && rm -rf /tmp/gstreamer-1.0
+
+WORKDIR /sip
+
+ENTRYPOINT ["livekit-sip", "--config=/sip/config.yaml"]
+
 # ---- runtime: small transport image (NO GStreamer — it lives on the VM) ----
-FROM ubuntu:24.04
+# last stage = default build target
+FROM ubuntu:24.04 AS transport
 
 ENV DEBIAN_FRONTEND=noninteractive
 
