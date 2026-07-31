@@ -98,6 +98,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# DejaVu fonts for textoverlay + pre-built fontconfig cache
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && LD_LIBRARY_PATH=/opt/gst-1.28/lib /opt/gst-1.28/bin/fc-cache -f
+
 COPY --from=builder /out/livekit-sip /bin/
 
 # gstreamer registry cache under /tmp
