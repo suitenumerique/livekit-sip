@@ -73,6 +73,16 @@ func (e *BFCPServer) stopScreenshare(self *gst.Element, floorID int) {
 }
 
 func (e *BFCPServer) SetupSignals(self *gst.Element) {
+	e.bfcpServer.OnMessageIn = func(remote string, primitive string, version uint8, transactionID, conferenceID uint32, userID, floorID uint16) {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP message received\nprimitive=%s\nversion=%d\nconf_id=%d\ntransaction_id=%d\nuser_id=%d\nfloor_id=%d\nremote=%s",
+			primitive, version, conferenceID, transactionID, userID, floorID, remote))
+	}
+
+	e.bfcpServer.OnMessageOut = func(remote string, primitive string, version uint8, transactionID, conferenceID uint32, userID, floorID uint16) {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP message sent\nprimitive=%s\nversion=%d\nconf_id=%d\ntransaction_id=%d\nuser_id=%d\nfloor_id=%d\nremote=%s",
+			primitive, version, conferenceID, transactionID, userID, floorID, remote))
+	}
+
 	e.bfcpServer.OnFloorRequest = func(floorID, userID, requestID uint16) bool {
 		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Floor request\nfloor_id=%d\nuser_id=%d\nrequest_id=%d", floorID, userID, requestID))
 

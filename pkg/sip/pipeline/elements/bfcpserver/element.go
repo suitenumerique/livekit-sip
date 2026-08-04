@@ -182,6 +182,9 @@ func (e *BFCPServer) Constructed(instance *glib.Object) {
 
 	e.SetupSignals(self)
 
+	e.bfcpServer.Serve()
+	e.started = true
+
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP server started\nhost=%s\nport=%d", host, port))
 
 	e.constructed = true
