@@ -72,6 +72,15 @@ func (e *BFCPServer) stopScreenshare(self *gst.Element, floorID int) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Successfully released floor\nfloor_id=%d", floorID))
 }
 
+func (e *BFCPServer) registerClient(self *gst.Element, remoteAddr string, userID int, version int) {
+	if err := e.bfcpServer.RegisterClient(remoteAddr, uint16(userID), e.floorID, uint8(version)); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to register BFCP client\nremote=%s\nerr=%v", remoteAddr, err))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Registered BFCP client from SDP\nremote=%s\nuser_id=%d\nversion=%d", remoteAddr, userID, version))
+	e.keepaliveOnce.Do(func() { e.broadcast() })
+}
+
 func (e *BFCPServer) SetupSignals(self *gst.Element) {
 	e.bfcpServer.OnMessageIn = func(remote string, primitive string, version uint8, transactionID, conferenceID uint32, userID, floorID uint16) {
 		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP message received\nprimitive=%s\nversion=%d\nconf_id=%d\ntransaction_id=%d\nuser_id=%d\nfloor_id=%d\nremote=%s",
@@ -166,6 +175,16 @@ func (e *BFCPServer) SetupSignals(self *gst.Element) {
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to stop-screenshare signal\nerr=%v", err))
 		self.Error("Failed to connect to stop-screenshare signal", err)
+	}
+
+	if _, err := self.Connect("register-client", func(instance *gst.Element, remoteAddr string, userID int, version int) {
+		ptr := eweak.Value()
+		if ptr != nil {
+			ptr.registerClient(instance, remoteAddr, userID, version)
+		}
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to register-client signal\nerr=%v", err))
+		self.Error("Failed to connect to register-client signal", err)
 	}
 
 }

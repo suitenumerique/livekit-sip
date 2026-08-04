@@ -2,6 +2,7 @@ package sipbin
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"weak"
@@ -156,6 +157,27 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 
 	if !b.BfcpServer.SyncStateWithParent() {
 		return fmt.Errorf("failed to sync state of BFCP server element with parent")
+	}
+
+	// register the peer's BFCP address from the SDP: the server emits first
+	// on the 5-tuple (opens stateful firewall/NAT return path)
+	var conn *gstsdp.Connection
+	if media.ConnectionsLen() > 0 {
+		conn = media.GetConnection(0)
+	} else {
+		conn = session.GetConnection()
+	}
+	if conn != nil && media.GetPort() > 0 {
+		host := conn.Address()
+		if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+			host = ip.To4().String()
+		}
+		remote := net.JoinHostPort(host, strconv.Itoa(int(media.GetPort())))
+		if _, err := b.BfcpServer.Emit("register-client", remote, int(b.UserID), b.BfcpVersion); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to emit register-client signal\nremote=%s\nerr=%v", remote, err))
+		}
+	} else {
+		self.Log(CAT, gst.LevelWarning, "No connection address in SDP for BFCP media, client not pre-registered")
 	}
 
 	b.initialized = true

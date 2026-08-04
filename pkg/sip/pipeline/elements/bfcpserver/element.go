@@ -26,7 +26,12 @@ var (
 	signalOnFloorReleased  uint
 	signalStartScreenshare uint
 	signalStopScreenshare  uint
+	signalRegisterClient   uint
 )
+
+// KeepaliveInterval is the period of the FloorStatus keepalive towards
+// registered clients (keeps stateful firewall/NAT entries open).
+const KeepaliveInterval = 20 * time.Second
 
 type BFCPServer struct {
 	props
@@ -34,6 +39,7 @@ type BFCPServer struct {
 	bfcpConfig       *bfcp.ServerConfig
 	started          bool
 	constructed      bool
+	keepaliveOnce    sync.Once
 	requestID        atomic.Int64
 	lastFloorRelease time.Time
 
@@ -98,6 +104,16 @@ func (e *BFCPServer) ClassInit(klass *glib.ObjectClass) {
 		gst.SignalRunLast,
 		glib.TYPE_NONE,
 		glib.TYPE_INT, // floor ID
+	)
+
+	signalRegisterClient = gst.SignalNew(
+		class.Type(),
+		"register-client",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		glib.TYPE_STRING, // remote address "ip:port" from SDP
+		glib.TYPE_INT,    // user ID
+		glib.TYPE_INT,    // BFCP version
 	)
 
 	class.AddPadTemplate(gst.NewPadTemplate(
@@ -194,7 +210,7 @@ func (e *BFCPServer) broadcast() {
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
-		t := time.NewTicker(5 * time.Second)
+		t := time.NewTicker(KeepaliveInterval)
 		defer t.Stop()
 		for {
 			select {
@@ -212,7 +228,6 @@ func (e *BFCPServer) broadcast() {
 func (e *BFCPServer) ChangeState(self *gst.Element, transition gst.StateChange) gst.StateChangeReturn {
 	if transition == gst.StateChangeReadyToPaused && !e.started {
 		e.bfcpServer.Serve()
-		// e.broadcast()
 		e.started = true
 	}
 
