@@ -877,6 +877,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	if h := req.GetHeader("X-PIN"); h != nil {
 		pin = strings.TrimSpace(h.Value())
 	}
+	c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
 	disp := c.s.handler.DispatchCall(ctx, &CallInfo{
 		TrunkID: trunkID,
 		Call:    c.call,
@@ -1294,6 +1295,7 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				noPin = pin == ""
 
 				c.log().Infow("Checking Pin for SIP call", "pin", pin, "noPin", noPin)
+				c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
 				disp = c.s.handler.DispatchCall(ctx, &CallInfo{
 					TrunkID: trunkID,
 					Call:    c.call,

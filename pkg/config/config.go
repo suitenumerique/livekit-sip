@@ -95,6 +95,12 @@ type PublishCodecConfig struct {
 	ScreenshareAudio string `yaml:"screenshareaudio"`
 }
 
+type MeetConfig struct {
+	JoinURL   string        `yaml:"join_url"`   // empty disables the pre-join call
+	AuthToken string        `yaml:"auth_token"`
+	Timeout   time.Duration `yaml:"timeout"`
+}
+
 type Config struct {
 	Redis     *redis.RedisConfig `yaml:"redis"`      // required
 	ApiKey    string             `yaml:"api_key"`    // required (env LIVEKIT_API_KEY)
@@ -135,6 +141,7 @@ type Config struct {
 	IgnoreLocalAddrInSDP bool               `yaml:"ignore_local_addr_in_sdp"` // enable symmetric RTP if local IP is specified in SDP
 	Codecs               map[string]bool    `yaml:"codecs"`
 	PublishCodecs        PublishCodecConfig `yaml:"publish_codecs"`
+	Meet                 MeetConfig         `yaml:"meet"`
 
 	// HideInboundPort controls how SIP endpoint responds to unverified inbound requests.
 	// Setting it to true makes SIP server silently drop INVITE requests if it gets a negative Auth or Dispatch response.
@@ -230,6 +237,10 @@ func (c *Config) Init() error {
 
 	if c.Gst.Debug == "" {
 		c.Gst.Debug = "*:3,sipbin:4" // sipbin log sdp as info and we want them to be visible by default
+	}
+
+	if c.Meet.Timeout <= 0 {
+		c.Meet.Timeout = 5 * time.Second
 	}
 
 	if err := c.InitLogger(); err != nil {

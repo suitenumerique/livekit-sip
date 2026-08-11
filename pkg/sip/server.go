@@ -185,6 +185,7 @@ type Server struct {
 	handler Handler
 	conf    *config.Config
 	sconf   *ServiceConfig
+	meet    *meetClient // optional, pre-creates dispatch rules from pin codes
 
 	cli *Client // optional, for outbound reinvite handling
 
@@ -229,6 +230,7 @@ func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats
 		mon:                mon,
 		getIOClient:        getIOClient,
 		getRoom:            DefaultGetRoomFunc,
+		meet:               newMeetClient(conf.Meet),
 		byLocalTag:         make(map[LocalTag]*inboundCall),
 		provisionalInvites: expirable.NewLRU[[2]string, LocalTag](maxCallCache, nil, callCacheTTL),
 	}
