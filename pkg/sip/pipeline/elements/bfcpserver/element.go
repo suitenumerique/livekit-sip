@@ -29,19 +29,15 @@ var (
 	signalRegisterClient   uint
 )
 
-// KeepaliveInterval is the period of the FloorStatus keepalive towards
-// registered clients (keeps stateful firewall/NAT entries open).
-const KeepaliveInterval = 20 * time.Second
-
 type BFCPServer struct {
 	props
 	bfcpServer       *bfcp.Server
 	bfcpConfig       *bfcp.ServerConfig
 	started          bool
 	constructed      bool
-	keepaliveOnce    sync.Once
 	requestID        atomic.Int64
 	lastFloorRelease time.Time
+	expectedPeer     atomic.Pointer[string]
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -204,25 +200,6 @@ func (e *BFCPServer) Constructed(instance *glib.Object) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP server started\nhost=%s\nport=%d", host, port))
 
 	e.constructed = true
-}
-
-func (e *BFCPServer) broadcast() {
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		t := time.NewTicker(KeepaliveInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-e.ctx.Done():
-				return
-			case <-t.C:
-				for _, f := range e.bfcpServer.ListFloors() {
-					e.bfcpServer.BroadcastFloorState(f.FloorID, f.GetOwner(), f.GetState())
-				}
-			}
-		}
-	}()
 }
 
 func (e *BFCPServer) ChangeState(self *gst.Element, transition gst.StateChange) gst.StateChangeReturn {

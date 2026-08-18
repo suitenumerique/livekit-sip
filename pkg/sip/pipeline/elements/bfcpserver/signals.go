@@ -78,7 +78,7 @@ func (e *BFCPServer) registerClient(self *gst.Element, remoteAddr string, userID
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Registered BFCP client from SDP\nremote=%s\nuser_id=%d\nversion=%d", remoteAddr, userID, version))
-	e.keepaliveOnce.Do(func() { e.broadcast() })
+	e.expectedPeer.Store(&remoteAddr)
 }
 
 func (e *BFCPServer) SetupSignals(self *gst.Element) {
@@ -149,6 +149,9 @@ func (e *BFCPServer) SetupSignals(self *gst.Element) {
 	}
 
 	e.bfcpServer.OnClientConnect = func(remoteAddr string, userID uint16) {
+		if expected := e.expectedPeer.Load(); expected != nil && *expected != remoteAddr {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("BFCP client connected from an address other than the one signalled in the SDP\naddr=%s\nexpected=%s\nuser_id=%d", remoteAddr, *expected, userID))
+		}
 		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("BFCP client connected\naddr=%s\nuser_id=%d", remoteAddr, userID))
 	}
 
