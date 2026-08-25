@@ -32,6 +32,9 @@ type SipOpt struct {
 	VideoWidth            uint
 	VideoHeight           uint
 	Framerate             uint
+	ScreenshareWidth      uint
+	ScreenshareHeight     uint
+	ScreenshareFramerate  uint
 	Lang                  string
 	MaxActiveParticipants int
 	Gst                   config.GstConfig

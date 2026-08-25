@@ -4,13 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"weak"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/go-gst/go-gst/gst/video"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -45,15 +48,34 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 		return fmt.Errorf("unknown track source")
 	}
 
+	pweak := weak.Make(p)
+	wself := glib.WeakRefInit(self)
+
+	var trackOpts []lksdk.LocalTrackOptions
+	if kind == livekit.TrackSource_CAMERA || kind == livekit.TrackSource_SCREEN_SHARE {
+		// Forward SFU PLI/FIR to the encoder: runs on pion's rtcpWorker
+		// goroutine, whichever of the primary/backup tracks is bound.
+		trackOpts = append(trackOpts, lksdk.WithRTCPHandler(func(pkt rtcp.Packet) {
+			switch pkt.(type) {
+			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+			default:
+				return
+			}
+			p := pweak.Value()
+			self := gst.ToGstBin(wself.Get())
+			if p == nil || self == nil {
+				return
+			}
+			p.requestKeyframe(self, kind)
+		}))
+	}
+
 	track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
 		MimeType: mimeType,
-	})
+	}, trackOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create new local track: %w", err)
 	}
-
-	pweak := weak.Make(p)
-	wself := glib.WeakRefInit(self)
 
 	track.OnBind(func() {
 		p := pweak.Value()
@@ -76,7 +98,7 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	if mimeType != backupMimeType {
 		backupTrack, err = lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
 			MimeType: backupMimeType,
-		})
+		}, trackOpts...)
 		if err != nil {
 			return fmt.Errorf("failed to create new backup local track: %w", err)
 		}
@@ -104,16 +126,28 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 		return fmt.Errorf("failed to create track queue element: %w", err)
 	}
 
+	pubOpts := &lksdk.TrackPublicationOptions{
+		Name:              fmt.Sprintf("%s_%s", e.room.LocalParticipant.Identity(), kind.String()),
+		Source:            kind,
+		BackupCodecPolicy: livekit.BackupCodecPolicy_REGRESSION,
+	}
+	// Advertise the published layer dimensions so the SFU allocates
+	// forwarding for a real resolution instead of 0x0.
+	switch kind {
+	case livekit.TrackSource_CAMERA:
+		pubOpts.VideoWidth = int(e.config.videoWidth)
+		pubOpts.VideoHeight = int(e.config.videoHeight)
+	case livekit.TrackSource_SCREEN_SHARE:
+		pubOpts.VideoWidth = int(e.config.screenshareWidth)
+		pubOpts.VideoHeight = int(e.config.screenshareHeight)
+	}
+
 	element, err := gst.NewElementWithProperties("livekitbin_sinktrack", map[string]interface{}{
 		"track":       glib.ArbitraryValue{Data: track},
 		"backupTrack": glib.ArbitraryValue{Data: backupTrack},
 		// "pub":   glib.ArbitraryValue{Data: pub},
-		"opts": glib.ArbitraryValue{Data: &lksdk.TrackPublicationOptions{
-			Name:              fmt.Sprintf("%s_%s", e.room.LocalParticipant.Identity(), kind.String()),
-			Source:            kind,
-			BackupCodecPolicy: livekit.BackupCodecPolicy_REGRESSION,
-		}},
-		"lp": glib.ArbitraryValue{Data: e.room.LocalParticipant},
+		"opts": glib.ArbitraryValue{Data: pubOpts},
+		"lp":   glib.ArbitraryValue{Data: e.room.LocalParticipant},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sink track element: %w", err)
@@ -143,6 +177,34 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	p.initialized = true
 
 	return nil
+}
+
+// requestKeyframe converts an SFU PLI/FIR into an upstream force-key-unit
+// event pushed at the send path's format filter, upstream of rtpbin, so it
+// reaches the active encoder. Rate-limited to one request per second.
+func (p *LivekitBinPublication) requestKeyframe(self *gst.Bin, kind livekit.TrackSource) {
+	p.keyframeMu.Lock()
+	now := time.Now()
+	if !p.lastKeyframeReq.IsZero() && now.Sub(p.lastKeyframeReq) < time.Second {
+		p.keyframeMu.Unlock()
+		return
+	}
+	p.lastKeyframeReq = now
+	p.keyframeMu.Unlock()
+
+	filter := p.FormatFilter
+	if filter == nil {
+		return
+	}
+	pad := filter.GetStaticPad("sink")
+	if pad == nil {
+		return
+	}
+	if !pad.PushEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)) {
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Force-key-unit event not handled\nsource=%s", kind.String()))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Requested encoder keyframe from SFU RTCP\nsource=%s", kind.String()))
 }
 
 func (e *LivekitBin) onRtpBinPadAddedSendRtp(self *gst.Bin, pad *gst.Pad, pname string) {

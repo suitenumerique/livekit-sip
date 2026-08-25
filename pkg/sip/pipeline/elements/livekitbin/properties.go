@@ -123,6 +123,58 @@ var properties = []*glib.ParamSpec{
 		nil,
 		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewUintParam(
+		"video-width",
+		"Video Width",
+		"Width advertised for published camera tracks",
+		1,
+		8192,
+		1280,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"video-height",
+		"Video Height",
+		"Height advertised for published camera tracks",
+		1,
+		8192,
+		720,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-width",
+		"Screenshare Width",
+		"Width advertised for published screenshare tracks",
+		1,
+		8192,
+		1920,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-height",
+		"Screenshare Height",
+		"Height advertised for published screenshare tracks",
+		1,
+		8192,
+		1080,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+}
+
+func uintPropSetter(dst *uint) func(self *gst.Bin, param *glib.ParamSpec, value *glib.Value) {
+	return func(self *gst.Bin, param *glib.ParamSpec, value *glib.Value) {
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting property value\nproperty=%s\nerr=%v", param.Name(), err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid type for property\nproperty=%s", param.Name()))
+			return
+		}
+		*dst = val
+	}
 }
 
 func stringPropSetter(dst *string) func(self *gst.Bin, param *glib.ParamSpec, value *glib.Value) {
@@ -274,6 +326,14 @@ func (e *LivekitBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 		}
 	case "screenshare-audio-mime-type":
 		stringPropSetter(&e.screenshareAudioMimeType)(self, param, value)
+	case "video-width":
+		uintPropSetter(&e.videoWidth)(self, param, value)
+	case "video-height":
+		uintPropSetter(&e.videoHeight)(self, param, value)
+	case "screenshare-width":
+		uintPropSetter(&e.screenshareWidth)(self, param, value)
+	case "screenshare-height":
+		uintPropSetter(&e.screenshareHeight)(self, param, value)
 	default:
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown property\nproperty=%s", param.Name()))
 	}

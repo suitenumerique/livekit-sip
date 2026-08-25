@@ -369,8 +369,8 @@ func (e *IoManagerSip) requestNewPadScreenshareIn(self *gst.Bin, templ *gst.PadT
 	var err error
 	properties := gst.NewStructure("properties")
 	if err := errors.Join(
-		properties.SetUint("*.video-width", e.videoWidth),
-		properties.SetUint("*.video-height", e.videoHeight),
+		properties.SetUint("*.video-width", e.screenshareWidth),
+		properties.SetUint("*.video-height", e.screenshareHeight),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for screenshare input pad\npad=%s\nerr=%v", name, err))
 		self.Error(fmt.Sprintf("Failed to set properties for factorybin element for screenshare input pad %s", name), err)
@@ -828,8 +828,10 @@ func (e *IoManagerSip) padAddedScreenshareOut(self *gst.Bin, pad *gst.Pad, name 
 
 	properties := gst.NewStructure("properties")
 	if err := errors.Join(
-		properties.SetUint("*.video-width", e.videoWidth),
-		properties.SetUint("*.video-height", e.videoHeight),
+		properties.SetUint("*.video-width", e.screenshareWidth),
+		properties.SetUint("*.video-height", e.screenshareHeight),
+		properties.SetString("*.usage", "screenshare"),
+		properties.SetUint("*.framerate", e.screenshareFramerate),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for screenshare output pad\nerr=%v", err))
 		self.Error("Failed to set properties for factorybin element for screenshare output pad", err)

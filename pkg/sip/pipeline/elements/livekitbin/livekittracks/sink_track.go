@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -97,7 +98,6 @@ func (s *SinkTrack) InstanceInit(instance *glib.Object) {
 
 	self.SetSync(false)
 	self.SetAsyncEnabled(false)
-	self.SetMaxBitrate(1_500_000)
 }
 
 func (s *SinkTrack) Constructed(instance *glib.Object) {
@@ -209,6 +209,24 @@ func (s *SinkTrack) publish(self *base.GstBaseSink) {
 		return
 	}
 	s.pub.Store(pub)
+
+	// A published track that never binds means the SFU rejected both the
+	// primary and backup codecs: media is silently dropped by WriteRTP.
+	track := s.track
+	backupTrack := s.backupTrack
+	name := s.opts.Name
+	time.AfterFunc(10*time.Second, func() {
+		if s.pub.Load() == nil {
+			return
+		}
+		bound := track != nil && track.IsBound()
+		if !bound && backupTrack != nil {
+			bound = backupTrack.IsBound()
+		}
+		if !bound {
+			CAT.Log(gst.LevelWarning, fmt.Sprintf("Published track never bound; codec likely rejected by the SFU\ntrack=%s", name))
+		}
+	})
 }
 
 func (s *SinkTrack) Event(self *base.GstBaseSink, event *gst.Event) bool {

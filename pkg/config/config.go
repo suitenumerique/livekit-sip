@@ -75,9 +75,10 @@ type TCPConfig struct {
 }
 
 type VideoConfig struct {
-	Width     int `yaml:"width"`
-	Height    int `yaml:"height"`
-	Framerate int `yaml:"framerate"`
+	Width       int          `yaml:"width"`
+	Height      int          `yaml:"height"`
+	Framerate   int          `yaml:"framerate"`
+	Screenshare *VideoConfig `yaml:"screenshare"` // geometry for screenshare/slides tracks, both directions
 }
 
 type GstConfig struct {
@@ -96,7 +97,7 @@ type PublishCodecConfig struct {
 }
 
 type MeetConfig struct {
-	JoinURL   string        `yaml:"join_url"`   // empty disables the pre-join call
+	JoinURL   string        `yaml:"join_url"` // empty disables the pre-join call
 	AuthToken string        `yaml:"auth_token"`
 	Timeout   time.Duration `yaml:"timeout"`
 }
@@ -233,6 +234,17 @@ func (c *Config) Init() error {
 
 	if c.Video.Framerate <= 0 {
 		c.Video.Framerate = 24
+	}
+
+	if c.Video.Screenshare == nil {
+		c.Video.Screenshare = &VideoConfig{}
+	}
+	if c.Video.Screenshare.Width == 0 || c.Video.Screenshare.Height == 0 {
+		c.Video.Screenshare.Width = 1920
+		c.Video.Screenshare.Height = 1080
+	}
+	if c.Video.Screenshare.Framerate <= 0 {
+		c.Video.Screenshare.Framerate = 15
 	}
 
 	if c.Gst.Debug == "" {

@@ -24,10 +24,13 @@ type IoManagerLivekit struct {
 
 	Compositor *gst.Element
 
-	videoWidth     uint
-	videoHeight    uint
-	videoFramerate uint
-	lang           string
+	videoWidth           uint
+	videoHeight          uint
+	videoFramerate       uint
+	screenshareWidth     uint
+	screenshareHeight    uint
+	screenshareFramerate uint
+	lang                 string
 
 	AudioIn  map[string]*AudioInTranscode
 	AudioOut *AudioOutTranscode
@@ -116,6 +119,33 @@ var properties = []*glib.ParamSpec{
 		1,
 		500,
 		24,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-width",
+		"Screenshare Width",
+		"The width of the screenshare frames",
+		1,
+		8192,
+		1920,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-height",
+		"Screenshare Height",
+		"The height of the screenshare frames",
+		1,
+		8192,
+		1080,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-framerate",
+		"Screenshare Framerate",
+		"The framerate of the screenshare frames",
+		1,
+		500,
+		15,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
 	glib.NewStringParam(
@@ -227,6 +257,9 @@ func (e *IoManagerLivekit) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
 	e.videoFramerate = 24
+	e.screenshareWidth = 1920
+	e.screenshareHeight = 1080
+	e.screenshareFramerate = 15
 	e.lang = "en"
 }
 
@@ -237,10 +270,13 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 
 	var err error
 	e.Compositor, err = gst.NewElementWithProperties("livekit_compositor", map[string]interface{}{
-		"video-width":  e.videoWidth,
-		"video-height": e.videoHeight,
-		"framerate":    e.videoFramerate,
-		"lang":         e.lang,
+		"video-width":           e.videoWidth,
+		"video-height":          e.videoHeight,
+		"framerate":             e.videoFramerate,
+		"screenshare-width":     e.screenshareWidth,
+		"screenshare-height":    e.screenshareHeight,
+		"screenshare-framerate": e.screenshareFramerate,
+		"lang":                  e.lang,
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create livekit_compositor element\nerr=%v", err))
@@ -399,6 +435,50 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 			return
 		}
 		e.videoFramerate = val
+	case "screenshare-width":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare-width property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for screenshare-width property")
+			return
+		}
+		if val > 0xFFFF {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for screenshare-width property\nvalue=%d", val))
+			return
+		}
+		e.screenshareWidth = val
+	case "screenshare-height":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare-height property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for screenshare-height property")
+			return
+		}
+		if val > 0xFFFF {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for screenshare-height property\nvalue=%d", val))
+			return
+		}
+		e.screenshareHeight = val
+	case "screenshare-framerate":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare-framerate property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for screenshare-framerate property")
+			return
+		}
+		e.screenshareFramerate = val
 	case "lang":
 		gv, err := value.GoValue()
 		if err != nil {

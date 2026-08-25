@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -94,7 +95,10 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 	self := gst.ToGstBin(instance)
 	var err error
 
-	e.Vp9Depay, err = gst.NewElementWithProperties("rtpvp9depay", map[string]interface{}{})
+	e.Vp9Depay, err = gst.NewElementWithProperties("rtpvp9depay", map[string]interface{}{
+		"request-keyframe":  true,
+		"wait-for-keyframe": false,
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpvp9depay element\nerr=%v", err))
 		self.Error("Failed to create rtpvp9depay element", err)
@@ -116,6 +120,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 		self.Error("Failed to create vp9dec element", err)
 		return
 	}
+	keyframe.RequestOnBadBuffer(e.Vp9Dec.GetStaticPad("src"))
 
 	e.VideoScale, err = gst.NewElementWithProperties("videoscale", map[string]interface{}{
 		"add-borders": true,

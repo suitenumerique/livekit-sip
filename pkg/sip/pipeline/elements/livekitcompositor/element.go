@@ -26,13 +26,16 @@ type LivekitCompositor struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	videoWidth     uint
-	videoHeight    uint
-	videoFramerate uint
-	lang           string
-	microphone     bool
-	camera         bool
-	screenshare    bool
+	videoWidth           uint
+	videoHeight          uint
+	videoFramerate       uint
+	screenshareWidth     uint
+	screenshareHeight    uint
+	screenshareFramerate uint
+	lang                 string
+	microphone           bool
+	camera               bool
+	screenshare          bool
 
 	*LivekitCompositorMicrophone
 	*LivekitCompositorCamera
@@ -117,6 +120,9 @@ func (e *LivekitCompositor) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
 	e.videoFramerate = 24
+	e.screenshareWidth = 1920
+	e.screenshareHeight = 1080
+	e.screenshareFramerate = 15
 	e.lang = "en"
 }
 

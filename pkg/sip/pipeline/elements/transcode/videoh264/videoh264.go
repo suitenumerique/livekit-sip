@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/go-gst/go-gst/gst/video"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -36,11 +37,31 @@ var properties = []*glib.ParamSpec{
 		720,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewStringParam(
+		"usage",
+		"Usage",
+		"Content type being encoded: camera or screenshare",
+		nil,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"framerate",
+		"Video Framerate",
+		"The framerate of the video frames",
+		1,
+		500,
+		24,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 }
 
+const UsageScreenshare = "screenshare"
+
 type VideoH264 struct {
-	videoWidth  uint
-	videoHeight uint
+	videoWidth     uint
+	videoHeight    uint
+	usage          string
+	videoFramerate uint
 
 	VideoConvert   *gst.Element
 	VideoScale     *gst.Element
@@ -53,6 +74,9 @@ type VideoH264 struct {
 	maxBitrate        uint
 	curBitrate        uint
 	lastBitrateAdjust time.Time
+
+	keyframeMu      sync.Mutex
+	lastKeyframeReq time.Time
 }
 
 func (e *VideoH264) New() glib.GoObjectSubclass {
@@ -88,6 +112,8 @@ func (e *VideoH264) ClassInit(klass *glib.ObjectClass) {
 func (e *VideoH264) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
+	e.usage = "camera"
+	e.videoFramerate = 24
 }
 
 func (e *VideoH264) Constructed(instance *glib.Object) {
@@ -135,14 +161,24 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		defaultBitrate = 4096
 	}
 
-	e.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
-		"speed-preset":     int(1),  // ultrafast
-		"tune":             uint(4), // zerolatency
-		"key-int-max":      uint(200),
-		"bframes":          uint(0),
-		"vbv-buf-capacity": uint(2000),
-		"bitrate":          uint(defaultBitrate),
-	})
+	x264Props := map[string]interface{}{
+		"speed-preset":                int(1),  // ultrafast
+		"tune":                        uint(4), // zerolatency
+		"key-int-max":                 uint(200),
+		"bframes":                     uint(0),
+		"vbv-buf-capacity":            uint(2000),
+		"bitrate":                     uint(defaultBitrate),
+		"min-force-key-unit-interval": uint64(time.Second),
+	}
+	if e.usage == UsageScreenshare {
+		// veryfast + stillimage: slower preset and psy tuning for
+		// text-heavy static content; zerolatency kept to avoid
+		// frame-threading/lookahead latency.
+		x264Props["speed-preset"] = int(3) // veryfast
+		x264Props["tune"] = uint(4 | 1)    // zerolatency|stillimage
+		x264Props["key-int-max"] = uint(4 * e.videoFramerate)
+	}
+	e.X264Enc, err = gst.NewElementWithProperties("x264enc", x264Props)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create x264enc element\nerr=%v", err))
 		self.Error("Failed to create x264enc element", err)
@@ -220,6 +256,9 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate\nbitrate=%d", bitrate))
 			}
 		}
+		// Negotiated caps landed (initial INVITE or re-INVITE): emit a
+		// fresh IDR so the device starts from a clean frame.
+		e.requestEncoderKeyframe(self)
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect notify::caps signal\nerr=%v", err))
 		self.Error("Failed to connect notify::caps signal", err)
@@ -310,7 +349,66 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			return
 		}
 		e.videoHeight = val
+	case "usage":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting usage property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(string)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for usage property")
+			return
+		}
+		if val == "" {
+			return
+		}
+		if val != "camera" && val != UsageScreenshare {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for usage property\nvalue=%s", val))
+			return
+		}
+		e.usage = val
+	case "framerate":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for framerate property")
+			return
+		}
+		e.videoFramerate = val
 	}
+}
+
+// requestEncoderKeyframe asks x264enc for an IDR on the next frame. The
+// upstream force-key-unit event is consumed by the encoder and does not
+// propagate further upstream. Rate-limited to one request per second.
+func (e *VideoH264) requestEncoderKeyframe(self *gst.Bin) {
+	e.keyframeMu.Lock()
+	now := time.Now()
+	if !e.lastKeyframeReq.IsZero() && now.Sub(e.lastKeyframeReq) < time.Second {
+		e.keyframeMu.Unlock()
+		return
+	}
+	e.lastKeyframeReq = now
+	e.keyframeMu.Unlock()
+
+	enc := e.X264Enc
+	if enc == nil {
+		return
+	}
+	pad := enc.GetStaticPad("src")
+	if pad == nil {
+		return
+	}
+	if !pad.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)) {
+		self.Log(CAT, gst.LevelDebug, "Force-key-unit event not handled by encoder")
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, "Requested encoder keyframe (force-key-unit)")
 }
 
 func (e *VideoH264) Finalize(instance *glib.Object) {
