@@ -45,6 +45,8 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received offer SDP\nsdp=%s", offer.AsText()))
 
+	e.sessionBudgetKbps.Store(int64(sessionBandwidthKbps(offer)))
+
 	answer, err := e.makeSdpSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create answer: %w", err)

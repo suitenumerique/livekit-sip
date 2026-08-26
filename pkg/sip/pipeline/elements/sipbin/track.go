@@ -1,6 +1,7 @@
 package sipbin
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -45,6 +46,12 @@ type SipTrack struct {
 
 	linkFeedbackStop    chan struct{}
 	linkFeedbackStarted bool
+
+	tmmbrKbps      int
+	rxLossTicks    int
+	rxCleanTicks   int
+	tmmbrOutLast   time.Time
+	tmmbrOutActive bool
 }
 
 func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, proto string) (*SipTrack, error) {
@@ -258,6 +265,7 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 
 	switch t.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
+		t.watchTmmbr()
 		t.StartLinkFeedback(e, self)
 	}
 
@@ -392,6 +400,7 @@ func (t *SipTrack) StartLinkFeedback(e *SipBin, self *gst.Bin) {
 				return
 			case <-ticker.C:
 				t.pushLinkFeedback(e, self)
+				t.maybeRequestDeviceReduction(e, self)
 			}
 		}
 	}()
@@ -409,7 +418,13 @@ func (t *SipTrack) stopLinkFeedback() {
 
 func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 	rttMs, fractionLost := e.linkFeedback(t.Kind)
-	if rttMs == 0 && fractionLost == 0 {
+
+	t.keyframeMu.Lock()
+	tmmbrKbps := t.tmmbrKbps
+	t.keyframeMu.Unlock()
+	budgetKbps := e.sendBudgetKbps(t.Kind)
+
+	if rttMs == 0 && fractionLost == 0 && tmmbrKbps == 0 && budgetKbps == 0 {
 		return
 	}
 
@@ -422,7 +437,7 @@ func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\nrtt_ms=%d", t.Kind, fractionLost, rttMs))
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\nrtt_ms=%d\ntmmbr_kbps=%d\nbudget_kbps=%d", t.Kind, fractionLost, rttMs, tmmbrKbps, budgetKbps))
 
 	st := gst.NewStructure("vopenia-link-feedback")
 	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
@@ -431,7 +446,194 @@ func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 	if err := st.SetValue("rtt-ms", rttMs); err != nil {
 		return
 	}
+	if tmmbrKbps > 0 {
+		if err := st.SetValue("tmmbr-kbps", tmmbrKbps); err != nil {
+			return
+		}
+	}
+	if budgetKbps > 0 {
+		if err := st.SetValue("budget-kbps", budgetKbps); err != nil {
+			return
+		}
+	}
 	peer.SendEvent(gst.NewCustomEvent(gst.EventTypeCustomUpstream, st.Transfer()))
+}
+
+// sendBudgetKbps splits the session-level bandwidth between the outgoing
+// video encoders: 70/30 in favor of the slides while screensharing, all for
+// the camera otherwise. 128 kbps is reserved for audio and overhead.
+func (e *SipBin) sendBudgetKbps(kind livekit.TrackSource) int {
+	total := int(e.sessionBudgetKbps.Load())
+	if total <= 0 {
+		return 0
+	}
+	avail := total - 128
+	if avail < 300 {
+		avail = 300
+	}
+	switch kind {
+	case livekit.TrackSource_CAMERA:
+		if e.screenshareSending.Load() {
+			return avail * 30 / 100
+		}
+		return avail
+	case livekit.TrackSource_SCREEN_SHARE:
+		return avail * 70 / 100
+	}
+	return 0
+}
+
+// watchTmmbr parses TMMBR requests from the device's incoming RTCP and
+// keeps the latest requested bitrate for the link feedback event.
+func (t *SipTrack) watchTmmbr() {
+	pad := t.RtcpSrc.GetStaticPad("src")
+	if pad == nil {
+		return
+	}
+	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		buf := info.GetBuffer()
+		if buf == nil {
+			return gst.PadProbeOK
+		}
+		if kbps := parseTmmbrKbps(buf.Bytes()); kbps > 0 {
+			t.keyframeMu.Lock()
+			t.tmmbrKbps = kbps
+			t.keyframeMu.Unlock()
+		}
+		return gst.PadProbeOK
+	})
+}
+
+// parseTmmbrKbps returns the smallest bitrate requested by the TMMBR
+// entries of an RTCP compound packet (RFC 5104 §4.2.1), or 0.
+func parseTmmbrKbps(data []byte) int {
+	best := 0
+	for len(data) >= 4 {
+		if data[0]>>6 != 2 {
+			return best
+		}
+		length := ((int(data[2])<<8 | int(data[3])) + 1) * 4
+		if length > len(data) {
+			return best
+		}
+		if data[1] == 205 && data[0]&0x1f == 3 {
+			for off := 12; off+8 <= length; off += 8 {
+				fci := binary.BigEndian.Uint32(data[off+4 : off+8])
+				exp := fci >> 26
+				mantissa := uint64((fci >> 9) & 0x1ffff)
+				kbps := int(mantissa << exp / 1000)
+				if kbps > 0 && (best == 0 || kbps < best) {
+					best = kbps
+				}
+			}
+		}
+		data = data[length:]
+	}
+	return best
+}
+
+const tmmbrOutLossThreshold = 13 // fraction-lost units (/256), ~5%
+
+// maybeRequestDeviceReduction sends a TMMBR to the device when our receive
+// stream shows sustained loss (85% of the observed bitrate, at most one
+// every 3s), and releases the cap after 10 clean seconds.
+func (t *SipTrack) maybeRequestDeviceReduction(e *SipBin, self *gst.Bin) {
+	st, err := e.getStats(t.Kind)
+	if err != nil || st == nil {
+		return
+	}
+	var loss uint8
+	var rxBitrate uint64
+	for _, src := range st.Sources {
+		if src.Internal || src.LastSentRB == nil {
+			continue
+		}
+		if src.LastSentRB.FractionLost > loss {
+			loss = src.LastSentRB.FractionLost
+		}
+		if src.Bitrate > rxBitrate {
+			rxBitrate = src.Bitrate
+		}
+	}
+
+	t.keyframeMu.Lock()
+	if loss > tmmbrOutLossThreshold {
+		t.rxLossTicks++
+		t.rxCleanTicks = 0
+	} else {
+		t.rxCleanTicks++
+		t.rxLossTicks = 0
+	}
+	degrade := t.rxLossTicks >= 3 && time.Since(t.tmmbrOutLast) >= 3*time.Second
+	release := t.tmmbrOutActive && t.rxCleanTicks >= 10
+	if degrade {
+		t.tmmbrOutLast = time.Now()
+		t.tmmbrOutActive = true
+	}
+	if release {
+		t.tmmbrOutActive = false
+		t.rxCleanTicks = 0
+	}
+	ssrc := t.videoSSRC
+	t.keyframeMu.Unlock()
+
+	if ssrc == 0 {
+		return
+	}
+	if degrade && rxBitrate > 0 {
+		t.sendTmmbr(self, ssrc, rxBitrate*85/100)
+	} else if release {
+		if capKbps := t.recvCapKbps(); capKbps > 0 {
+			t.sendTmmbr(self, ssrc, uint64(capKbps)*1000)
+		}
+	}
+}
+
+func (t *SipTrack) recvCapKbps() int {
+	caps := t.Caps
+	if caps == nil || caps.IsEmpty() {
+		return 0
+	}
+	s := caps.GetStructureAt(0)
+	if s == nil {
+		return 0
+	}
+	if v, err := s.GetString("max-bandwidth"); err == nil {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// sendTmmbr sends an RTCP TMMBR (RFC 5104 §4.2.1) asking the device to cap
+// its send bitrate to bps.
+func (t *SipTrack) sendTmmbr(self *gst.Bin, mediaSSRC uint32, bps uint64) {
+	if t.rtcpConn == nil || t.deviceRtcpAddr == nil {
+		return
+	}
+
+	exp := uint32(0)
+	mantissa := bps
+	for mantissa >= 1<<17 {
+		mantissa >>= 1
+		exp++
+	}
+
+	raw := make([]byte, 20)
+	raw[0] = 0x80 | 3 // V=2, FMT=3 (TMMBR)
+	raw[1] = 205      // RTPFB
+	binary.BigEndian.PutUint16(raw[2:4], 4)
+	binary.BigEndian.PutUint32(raw[4:8], keyframeRequestSSRC)
+	binary.BigEndian.PutUint32(raw[8:12], 0)
+	binary.BigEndian.PutUint32(raw[12:16], mediaSSRC)
+	binary.BigEndian.PutUint32(raw[16:20], exp<<26|uint32(mantissa)<<9)
+
+	if _, err := t.rtcpConn.WriteToUDP(raw, t.deviceRtcpAddr); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to send RTCP TMMBR to device\nerr=%v", err))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sent RTCP TMMBR to device\nssrc=%d\nbps=%d", mediaSSRC, bps))
 }
 
 func (e *SipBin) linkFeedback(kind livekit.TrackSource) (rttMs int, fractionLost uint8) {
