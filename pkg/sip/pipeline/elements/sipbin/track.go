@@ -328,7 +328,7 @@ func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sent RTCP PLI/FIR keyframe request to device\nssrc=%d\nrtcp_addr=%s", ssrc, t.deviceRtcpAddr))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sent RTCP PLI/FIR keyframe request to device\nssrc=%d\nrtcp_addr=%s", ssrc, t.deviceRtcpAddr))
 }
 
 func (t *SipTrack) StartPeriodicKeyframe(self *gst.Bin, ssrc uint32) {

@@ -53,8 +53,8 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 
 	var trackOpts []lksdk.LocalTrackOptions
 	if kind == livekit.TrackSource_CAMERA || kind == livekit.TrackSource_SCREEN_SHARE {
-		// Forward SFU PLI/FIR to the encoder: runs on pion's rtcpWorker
-		// goroutine, whichever of the primary/backup tracks is bound.
+		// Runs on pion's rtcpWorker goroutine, for whichever of the
+		// primary/backup tracks is bound.
 		trackOpts = append(trackOpts, lksdk.WithRTCPHandler(func(pkt rtcp.Packet) {
 			switch pkt.(type) {
 			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
@@ -131,8 +131,6 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 		Source:            kind,
 		BackupCodecPolicy: livekit.BackupCodecPolicy_REGRESSION,
 	}
-	// Advertise the published layer dimensions so the SFU allocates
-	// forwarding for a real resolution instead of 0x0.
 	switch kind {
 	case livekit.TrackSource_CAMERA:
 		pubOpts.VideoWidth = int(e.config.videoWidth)
@@ -179,9 +177,9 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	return nil
 }
 
-// requestKeyframe converts an SFU PLI/FIR into an upstream force-key-unit
-// event pushed at the send path's format filter, upstream of rtpbin, so it
-// reaches the active encoder. Rate-limited to one request per second.
+// requestKeyframe pushes an upstream force-key-unit event at the send path's
+// format filter, upstream of rtpbin, toward the active encoder. Rate-limited
+// to one request per second.
 func (p *LivekitBinPublication) requestKeyframe(self *gst.Bin, kind livekit.TrackSource) {
 	p.keyframeMu.Lock()
 	now := time.Now()

@@ -11,6 +11,15 @@ type SipCompositorScreenshare struct {
 	InputSelector *gst.Element
 	Filter        *gst.Element
 	gpad          *gst.GhostPad
+
+	selectorActivity
+}
+
+func screenshareBranch(e *SipCompositor) (*gst.Element, *selectorActivity) {
+	if s := e.SipCompositorScreenshare; s != nil {
+		return s.InputSelector, &s.selectorActivity
+	}
+	return nil, nil
 }
 
 func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
@@ -76,9 +85,7 @@ func (e *SipCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.P
 		self.Log(CAT, gst.LevelError, "Failed to get request pad from input-selector for new screenshare sink")
 		return nil
 	}
-	if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", sink); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector for new screenshare sink\nerr=%v", err))
-	}
+	watchSelectorSink(self, e, sink, "screenshare", screenshareBranch)
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
 	if gpad == nil {
@@ -111,6 +118,7 @@ func (e *SipCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.Ghost
 		return
 	}
 
+	e.SipCompositorScreenshare.forget(target.GetName())
 	e.SipCompositorScreenshare.InputSelector.ReleaseRequestPad(target)
 	if !self.RemovePad(gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for screenshare sink from bin")
@@ -127,8 +135,11 @@ func (e *SipCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.Ghost
 		self.Log(CAT, gst.LevelInfo, "No more active screenshare sink pads, disabling screenshare")
 		e.cleanupScreenshare(self)
 	} else {
-		if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", sinks[len(sinks)-1]); err != nil {
+		last := sinks[len(sinks)-1]
+		if err := e.SipCompositorScreenshare.InputSelector.SetProperty("active-pad", last); err != nil {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set active-pad property on input-selector after releasing screenshare sink pad\nerr=%v", err))
+		} else {
+			e.SipCompositorScreenshare.setActive(last.GetName())
 		}
 	}
 }

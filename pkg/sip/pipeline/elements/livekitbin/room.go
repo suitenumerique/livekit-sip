@@ -233,8 +233,7 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 }
 
 // requestHighQuality asks the SFU for the top simulcast/SVC layer of a
-// screenshare subscription; without a hint the server picks its default
-// layer, which blurs text-heavy content.
+// screenshare subscription.
 func (e *LivekitBin) requestHighQuality(self *gst.Bin, publication *lksdk.RemoteTrackPublication, identity string) {
 	if publication.Source() != livekit.TrackSource_SCREEN_SHARE {
 		return

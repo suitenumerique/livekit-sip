@@ -160,8 +160,7 @@ func (e *VideoVp8) Constructed(instance *glib.Object) {
 		vp8Props["keyframe-max-dist"] = int(4 * e.videoFramerate)
 		vp8Props["max-quantizer"] = int(40)
 		vp8Props["threads"] = int(4)
-		// static-threshold=100 skips re-encoding unchanged blocks,
-		// the recommended setting for screen/window sharing.
+		// static-threshold skips re-encoding unchanged blocks.
 		vp8Props["static-threshold"] = int(100)
 	}
 	e.Vp8Enc, err = gst.NewElementWithProperties("vp8enc", vp8Props)

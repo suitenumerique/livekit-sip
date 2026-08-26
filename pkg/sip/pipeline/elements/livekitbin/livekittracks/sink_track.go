@@ -210,8 +210,7 @@ func (s *SinkTrack) publish(self *base.GstBaseSink) {
 	}
 	s.pub.Store(pub)
 
-	// A published track that never binds means the SFU rejected both the
-	// primary and backup codecs: media is silently dropped by WriteRTP.
+	// Warn when neither the primary nor the backup track binds within 10s.
 	track := s.track
 	backupTrack := s.backupTrack
 	name := s.opts.Name

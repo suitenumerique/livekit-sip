@@ -34,9 +34,7 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		return err
 	}
 
-	// On sharer change, ask the new source for a keyframe: the upstream
-	// force-key-unit event goes through the active sink pad to the decoder
-	// and ends up as a PLI to the new sharer.
+	// On active pad change, request a keyframe from the newly active source.
 	if _, err := e.LivekitCompositorScreenshare.FallbackSwitch.Connect("notify::active-pad", func(elem *gst.Element, _ *glib.ParamSpec) {
 		pad := elem.GetStaticPad("src")
 		if pad == nil {

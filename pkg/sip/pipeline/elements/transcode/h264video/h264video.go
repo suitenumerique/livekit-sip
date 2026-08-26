@@ -118,6 +118,7 @@ func (e *H264Video) Constructed(instance *glib.Object) {
 		return
 	}
 	keyframe.RequestOnBadBuffer(e.H264Dec.GetStaticPad("src"))
+	keyframe.LogFirstDecodedFrame(CAT, self, e.H264Dec.GetStaticPad("src"))
 
 	e.VideoConvert, err = gst.NewElementWithProperties("videoconvert", map[string]interface{}{})
 	if err != nil {

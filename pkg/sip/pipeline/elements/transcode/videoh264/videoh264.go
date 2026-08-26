@@ -171,9 +171,6 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"min-force-key-unit-interval": uint64(time.Second),
 	}
 	if e.usage == UsageScreenshare {
-		// veryfast + stillimage: slower preset and psy tuning for
-		// text-heavy static content; zerolatency kept to avoid
-		// frame-threading/lookahead latency.
 		x264Props["speed-preset"] = int(3) // veryfast
 		x264Props["tune"] = uint(4 | 1)    // zerolatency|stillimage
 		x264Props["key-int-max"] = uint(4 * e.videoFramerate)
@@ -256,8 +253,6 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate\nbitrate=%d", bitrate))
 			}
 		}
-		// Negotiated caps landed (initial INVITE or re-INVITE): emit a
-		// fresh IDR so the device starts from a clean frame.
 		e.requestEncoderKeyframe(self)
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect notify::caps signal\nerr=%v", err))
@@ -383,9 +378,9 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	}
 }
 
-// requestEncoderKeyframe asks x264enc for an IDR on the next frame. The
-// upstream force-key-unit event is consumed by the encoder and does not
-// propagate further upstream. Rate-limited to one request per second.
+// requestEncoderKeyframe sends an upstream force-key-unit event to x264enc,
+// which consumes it without propagating it further upstream. Rate-limited to
+// one request per second.
 func (e *VideoH264) requestEncoderKeyframe(self *gst.Bin) {
 	e.keyframeMu.Lock()
 	now := time.Now()

@@ -160,8 +160,7 @@ func (e *VideoVp9) Constructed(instance *glib.Object) {
 		vp9Props["tile-columns"] = int(2)
 		vp9Props["min-quantizer"] = int(2)
 		vp9Props["max-quantizer"] = int(40)
-		// static-threshold=100 skips re-encoding unchanged blocks,
-		// the recommended setting for screen/window sharing.
+		// static-threshold skips re-encoding unchanged blocks.
 		vp9Props["static-threshold"] = int(100)
 		vp9Props["keyframe-max-dist"] = int(4 * e.videoFramerate)
 	}

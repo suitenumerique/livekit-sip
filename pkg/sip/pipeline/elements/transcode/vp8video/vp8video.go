@@ -102,6 +102,7 @@ func (e *Vp8Video) Constructed(instance *glib.Object) {
 		return
 	}
 	keyframe.RequestOnBadBuffer(e.Vp8Dec.GetStaticPad("src"))
+	keyframe.LogFirstDecodedFrame(CAT, self, e.Vp8Dec.GetStaticPad("src"))
 
 	e.VideoScale, err = gst.NewElementWithProperties("videoscale", map[string]interface{}{
 		"add-borders": true,

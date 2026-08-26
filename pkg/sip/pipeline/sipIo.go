@@ -207,6 +207,14 @@ func (sio *SipIo) binPadAddedRecvRtpSrc(_ *gst.Element, pad *gst.Pad) {
 	sio.hopMu.Lock()
 	defer sio.hopMu.Unlock()
 
+	// A second pad for the same (session, SSRC) is a payload type switch.
+	prefix := fmt.Sprintf("%d_%d_", session, ssrc)
+	for key := range sio.hops {
+		if strings.HasPrefix(key, prefix) && key != fmt.Sprintf("%d_%d_%d", session, ssrc, pt) {
+			sio.log.Infow("Payload type switch detected on receive stream", "session", session, "ssrc", ssrc, "newPt", pt, "existingHop", key)
+		}
+	}
+
 	sinkPad := sio.pipeline.IOManager.SipController.GetRequestPad(fmt.Sprintf("recv_rtp_sink_%d_%d_%d", session, ssrc, pt))
 	if sinkPad == nil {
 		sio.log.Warnw("Received new recv RTP src pad on rtpbin, but no matching sink pad was found on sipbin", nil, "session", session, "ssrc", ssrc, "pt", pt)
