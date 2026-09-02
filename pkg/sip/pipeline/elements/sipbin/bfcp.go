@@ -332,6 +332,7 @@ func (e *SipBin) bfcpStartScreenshare(self *gst.Bin) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit start-screenshare signal\nerr=%v", err))
 		self.Error("Failed to emit start-screenshare signal", err)
 	} else {
+		e.screenshareSending.Store(true)
 		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Emitted start-screenshare signal\nfloor_id=%d", e.Bfcp.FloorID))
 	}
 }
@@ -346,6 +347,7 @@ func (e *SipBin) bfcpStopScreenshare(self *gst.Bin) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit stop-screenshare signal\nerr=%v", err))
 		self.Error("Failed to emit stop-screenshare signal", err)
 	} else {
+		e.screenshareSending.Store(false)
 		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Emitted stop-screenshare signal\nfloor_id=%d", e.Bfcp.FloorID))
 	}
 }

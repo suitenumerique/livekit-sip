@@ -47,6 +47,9 @@ type SipBin struct {
 	sdpVersion    uint64 // o= line version, incremented per generated SDP (RFC 3264 §8)
 	onHold        bool
 
+	sessionBudgetKbps  atomic.Int64 // session-level b= from the device offer
+	screenshareSending atomic.Bool
+
 	wg sync.WaitGroup
 }
 

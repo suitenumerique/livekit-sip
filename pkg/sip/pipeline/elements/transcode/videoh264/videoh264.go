@@ -74,6 +74,11 @@ type VideoH264 struct {
 	maxBitrate        uint
 	curBitrate        uint
 	lastBitrateAdjust time.Time
+	limitWidth        uint
+	limitHeight       uint
+	scaleLevel        int
+	lowSince          time.Time
+	highSince         time.Time
 
 	keyframeMu      sync.Mutex
 	lastKeyframeReq time.Time
@@ -153,6 +158,8 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		self.Error("Failed to create scale capsfilter", err)
 		return
 	}
+	e.limitWidth = e.videoWidth
+	e.limitHeight = e.videoHeight
 
 	defaultBitrate := uint(2048)
 	if e.videoHeight*e.videoWidth >= 1920*1080 {
@@ -213,10 +220,11 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		}
 		w = max(1, min(w, int(e.videoWidth)))
 		h = max(1, min(h, int(e.videoHeight)))
-		if err := e.ScaleFilter.SetProperty("caps", gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],format=I420", w, h))); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set scale filter caps\nerr=%v", err))
-			self.Error("Failed to set scale filter caps", err)
-		}
+		e.bitrateMu.Lock()
+		e.limitWidth = uint(w)
+		e.limitHeight = uint(h)
+		e.applyScale(self)
+		e.bitrateMu.Unlock()
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect max-resolution signal\nerr=%v", err))
 		self.Error("Failed to connect max-resolution signal", err)
@@ -456,6 +464,7 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 		return
 	}
 	tmmbr := structIntField(st, "tmmbr-kbps")
+	budget := structIntField(st, "budget-kbps")
 	loss := structIntField(st, "fraction-lost")
 	rtt := structIntField(st, "rtt-ms")
 
@@ -480,20 +489,37 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 	if tmmbr > 0 && uint(tmmbr) < ceiling {
 		ceiling = uint(tmmbr)
 	}
+	if budget > 0 && uint(budget) < ceiling {
+		ceiling = uint(budget)
+	}
 
 	const rttHigh = 500
 	target := e.curBitrate
 	if loss > 5 || rtt > rttHigh {
 		target = target * 85 / 100
 	} else {
-		target += target * 5 / 100
+		// Clean link: climb by 5% or a quarter of the headroom, whichever
+		// is larger, so a released budget is reclaimed within seconds.
+		step := target * 5 / 100
+		if ceiling > target && (ceiling-target)/4 > step {
+			step = (ceiling - target) / 4
+		}
+		target += step
 	}
 	if target > ceiling {
 		target = ceiling
 	}
-	if target < floor {
-		target = floor
+	// The floor never overrides a smaller ceiling (tight session budgets).
+	minRate := min(floor, ceiling)
+	if minRate < 64 {
+		minRate = 64
 	}
+	if target < minRate {
+		target = minRate
+	}
+
+	e.adjustScale(self, now, target, ceiling)
+
 	if target == e.curBitrate {
 		return
 	}
@@ -503,7 +529,70 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set adaptive x264enc bitrate\nerr=%v", err))
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nfraction_lost=%d\nrtt_ms=%d", target, ceiling, tmmbr, loss, rtt))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nbudget_kbps=%d\nfraction_lost=%d\nrtt_ms=%d", target, ceiling, tmmbr, budget, loss, rtt))
+}
+
+const (
+	scaleDownAfter = 5 * time.Second
+	scaleUpAfter   = 15 * time.Second
+)
+
+// adjustScale steps the output resolution one level down when the adaptive
+// bitrate stays under 40% of the ceiling, and back up when it stays at or
+// above 80%. Called with bitrateMu held.
+func (e *VideoH264) adjustScale(self *gst.Bin, now time.Time, target, ceiling uint) {
+	switch {
+	case target*100 < ceiling*40:
+		e.highSince = time.Time{}
+		if e.lowSince.IsZero() {
+			e.lowSince = now
+			return
+		}
+		if now.Sub(e.lowSince) >= scaleDownAfter && e.scaleLevel < 2 {
+			e.scaleLevel++
+			e.lowSince = time.Time{}
+			e.applyScale(self)
+		}
+	case target*100 >= ceiling*80:
+		e.lowSince = time.Time{}
+		if e.highSince.IsZero() {
+			e.highSince = now
+			return
+		}
+		if now.Sub(e.highSince) >= scaleUpAfter && e.scaleLevel > 0 {
+			e.scaleLevel--
+			e.highSince = time.Time{}
+			e.applyScale(self)
+		}
+	default:
+		e.lowSince = time.Time{}
+		e.highSince = time.Time{}
+	}
+}
+
+// applyScale sets the ScaleFilter to the level-limited resolution. Called
+// with bitrateMu held.
+func (e *VideoH264) applyScale(self *gst.Bin) {
+	if e.ScaleFilter == nil {
+		return
+	}
+	w, h := e.limitWidth, e.limitHeight
+	switch e.scaleLevel {
+	case 1:
+		w, h = w*2/3, h*2/3
+	case 2:
+		w, h = w/2, h/2
+	}
+	w &^= 1
+	h &^= 1
+	if w < 160 || h < 90 {
+		w, h = 160, 90
+	}
+	if err := e.ScaleFilter.SetProperty("caps", gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],format=I420", w, h))); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set scale filter caps\nerr=%v", err))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated encoder scale\nlevel=%d\nwidth=%d\nheight=%d", e.scaleLevel, w, h))
 }
 
 func structIntField(st *gst.Structure, key string) int {

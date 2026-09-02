@@ -302,6 +302,26 @@ func mediaCapsRtcpFeedback(self *gst.Bin, caps *gst.Caps) *gst.Caps {
 	return caps
 }
 
+func sessionBandwidthKbps(msg *gstsdp.Message) int {
+	tias, as := 0, 0
+	for i := 0; i < msg.BandwidthsLen(); i++ {
+		bw := msg.GetBandwidth(i)
+		if bw == nil {
+			continue
+		}
+		switch bw.BWType() {
+		case "TIAS":
+			tias = int(bw.Value() / 1000)
+		case "AS":
+			as = int(bw.Value())
+		}
+	}
+	if tias > 0 {
+		return tias
+	}
+	return as
+}
+
 func mediaBandwidthKbps(media *gstsdp.Media) int {
 	tias, as := 0, 0
 	for i := 0; i < media.BandwidthsLen(); i++ {
