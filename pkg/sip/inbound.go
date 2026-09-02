@@ -1269,6 +1269,8 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	go c.playAudio(ctx, c.s.res.enterPinFd)
 	pin := ""
 	noPin := false
+	deadline := time.NewTimer(c.s.conf.PinTimeout)
+	defer deadline.Stop()
 	for {
 		c.medias.ShowMessage(p.Sprintf("Please enter your PIN followed by # (use * to delete)\nEntered: %s", strings.Repeat("*", len(pin))), gst.LevelInfo)
 		select {
@@ -1278,11 +1280,19 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 		case <-ctx.Done():
 			c.closeWithHangup(ctx)
 			return disp, false, nil
+		case <-c.medias.Closed():
+			c.close(ctx, callDropped, stats.ServerError("media-closed"))
+			return disp, false, psrpc.NewErrorf(psrpc.Canceled, "media closed during pin entry")
+		case <-deadline.C:
+			c.log().Infow("PIN entry timed out", "timeout", c.s.conf.PinTimeout)
+			c.close(ctx, callDropped, stats.ClientError("pin-timeout"))
+			return disp, false, psrpc.NewErrorf(psrpc.DeadlineExceeded, "pin entry timed out")
 		case b, ok := <-c.dtmf:
 			if !ok {
 				c.Close()
 				return disp, false, psrpc.NewErrorf(psrpc.Canceled, "failed reading DTMF event")
 			}
+			deadline.Reset(c.s.conf.PinTimeout)
 			if b.Digit == 0 {
 				continue // unrecognized
 			}

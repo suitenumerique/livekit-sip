@@ -15,6 +15,7 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
 	"github.com/samber/lo"
 	"github.com/vopenia-io/go-pangocairo/cairo"
+	"github.com/vopenia-io/go-pangocairo/pango"
 )
 
 type LivekitCompositorCamera struct {
@@ -25,6 +26,11 @@ type LivekitCompositorCamera struct {
 	Filter     *gst.Element
 
 	overlayCache atomic.Pointer[overlayCache]
+
+	// Pango objects reused across draw callbacks (single streaming thread).
+	pangoLayout *pango.Layout
+	pangoBold   *pango.FontDescription
+	pangoSans   *pango.FontDescription
 }
 
 func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
