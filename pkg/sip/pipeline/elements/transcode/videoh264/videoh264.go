@@ -178,14 +178,16 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"min-force-key-unit-interval": uint64(time.Second),
 	}
 	if e.usage == UsageScreenshare {
-		// Quality over latency for slides: frame threading and a short
-		// lookahead instead of zerolatency's 8 slices, and a wide motion
-		// search so scrolling text still finds its motion vectors.
+		// Slides: two slices (instead of zerolatency's 8) and no lookahead,
+		// so output never waits for later frames — the source can be
+		// sparse (static screen) — plus a wide motion search for scrolling
+		// text.
 		x264Props["speed-preset"] = int(3) // veryfast
 		x264Props["tune"] = uint(1)        // stillimage
-		x264Props["sliced-threads"] = false
-		x264Props["threads"] = uint(3)
-		x264Props["rc-lookahead"] = int(5)
+		x264Props["sliced-threads"] = true
+		x264Props["threads"] = uint(2)
+		x264Props["rc-lookahead"] = int(0)
+		x264Props["mb-tree"] = false
 		x264Props["me"] = int(2) // umh
 		x264Props["subme"] = uint(4)
 		x264Props["option-string"] = "merange=64"
@@ -401,11 +403,11 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	}
 }
 
-// scheduleKeyframeBurst requests an IDR at +1s, +2s and +3s after the slides
-// stream is negotiated, so a device that discards the first keyframe (BFCP
-// floor not processed yet) recovers within a second instead of a GOP.
+// scheduleKeyframeBurst requests IDRs during the first 10s after the slides
+// stream is negotiated, so a device that switches to content late (BFCP
+// floor, layout change) gets a keyframe within a second or two.
 func (e *VideoH264) scheduleKeyframeBurst(wself *glib.WeakRef, eweak weak.Pointer[VideoH264]) {
-	for i := 1; i <= 3; i++ {
+	for _, i := range []int{1, 2, 3, 5, 7, 10} {
 		time.AfterFunc(time.Duration(i)*time.Second, func() {
 			self := gst.ToGstBin(wself.Get())
 			e := eweak.Value()
