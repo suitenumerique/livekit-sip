@@ -319,12 +319,12 @@ func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
 	t.keyframeMu.Unlock()
 
 	raw, err := rtcp.Marshal([]rtcp.Packet{
-		&rtcp.PictureLossIndication{SenderSSRC: keyframeRequestSSRC, MediaSSRC: ssrc},
 		&rtcp.FullIntraRequest{
 			SenderSSRC: keyframeRequestSSRC,
 			MediaSSRC:  ssrc,
 			FIR:        []rtcp.FIREntry{{SSRC: ssrc, SequenceNumber: firSeq}},
 		},
+		&rtcp.PictureLossIndication{SenderSSRC: keyframeRequestSSRC, MediaSSRC: ssrc},
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to marshal RTCP keyframe request\nerr=%v", err))

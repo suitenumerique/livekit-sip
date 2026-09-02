@@ -138,6 +138,7 @@ type Config struct {
 
 	MediaTimeout         time.Duration      `yaml:"media_timeout"`
 	MediaTimeoutInitial  time.Duration      `yaml:"media_timeout_initial"`
+	PinTimeout           time.Duration      `yaml:"pin_timeout"` // max inactivity on the PIN entry screen
 	SymmetricRTP         bool               `yaml:"symmetric_rtp"`
 	IgnoreLocalAddrInSDP bool               `yaml:"ignore_local_addr_in_sdp"` // enable symmetric RTP if local IP is specified in SDP
 	Codecs               map[string]bool    `yaml:"codecs"`
@@ -249,6 +250,10 @@ func (c *Config) Init() error {
 
 	if c.Gst.Debug == "" {
 		c.Gst.Debug = "*:3,sipbin:4" // sipbin log sdp as info and we want them to be visible by default
+	}
+
+	if c.PinTimeout <= 0 {
+		c.PinTimeout = 60 * time.Second
 	}
 
 	if c.Meet.Timeout <= 0 {

@@ -172,6 +172,33 @@ func (e *LivekitCompositor) collectParticipantOverlayInfo() []participantOverlay
 	return out
 }
 
+// pangoFor returns the cached pango layout bound to cr, plus the cached font
+// description for the requested family. pango_cairo_create_layout allocates
+// native objects the bindings never free, so per-frame creation leaks; the
+// cache is unsynchronized because draw callbacks run on a single streaming
+// thread.
+func (e *LivekitCompositor) pangoFor(cr *cairo.Context, bold bool) (*pango.Layout, *pango.FontDescription) {
+	c := e.LivekitCompositorCamera
+	if c == nil {
+		layout := pango.CairoCreateLayout(cr)
+		if bold {
+			return layout, pango.FontDescriptionFromString("Sans Bold")
+		}
+		return layout, pango.FontDescriptionFromString("Sans")
+	}
+	if c.pangoLayout == nil {
+		c.pangoLayout = pango.CairoCreateLayout(cr)
+		c.pangoBold = pango.FontDescriptionFromString("Sans Bold")
+		c.pangoSans = pango.FontDescriptionFromString("Sans")
+	} else {
+		pango.CairoUpdateLayout(cr, c.pangoLayout)
+	}
+	if bold {
+		return c.pangoLayout, c.pangoBold
+	}
+	return c.pangoLayout, c.pangoSans
+}
+
 func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context, cache *overlayCache) {
 	cr.Save()
 	cr.SetSourceRGBA(bgColorR, bgColorG, bgColorB, 1.0)
@@ -179,8 +206,7 @@ func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context
 	cr.Fill()
 	cr.Restore()
 
-	layout := pango.CairoCreateLayout(cr)
-	desc := pango.FontDescriptionFromString("Sans Bold")
+	layout, desc := e.pangoFor(cr, true)
 	desc.SetSize(int(cache.fontScale * 14))
 	layout.SetFontDescription(desc)
 	layout.SetText(i18n.Printer(e.lang).Sprintf("You are the only participant..."), -1)
@@ -206,8 +232,7 @@ func (e *LivekitCompositor) drawOverlayMessage(self *gst.Bin, cr *cairo.Context,
 	cr.Fill()
 	cr.Restore()
 
-	layout := pango.CairoCreateLayout(cr)
-	desc := pango.FontDescriptionFromString("Sans Bold")
+	layout, desc := e.pangoFor(cr, true)
 	desc.SetSize(int(cache.fontScale * 14))
 	layout.SetFontDescription(desc)
 	layout.SetText(cache.message.Message, -1)
@@ -303,8 +328,7 @@ func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gs
 		cr.Restore()
 
 		// Bold initial centered on the disc.
-		layout := pango.CairoCreateLayout(cr)
-		desc := pango.FontDescriptionFromString("Sans")
+		layout, desc := e.pangoFor(cr, false)
 		desc.SetSize(int(radius * 0.75 * float64(pango.SCALE)))
 		layout.SetFontDescription(desc)
 		layout.SetText(initial, -1)
@@ -328,8 +352,7 @@ func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gs
 		const height = muteIconBoxSize
 		targetTextH := height - 2*labelPadY
 
-		layout := pango.CairoCreateLayout(cr)
-		desc := pango.FontDescriptionFromString("Sans")
+		layout, desc := e.pangoFor(cr, false)
 		// Measure at a reference size, then rescale so the layout's logical
 		// height equals targetTextH. SetFontDescription copies the desc, so
 		// we have to call it again after mutating the absolute size.
