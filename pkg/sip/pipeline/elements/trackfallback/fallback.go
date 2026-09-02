@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/audiobus"
 )
 
 type Fallback interface {
@@ -33,7 +34,7 @@ func (f *AudioFallback) Create(e *TrackFallback, self *gst.Bin) (*gst.Pad, error
 	}
 
 	f.SilenceFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"),
+		"caps": gst.NewCapsFromString(audiobus.Caps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create silence filter: %w", err)

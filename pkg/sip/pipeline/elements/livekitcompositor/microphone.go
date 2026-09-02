@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/audiobus"
 )
 
 type LivekitCompositorMicrophone struct {
@@ -12,7 +13,11 @@ type LivekitCompositorMicrophone struct {
 	SilenceFilter *gst.Element
 	SilencePad    *gst.Pad
 	AudioMixer    *gst.Element
+	MixFilter     *gst.Element
+	Limiter       *gst.Element
+	Convert       *gst.Element
 	Filter        *gst.Element
+	elements      []*gst.Element
 }
 
 func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
@@ -27,15 +32,15 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 
 	compositorMicrophone.SilenceSrc, err = gst.NewElementWithProperties("audiotestsrc", map[string]interface{}{
 		"is-live":          true,
-		"wave":             int(4),    // silence
-		"samplesperbuffer": uint(160), // 160 bytes = 10 ms at 16 kHz S16LE mono, match audiomixer default output-buffer-duration.
+		"wave":             int(4),                   // silence
+		"samplesperbuffer": int(audiobus.Rate / 100), // 10 ms, matches audiomixer default output-buffer-duration
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create microphone silence source: %w", err)
 	}
 
 	compositorMicrophone.SilenceFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"),
+		"caps": gst.NewCapsFromString(audiobus.Caps),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create microphone silence filter: %w", err)
@@ -50,14 +55,39 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 		return err
 	}
 
+	compositorMicrophone.MixFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString(audiobus.MixCaps),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create microphone mix filter: %w", err)
+	}
+
+	compositorMicrophone.Limiter, err = gst.NewElement("rglimiter")
+	if err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("rglimiter unavailable, mixing without limiter\nerr=%v", err))
+		compositorMicrophone.Limiter = nil
+	}
+
+	compositorMicrophone.Convert, err = gst.NewElement("audioconvert")
+	if err != nil {
+		return fmt.Errorf("failed to create microphone audioconvert: %w", err)
+	}
+
 	compositorMicrophone.Filter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"),
+		"caps": gst.NewCapsFromString(audiobus.Caps),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create microphone filter: %w", err)
 	}
 
-	if err := self.AddMany(compositorMicrophone.SilenceSrc, compositorMicrophone.SilenceFilter, compositorMicrophone.AudioMixer, compositorMicrophone.Filter); err != nil {
+	chain := []*gst.Element{compositorMicrophone.AudioMixer, compositorMicrophone.MixFilter}
+	if compositorMicrophone.Limiter != nil {
+		chain = append(chain, compositorMicrophone.Limiter)
+	}
+	chain = append(chain, compositorMicrophone.Convert, compositorMicrophone.Filter)
+	compositorMicrophone.elements = append([]*gst.Element{compositorMicrophone.SilenceSrc, compositorMicrophone.SilenceFilter}, chain...)
+
+	if err := self.AddMany(compositorMicrophone.elements...); err != nil {
 		return fmt.Errorf("failed to add microphone elements to bin: %w", err)
 	}
 
@@ -73,8 +103,8 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 		return fmt.Errorf("failed to link microphone silence filter to audiomixer: %v", ret)
 	}
 
-	if err := compositorMicrophone.AudioMixer.Link(compositorMicrophone.Filter); err != nil {
-		return fmt.Errorf("failed to link microphone audiomixer to filter: %w", err)
+	if err := gst.ElementLinkMany(chain...); err != nil {
+		return fmt.Errorf("failed to link microphone mixer chain: %w", err)
 	}
 
 	class := gst.ToElementClass(self.Class())
@@ -89,17 +119,10 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 		return fmt.Errorf("failed to add ghost pad for microphone source to bin")
 	}
 
-	if !compositorMicrophone.Filter.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync microphone filter state with parent")
-	}
-	if !compositorMicrophone.AudioMixer.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync microphone audiomixer state with parent")
-	}
-	if !compositorMicrophone.SilenceFilter.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync microphone silence filter state with parent")
-	}
-	if !compositorMicrophone.SilenceSrc.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync microphone silence source state with parent")
+	for i := len(compositorMicrophone.elements) - 1; i >= 0; i-- {
+		if !compositorMicrophone.elements[i].SyncStateWithParent() {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync microphone element state with parent\nname=%s", compositorMicrophone.elements[i].GetName()))
+		}
 	}
 
 	e.LivekitCompositorMicrophone = compositorMicrophone
@@ -128,19 +151,12 @@ func (e *LivekitCompositor) cleanupMicrophone(self *gst.Bin) {
 
 	self.Log(CAT, gst.LevelDebug, "Cleaning up microphone compositor since there are no more active sink pads")
 
-	if err := e.LivekitCompositorMicrophone.SilenceSrc.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone silence source state to null during cleanup\nerr=%v", err))
+	for _, element := range e.LivekitCompositorMicrophone.elements {
+		if err := element.SetState(gst.StateNull); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone element state to null during cleanup\nname=%s\nerr=%v", element.GetName(), err))
+		}
 	}
-	if err := e.LivekitCompositorMicrophone.SilenceFilter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone silence filter state to null during cleanup\nerr=%v", err))
-	}
-	if err := e.LivekitCompositorMicrophone.AudioMixer.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone audiomixer state to null during cleanup\nerr=%v", err))
-	}
-	if err := e.LivekitCompositorMicrophone.Filter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set microphone filter state to null during cleanup\nerr=%v", err))
-	}
-	if err := self.RemoveMany(e.LivekitCompositorMicrophone.SilenceSrc, e.LivekitCompositorMicrophone.SilenceFilter, e.LivekitCompositorMicrophone.AudioMixer, e.LivekitCompositorMicrophone.Filter); err != nil {
+	if err := self.RemoveMany(e.LivekitCompositorMicrophone.elements...); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove microphone elements from bin during cleanup\nerr=%v", err))
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/audiobus"
 	"golang.org/x/sys/unix"
 )
 
@@ -16,7 +17,7 @@ var CAT = gst.NewDebugCategory(
 	"livekit SIP pipeline LiveKit IO element",
 )
 
-const AudioCaps = "audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"
+const AudioCaps = audiobus.Caps
 
 type IoManagerLivekit struct {
 	inMu  sync.Mutex

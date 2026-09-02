@@ -229,6 +229,11 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 	}
 
 	switch kind {
+	case livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
+		mediaAddPtime(self, media)
+	}
+
+	switch kind {
 	case livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
 		if ret := media.AddAttribute("content", "slides"); ret != gstsdp.SDPResultOk {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add content attribute to media\nerr=%v", ret))
@@ -342,6 +347,14 @@ func mediaAddTelephoneEventFmtp(self *gst.Bin, media *gstsdp.Media, caps *gst.Ca
 		}
 		if ret := media.AddAttribute("fmtp", fmt.Sprintf("%d 0-15", pt)); ret != gstsdp.SDPResultOk {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add telephone-event fmtp attribute to media\npt=%d\nerr=%v", pt, ret))
+		}
+	}
+}
+
+func mediaAddPtime(self *gst.Bin, media *gstsdp.Media) {
+	for _, attr := range [][2]string{{"ptime", "20"}, {"maxptime", "40"}} {
+		if ret := media.AddAttribute(attr[0], attr[1]); ret != gstsdp.SDPResultOk {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add %s attribute to media\nerr=%v", attr[0], ret))
 		}
 	}
 }
@@ -541,6 +554,11 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 
 	if ret := media.AddAttribute("rtcp", strconv.Itoa(track.rtcpConn.LocalAddr().(*net.UDPAddr).Port)); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to add rtcp attribute to media: %v", err)
+	}
+
+	switch track.Kind {
+	case livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
+		mediaAddPtime(self, media)
 	}
 
 	switch track.Kind {

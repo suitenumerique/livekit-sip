@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/audiobus"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -15,7 +16,7 @@ var CAT = gst.NewDebugCategory(
 	"livekit SIP pipeline SIP IO element",
 )
 
-const AudioCaps = "audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"
+const AudioCaps = audiobus.Caps
 
 const DtmfDetectCaps = "audio/x-raw,format=S16LE,rate=8000,channels=1,layout=interleaved"
 
