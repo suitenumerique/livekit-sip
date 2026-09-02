@@ -504,7 +504,9 @@ func (t *SipTrack) watchTmmbr(bin *gst.Bin) {
 			t.keyframeMu.Unlock()
 		}
 		if pli, fir := hasKeyframeRequest(data); pli || fir {
-			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Device requested keyframe\nkind=%d\npli=%t\nfir=%t", t.Kind, pli, fir))
+			if self := gst.ToGstBin(wself.Get()); self != nil {
+				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Device requested keyframe\nkind=%d\npli=%t\nfir=%t", t.Kind, pli, fir))
+			}
 		}
 		return gst.PadProbeOK
 	})
