@@ -132,34 +132,41 @@ func (e *VideoVp8) Constructed(instance *glib.Object) {
 		return
 	}
 
+	pixels := e.videoWidth * e.videoHeight
+	targetBitrate, maxQuantizer := 1_000_000, 32
+	switch {
+	case pixels >= 1920*1080:
+		targetBitrate = 3_500_000
+	case pixels >= 1280*720:
+		targetBitrate = 2_000_000
+	}
+	if e.usage == UsageScreenshare {
+		targetBitrate, maxQuantizer = 1_500_000, 40
+		switch {
+		case pixels >= 1920*1080:
+			targetBitrate = 6_000_000
+		case pixels >= 1280*720:
+			targetBitrate = 3_000_000
+		}
+	}
 	vp8Props := map[string]interface{}{
 		"deadline":                    int(1), // realtime
 		"cpu-used":                    int(8),
-		"keyframe-max-dist":           int(12),
+		"target-bitrate":              targetBitrate,
+		"keyframe-max-dist":           int(4 * e.videoFramerate),
 		"lag-in-frames":               int(0),
-		"threads":                     int(2),
+		"threads":                     int(4),
 		"token-partitions":            int(2),
 		"buffer-initial-size":         int(200),
 		"buffer-optimal-size":         int(300),
 		"buffer-size":                 int(500),
 		"min-quantizer":               int(4),
-		"max-quantizer":               int(32),
-		"cq-level":                    int(10),
+		"max-quantizer":               maxQuantizer,
 		"error-resilient":             int(1),
 		"end-usage":                   int(1), // CBR
 		"min-force-key-unit-interval": uint64(time.Second),
 	}
 	if e.usage == UsageScreenshare {
-		targetBitrate := 1_500_000
-		if e.videoWidth*e.videoHeight >= 1920*1080 {
-			targetBitrate = 6_000_000
-		} else if e.videoWidth*e.videoHeight >= 1280*720 {
-			targetBitrate = 3_000_000
-		}
-		vp8Props["target-bitrate"] = targetBitrate
-		vp8Props["keyframe-max-dist"] = int(4 * e.videoFramerate)
-		vp8Props["max-quantizer"] = int(40)
-		vp8Props["threads"] = int(4)
 		// static-threshold skips re-encoding unchanged blocks.
 		vp8Props["static-threshold"] = int(100)
 	}

@@ -178,8 +178,17 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"min-force-key-unit-interval": uint64(time.Second),
 	}
 	if e.usage == UsageScreenshare {
+		// Quality over latency for slides: frame threading and a short
+		// lookahead instead of zerolatency's 8 slices, and a wide motion
+		// search so scrolling text still finds its motion vectors.
 		x264Props["speed-preset"] = int(3) // veryfast
-		x264Props["tune"] = uint(4 | 1)    // zerolatency|stillimage
+		x264Props["tune"] = uint(1)        // stillimage
+		x264Props["sliced-threads"] = false
+		x264Props["threads"] = uint(3)
+		x264Props["rc-lookahead"] = int(5)
+		x264Props["me"] = int(2) // umh
+		x264Props["subme"] = uint(4)
+		x264Props["option-string"] = "merange=64"
 		x264Props["key-int-max"] = uint(4 * e.videoFramerate)
 	}
 	e.X264Enc, err = gst.NewElementWithProperties("x264enc", x264Props)
@@ -189,7 +198,9 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		return
 	}
 
-	e.H264RtpPayBin, err = gst.NewElementWithProperties("h264rtppaybin", map[string]interface{}{})
+	e.H264RtpPayBin, err = gst.NewElementWithProperties("h264rtppaybin", map[string]interface{}{
+		"allow-high": e.usage == UsageScreenshare,
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264rtppaybin element\nerr=%v", err))
 		self.Error("Failed to create h264rtppaybin element", err)
@@ -465,7 +476,13 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 	if loss > 5 || rtt > rttHigh {
 		target = target * 85 / 100
 	} else {
-		target += target * 5 / 100
+		// Clean link: climb by 5% or a quarter of the headroom, whichever
+		// is larger, so a released budget is reclaimed within seconds.
+		step := target * 5 / 100
+		if ceiling > target && (ceiling-target)/4 > step {
+			step = (ceiling - target) / 4
+		}
+		target += step
 	}
 	if target > ceiling {
 		target = ceiling

@@ -460,7 +460,7 @@ func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 }
 
 // sendBudgetKbps splits the session-level bandwidth between the outgoing
-// video encoders: 70/30 in favor of the slides while screensharing, all for
+// video encoders: 80/20 in favor of the slides while screensharing, all for
 // the camera otherwise. 128 kbps is reserved for audio and overhead.
 func (e *SipBin) sendBudgetKbps(kind livekit.TrackSource) int {
 	total := int(e.sessionBudgetKbps.Load())
@@ -474,11 +474,11 @@ func (e *SipBin) sendBudgetKbps(kind livekit.TrackSource) int {
 	switch kind {
 	case livekit.TrackSource_CAMERA:
 		if e.screenshareSending.Load() {
-			return avail * 30 / 100
+			return avail * 20 / 100
 		}
 		return avail
 	case livekit.TrackSource_SCREEN_SHARE:
-		return avail * 70 / 100
+		return avail * 80 / 100
 	}
 	return 0
 }

@@ -41,10 +41,41 @@ type H264RtpPayBin struct {
 	H264Parse         *gst.Element
 	RtpH264Pay        *gst.Element
 	PlidPatch         *gst.Element
+
+	allowHigh bool
+}
+
+var properties = []*glib.ParamSpec{
+	glib.NewBoolParam(
+		"allow-high",
+		"Allow High Profile",
+		"Constrain the encoder to High profile when the negotiated profile-level-id is High, instead of constrained-baseline",
+		false,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 }
 
 func (e *H264RtpPayBin) New() glib.GoObjectSubclass {
 	return &H264RtpPayBin{}
+}
+
+func (e *H264RtpPayBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) {
+	self := gst.ToGstBin(instance)
+	param := properties[id]
+	switch param.Name() {
+	case "allow-high":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting allow-high property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(bool)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for allow-high property")
+			return
+		}
+		e.allowHigh = val
+	}
 }
 
 func (e *H264RtpPayBin) ClassInit(klass *glib.ObjectClass) {
@@ -77,6 +108,8 @@ func (e *H264RtpPayBin) ClassInit(klass *glib.ObjectClass) {
 		glib.TYPE_NONE,
 		glib.TYPE_INT, glib.TYPE_INT,
 	)
+
+	class.InstallProperties(properties)
 }
 
 func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
@@ -211,7 +244,7 @@ func (e *H264RtpPayBin) onPlidResolved(self *gst.Bin, plid string) {
 		return
 	}
 
-	caps := gst.NewCapsFromString(h264CapsStringForPLID(parsed))
+	caps := gst.NewCapsFromString(h264CapsStringForPLID(parsed, e.allowHigh))
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Parsed profile-level-id\nprofile_idc=%d\nprofile_iop=%d\nlevel_idc=%d\nis_level_1b=%t\ncaps=%s", parsed.profileIDC, parsed.profileIOP, parsed.levelIDC, parsed.isLevel1b, caps.String()))
 	if err := e.ProfileCapsFilter.SetProperty("caps", caps); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set caps on profile capsfilter\nerr=%v", err))

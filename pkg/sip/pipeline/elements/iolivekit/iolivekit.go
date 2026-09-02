@@ -731,6 +731,7 @@ func (e *IoManagerLivekit) padAddedCameraOut(self *gst.Bin, pad *gst.Pad, name s
 	if err := errors.Join(
 		properties.SetUint("*.video-width", e.videoWidth),
 		properties.SetUint("*.video-height", e.videoHeight),
+		properties.SetUint("*.framerate", e.videoFramerate),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for camera output pad\nerr=%v", err))
 		self.Error("Failed to set properties for factorybin element for camera output pad", err)

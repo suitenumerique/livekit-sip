@@ -119,7 +119,10 @@ func isLevel1b(profileIDC, profileIOP, levelIDC uint8) bool {
 // gstH264ProfileName maps an RFC 6184 profile to the `profile=...` string
 // set on the room→device x264enc capsfilter. High and Constrained-High map
 // to constrained-baseline; Main and the Baseline variants map through as-is.
-func gstH264ProfileName(p profile) string {
+// High is signaled as constrained-baseline unless allowHigh: the ultrafast
+// camera encoder only produces constrained-baseline features, and some
+// devices reject a High SPS in front of such a stream.
+func gstH264ProfileName(p profile, allowHigh bool) string {
 	switch p {
 	case profileConstrainedBaseline:
 		return "constrained-baseline"
@@ -128,6 +131,9 @@ func gstH264ProfileName(p profile) string {
 	case profileMain:
 		return "main"
 	case profileHigh, profileConstrainedHigh:
+		if allowHigh {
+			return "high"
+		}
 		return "constrained-baseline"
 	}
 	return ""
@@ -220,8 +226,8 @@ func gstH264LevelIDC(levelStr string) (uint8, bool) {
 // h264CapsStringForPLID returns a GStreamer caps string describing the
 // H.264-domain constraint implied by the given profile-level-id. Empty
 // string if plid cannot be parsed to a known profile/level.
-func h264CapsStringForPLID(plid profileLevelID) string {
-	profName := gstH264ProfileName(plid.profile)
+func h264CapsStringForPLID(plid profileLevelID, allowHigh bool) string {
+	profName := gstH264ProfileName(plid.profile, allowHigh)
 
 	var levels []string
 	for _, level := range h264Levels {
