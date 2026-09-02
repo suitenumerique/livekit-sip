@@ -18,9 +18,12 @@ var CAT = gst.NewDebugCategory(
 type SipCompositor struct {
 	mu sync.Mutex
 
-	videoWidth     uint
-	videoHeight    uint
-	videoFramerate uint
+	videoWidth           uint
+	videoHeight          uint
+	videoFramerate       uint
+	screenshareWidth     uint
+	screenshareHeight    uint
+	screenshareFramerate uint
 
 	*SipCompositorMicrophone
 	*SipCompositorCamera
@@ -61,6 +64,9 @@ func (e *SipCompositor) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
 	e.videoFramerate = 24
+	e.screenshareWidth = 1920
+	e.screenshareHeight = 1080
+	e.screenshareFramerate = 15
 }
 
 func (e *SipCompositor) Finalize(instance *glib.Object) {

@@ -35,6 +35,33 @@ var properties = []*glib.ParamSpec{
 		24,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewUintParam(
+		"screenshare-width",
+		"Screenshare Width",
+		"The width of the screenshare frames",
+		1,
+		8192,
+		1920,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-height",
+		"Screenshare Height",
+		"The height of the screenshare frames",
+		1,
+		8192,
+		1080,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"screenshare-framerate",
+		"Screenshare Framerate",
+		"The framerate of the screenshare frames",
+		1,
+		500,
+		15,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 }
 
 func (e *SipCompositor) SetProperty(instance *glib.Object, id uint, value *glib.Value) {
@@ -85,5 +112,49 @@ func (e *SipCompositor) SetProperty(instance *glib.Object, id uint, value *glib.
 			return
 		}
 		e.videoFramerate = val
+	case "screenshare-width":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare-width property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for screenshare-width property")
+			return
+		}
+		if val > 0xFFFF {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for screenshare-width property\nvalue=%d", val))
+			return
+		}
+		e.screenshareWidth = val
+	case "screenshare-height":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare-height property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for screenshare-height property")
+			return
+		}
+		if val > 0xFFFF {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for screenshare-height property\nvalue=%d", val))
+			return
+		}
+		e.screenshareHeight = val
+	case "screenshare-framerate":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting screenshare-framerate property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for screenshare-framerate property")
+			return
+		}
+		e.screenshareFramerate = val
 	}
 }

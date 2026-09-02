@@ -5,7 +5,9 @@ import (
 	"math"
 	"sync/atomic"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/go-gst/go-gst/gst/video"
 	"github.com/livekit/protocol/livekit"
 )
 
@@ -32,8 +34,19 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		return err
 	}
 
+	// On active pad change, request a keyframe from the newly active source.
+	if _, err := e.LivekitCompositorScreenshare.FallbackSwitch.Connect("notify::active-pad", func(elem *gst.Element, _ *glib.ParamSpec) {
+		pad := elem.GetStaticPad("src")
+		if pad == nil {
+			return
+		}
+		pad.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0))
+	}); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to connect to notify::active-pad signal of fallbackswitch\nerr=%v", err))
+	}
+
 	e.LivekitCompositorScreenshare.Filter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw, width=(int)%d, height=(int)%d, framerate=%d/1", e.videoWidth, e.videoHeight, e.videoFramerate)),
+		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw, width=(int)%d, height=(int)%d, framerate=%d/1", e.screenshareWidth, e.screenshareHeight, e.screenshareFramerate)),
 	})
 	if err != nil {
 		return err

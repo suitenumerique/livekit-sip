@@ -3,6 +3,7 @@ package livekitbin
 import (
 	"fmt"
 	"sync"
+	"time"
 	"weak"
 
 	"github.com/go-gst/go-glib/glib"
@@ -53,6 +54,10 @@ type config struct {
 	screenshareMimeType          string
 	screenshareAudio             bool
 	screenshareAudioMimeType     string
+	videoWidth                   uint
+	videoHeight                  uint
+	screenshareWidth             uint
+	screenshareHeight            uint
 }
 
 type LivekitBinTrack struct {
@@ -69,6 +74,9 @@ type LivekitBinPublication struct {
 	TrackSink    *gst.Element
 	FormatFilter *gst.Element
 	Track        *webrtc.TrackLocalStaticRTP
+
+	keyframeMu      sync.Mutex
+	lastKeyframeReq time.Time
 }
 
 type LivekitBinTrackFunnel struct {
@@ -199,6 +207,10 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 	e.config.cameraMimeType = webrtc.MimeTypeVP8
 	e.config.screenshareMimeType = webrtc.MimeTypeVP8
 	e.config.screenshareAudioMimeType = webrtc.MimeTypeOpus
+	e.config.videoWidth = 1280
+	e.config.videoHeight = 720
+	e.config.screenshareWidth = 1920
+	e.config.screenshareHeight = 1080
 	e.tracks = make(map[string]*LivekitBinTrack)
 	e.sidBySsrc = make(map[uint32]string)
 }

@@ -53,6 +53,9 @@ type Pipeline struct {
 	videoWidth            uint
 	videoHeight           uint
 	videoFramerate        uint
+	screenshareWidth      uint
+	screenshareHeight     uint
+	screenshareFramerate  uint
 	lang                  string
 	maxActiveParticipants int
 	dumpDot               bool
@@ -363,6 +366,9 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		videoWidth:            sipOpt.VideoWidth,
 		videoHeight:           sipOpt.VideoHeight,
 		videoFramerate:        sipOpt.Framerate,
+		screenshareWidth:      sipOpt.ScreenshareWidth,
+		screenshareHeight:     sipOpt.ScreenshareHeight,
+		screenshareFramerate:  sipOpt.ScreenshareFramerate,
 		lang:                  sipOpt.Lang,
 		maxActiveParticipants: sipOpt.MaxActiveParticipants,
 		sipCallID:             sipCallID,

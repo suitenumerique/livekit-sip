@@ -49,6 +49,14 @@ func (wio *WebrtcIo) Create() error {
 	if wio.pipeline.maxActiveParticipants > 0 {
 		props["max-active-participants"] = uint(wio.pipeline.maxActiveParticipants)
 	}
+	if wio.pipeline.videoWidth > 0 && wio.pipeline.videoHeight > 0 {
+		props["video-width"] = wio.pipeline.videoWidth
+		props["video-height"] = wio.pipeline.videoHeight
+	}
+	if wio.pipeline.screenshareWidth > 0 && wio.pipeline.screenshareHeight > 0 {
+		props["screenshare-width"] = wio.pipeline.screenshareWidth
+		props["screenshare-height"] = wio.pipeline.screenshareHeight
+	}
 	if wio.pipeline.publishCoders.Camera != "" {
 		props["camera-mime-type"] = wio.pipeline.publishCoders.Camera
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/go-gst/go-gst/gst/video"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -36,11 +37,31 @@ var properties = []*glib.ParamSpec{
 		720,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewStringParam(
+		"usage",
+		"Usage",
+		"Content type being encoded: camera or screenshare",
+		nil,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"framerate",
+		"Video Framerate",
+		"The framerate of the video frames",
+		1,
+		500,
+		24,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 }
 
+const UsageScreenshare = "screenshare"
+
 type VideoH264 struct {
-	videoWidth  uint
-	videoHeight uint
+	videoWidth     uint
+	videoHeight    uint
+	usage          string
+	videoFramerate uint
 
 	VideoConvert   *gst.Element
 	VideoScale     *gst.Element
@@ -53,6 +74,9 @@ type VideoH264 struct {
 	maxBitrate        uint
 	curBitrate        uint
 	lastBitrateAdjust time.Time
+
+	keyframeMu      sync.Mutex
+	lastKeyframeReq time.Time
 }
 
 func (e *VideoH264) New() glib.GoObjectSubclass {
@@ -88,6 +112,8 @@ func (e *VideoH264) ClassInit(klass *glib.ObjectClass) {
 func (e *VideoH264) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
+	e.usage = "camera"
+	e.videoFramerate = 24
 }
 
 func (e *VideoH264) Constructed(instance *glib.Object) {
@@ -135,21 +161,42 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		defaultBitrate = 4096
 	}
 
-	e.X264Enc, err = gst.NewElementWithProperties("x264enc", map[string]interface{}{
-		"speed-preset":     int(1),  // ultrafast
-		"tune":             uint(4), // zerolatency
-		"key-int-max":      uint(200),
-		"bframes":          uint(0),
-		"vbv-buf-capacity": uint(2000),
-		"bitrate":          uint(defaultBitrate),
-	})
+	x264Props := map[string]interface{}{
+		"speed-preset":                int(1),  // ultrafast
+		"tune":                        uint(4), // zerolatency
+		"key-int-max":                 uint(200),
+		"bframes":                     uint(0),
+		"vbv-buf-capacity":            uint(2000),
+		"bitrate":                     uint(defaultBitrate),
+		"min-force-key-unit-interval": uint64(time.Second),
+	}
+	if e.usage == UsageScreenshare {
+		// Slides: two slices (instead of zerolatency's 8) and no lookahead,
+		// so output never waits for later frames — the source can be
+		// sparse (static screen) — plus a wide motion search for scrolling
+		// text.
+		x264Props["speed-preset"] = int(3) // veryfast
+		x264Props["tune"] = uint(1)        // stillimage
+		x264Props["sliced-threads"] = true
+		x264Props["threads"] = uint(2)
+		x264Props["rc-lookahead"] = int(0)
+		x264Props["mb-tree"] = false
+		x264Props["me"] = int(2) // umh
+		x264Props["subme"] = uint(4)
+		x264Props["option-string"] = "merange=64"
+		x264Props["key-int-max"] = uint(4 * e.videoFramerate)
+		x264Props["vbv-buf-capacity"] = uint(800)
+	}
+	e.X264Enc, err = gst.NewElementWithProperties("x264enc", x264Props)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create x264enc element\nerr=%v", err))
 		self.Error("Failed to create x264enc element", err)
 		return
 	}
 
-	e.H264RtpPayBin, err = gst.NewElementWithProperties("h264rtppaybin", map[string]interface{}{})
+	e.H264RtpPayBin, err = gst.NewElementWithProperties("h264rtppaybin", map[string]interface{}{
+		"allow-high": e.usage == UsageScreenshare,
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create h264rtppaybin element\nerr=%v", err))
 		self.Error("Failed to create h264rtppaybin element", err)
@@ -219,6 +266,10 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 			} else {
 				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate\nbitrate=%d", bitrate))
 			}
+		}
+		e.requestEncoderKeyframe(self)
+		if e.usage == UsageScreenshare {
+			e.scheduleKeyframeBurst(wself, eweak)
 		}
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect notify::caps signal\nerr=%v", err))
@@ -310,7 +361,82 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			return
 		}
 		e.videoHeight = val
+	case "usage":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting usage property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(string)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for usage property")
+			return
+		}
+		if val == "" {
+			return
+		}
+		if val != "camera" && val != UsageScreenshare {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for usage property\nvalue=%s", val))
+			return
+		}
+		e.usage = val
+	case "framerate":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for framerate property")
+			return
+		}
+		e.videoFramerate = val
 	}
+}
+
+// scheduleKeyframeBurst requests IDRs during the first 10s after the slides
+// stream is negotiated, so a device that switches to content late (BFCP
+// floor, layout change) gets a keyframe within a second or two.
+func (e *VideoH264) scheduleKeyframeBurst(wself *glib.WeakRef, eweak weak.Pointer[VideoH264]) {
+	for _, i := range []int{1, 2, 3, 5, 7, 10} {
+		time.AfterFunc(time.Duration(i)*time.Second, func() {
+			self := gst.ToGstBin(wself.Get())
+			e := eweak.Value()
+			if self == nil || e == nil {
+				return
+			}
+			e.requestEncoderKeyframe(self)
+		})
+	}
+}
+
+// requestEncoderKeyframe sends an upstream force-key-unit event to x264enc,
+// which consumes it without propagating it further upstream. Rate-limited to
+// one request per second.
+func (e *VideoH264) requestEncoderKeyframe(self *gst.Bin) {
+	e.keyframeMu.Lock()
+	now := time.Now()
+	if !e.lastKeyframeReq.IsZero() && now.Sub(e.lastKeyframeReq) < time.Second {
+		e.keyframeMu.Unlock()
+		return
+	}
+	e.lastKeyframeReq = now
+	e.keyframeMu.Unlock()
+
+	enc := e.X264Enc
+	if enc == nil {
+		return
+	}
+	pad := enc.GetStaticPad("src")
+	if pad == nil {
+		return
+	}
+	if !pad.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)) {
+		self.Log(CAT, gst.LevelDebug, "Force-key-unit event not handled by encoder")
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, "Requested encoder keyframe (force-key-unit)")
 }
 
 func (e *VideoH264) Finalize(instance *glib.Object) {

@@ -32,19 +32,25 @@ func (c *IOManager) Create() error {
 	var err error
 
 	c.SipController, err = gst.NewElementWithProperties("iosip", map[string]interface{}{
-		"video-width":  c.pipeline.videoWidth,
-		"video-height": c.pipeline.videoHeight,
-		"framerate":    c.pipeline.videoFramerate,
+		"video-width":           c.pipeline.videoWidth,
+		"video-height":          c.pipeline.videoHeight,
+		"framerate":             c.pipeline.videoFramerate,
+		"screenshare-width":     c.pipeline.screenshareWidth,
+		"screenshare-height":    c.pipeline.screenshareHeight,
+		"screenshare-framerate": c.pipeline.screenshareFramerate,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IO Manager SIP element: %w", err)
 	}
 
 	c.LivekitController, err = gst.NewElementWithProperties("iolivekit", map[string]interface{}{
-		"video-width":  c.pipeline.videoWidth,
-		"video-height": c.pipeline.videoHeight,
-		"framerate":    c.pipeline.videoFramerate,
-		"lang":         c.pipeline.lang,
+		"video-width":           c.pipeline.videoWidth,
+		"video-height":          c.pipeline.videoHeight,
+		"framerate":             c.pipeline.videoFramerate,
+		"screenshare-width":     c.pipeline.screenshareWidth,
+		"screenshare-height":    c.pipeline.screenshareHeight,
+		"screenshare-framerate": c.pipeline.screenshareFramerate,
+		"lang":                  c.pipeline.lang,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IO Manager LiveKit element: %w", err)

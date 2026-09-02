@@ -228,7 +228,19 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 		self.Error(fmt.Sprintf("Failed to subscribe to %s track publication for participant %s", publication.Source(), rp.Identity()), err)
 		return
 	}
+	e.requestHighQuality(self, publication, rp.Identity())
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to track publication\nsource=%s\nparticipant=%s", publication.Source(), rp.Identity()))
+}
+
+// requestHighQuality asks the SFU for the top simulcast/SVC layer of a
+// screenshare subscription.
+func (e *LivekitBin) requestHighQuality(self *gst.Bin, publication *lksdk.RemoteTrackPublication, identity string) {
+	if publication.Source() != livekit.TrackSource_SCREEN_SHARE {
+		return
+	}
+	if err := publication.SetVideoQuality(livekit.VideoQuality_HIGH); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to request high quality for screenshare\nparticipant=%s\nerr=%v", identity, err))
+	}
 }
 
 func (e *LivekitBin) OnParticipantConnected(rp *lksdk.RemoteParticipant) {
@@ -433,6 +445,7 @@ func (e *LivekitBin) updateSubscriptions(self *gst.Bin) {
 			if err := pub.SetSubscribed(true); err != nil {
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to subscribe to track\ntrack=%s\nparticipant=%s\nerr=%v", config.kind, participant.Identity(), err))
 			} else {
+				e.requestHighQuality(self, pub, participant.Identity())
 				changed = true
 			}
 		}

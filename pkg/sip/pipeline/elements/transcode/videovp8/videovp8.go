@@ -2,6 +2,7 @@ package videovp8
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -32,11 +33,31 @@ var properties = []*glib.ParamSpec{
 		720,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewStringParam(
+		"usage",
+		"Usage",
+		"Content type being encoded: camera or screenshare",
+		nil,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+	glib.NewUintParam(
+		"framerate",
+		"Video Framerate",
+		"The framerate of the video frames",
+		1,
+		500,
+		24,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 }
 
+const UsageScreenshare = "screenshare"
+
 type VideoVp8 struct {
-	videoWidth  uint
-	videoHeight uint
+	videoWidth     uint
+	videoHeight    uint
+	usage          string
+	videoFramerate uint
 
 	VideoConvert *gst.Element
 	VideoScale   *gst.Element
@@ -78,6 +99,8 @@ func (e *VideoVp8) ClassInit(klass *glib.ObjectClass) {
 func (e *VideoVp8) InstanceInit(instance *glib.Object) {
 	e.videoWidth = 1280
 	e.videoHeight = 720
+	e.usage = "camera"
+	e.videoFramerate = 24
 }
 
 func (e *VideoVp8) Constructed(instance *glib.Object) {
@@ -109,22 +132,45 @@ func (e *VideoVp8) Constructed(instance *glib.Object) {
 		return
 	}
 
-	e.Vp8Enc, err = gst.NewElementWithProperties("vp8enc", map[string]interface{}{
-		"deadline":            int(1), // realtime
-		"cpu-used":            int(8),
-		"keyframe-max-dist":   int(12),
-		"lag-in-frames":       int(0),
-		"threads":             int(2),
-		"token-partitions":    int(2),
-		"buffer-initial-size": int(200),
-		"buffer-optimal-size": int(300),
-		"buffer-size":         int(500),
-		"min-quantizer":       int(4),
-		"max-quantizer":       int(32),
-		"cq-level":            int(10),
-		"error-resilient":     int(1),
-		"end-usage":           int(1), // CBR
-	})
+	pixels := e.videoWidth * e.videoHeight
+	targetBitrate, maxQuantizer := 1_000_000, 32
+	switch {
+	case pixels >= 1920*1080:
+		targetBitrate = 3_500_000
+	case pixels >= 1280*720:
+		targetBitrate = 2_000_000
+	}
+	if e.usage == UsageScreenshare {
+		targetBitrate, maxQuantizer = 1_500_000, 40
+		switch {
+		case pixels >= 1920*1080:
+			targetBitrate = 6_000_000
+		case pixels >= 1280*720:
+			targetBitrate = 3_000_000
+		}
+	}
+	vp8Props := map[string]interface{}{
+		"deadline":                    int(1), // realtime
+		"cpu-used":                    int(8),
+		"target-bitrate":              targetBitrate,
+		"keyframe-max-dist":           int(4 * e.videoFramerate),
+		"lag-in-frames":               int(0),
+		"threads":                     int(4),
+		"token-partitions":            int(2),
+		"buffer-initial-size":         int(200),
+		"buffer-optimal-size":         int(300),
+		"buffer-size":                 int(500),
+		"min-quantizer":               int(4),
+		"max-quantizer":               maxQuantizer,
+		"error-resilient":             int(1),
+		"end-usage":                   int(1), // CBR
+		"min-force-key-unit-interval": uint64(time.Second),
+	}
+	if e.usage == UsageScreenshare {
+		// static-threshold skips re-encoding unchanged blocks.
+		vp8Props["static-threshold"] = int(100)
+	}
+	e.Vp8Enc, err = gst.NewElementWithProperties("vp8enc", vp8Props)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp8enc element\nerr=%v", err))
 		self.Error("Failed to create vp8enc element", err)
@@ -210,6 +256,37 @@ func (e *VideoVp8) SetProperty(instance *glib.Object, id uint, value *glib.Value
 			return
 		}
 		e.videoHeight = val
+	case "usage":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting usage property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(string)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for usage property")
+			return
+		}
+		if val == "" {
+			return
+		}
+		if val != "camera" && val != UsageScreenshare {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for usage property\nvalue=%s", val))
+			return
+		}
+		e.usage = val
+	case "framerate":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting framerate property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for framerate property")
+			return
+		}
+		e.videoFramerate = val
 	}
 }
 

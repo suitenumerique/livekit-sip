@@ -80,7 +80,7 @@ func TestH264CapsStringForPLID(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to parse plid %q: %v", tc.plid, err)
 			}
-			s := h264CapsStringForPLID(parsed)
+			s := h264CapsStringForPLID(parsed, false)
 			if s == "" {
 				t.Fatalf("got empty caps string for plid=%s", tc.plid)
 			}
@@ -112,7 +112,7 @@ func TestH264CapsStringForPLID_Invalid(t *testing.T) {
 		if err != nil {
 			continue // parse failure is fine too
 		}
-		if got := h264CapsStringForPLID(parsed); got != "" {
+		if got := h264CapsStringForPLID(parsed, false); got != "" {
 			t.Errorf("plid=%q: expected empty, got %q", plid, got)
 		}
 	}
