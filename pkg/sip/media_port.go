@@ -338,6 +338,7 @@ type MediaOptions struct {
 	ScreenshareFramerate  uint
 	Lang                  string
 	MaxActiveParticipants int
+	AudioJitterMs         int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig
 }

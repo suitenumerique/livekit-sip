@@ -49,6 +49,9 @@ func (wio *WebrtcIo) Create() error {
 	if wio.pipeline.maxActiveParticipants > 0 {
 		props["max-active-participants"] = uint(wio.pipeline.maxActiveParticipants)
 	}
+	if wio.pipeline.audioJitterMs > 0 {
+		props["audio-jitter"] = uint(wio.pipeline.audioJitterMs)
+	}
 	if wio.pipeline.videoWidth > 0 && wio.pipeline.videoHeight > 0 {
 		props["video-width"] = wio.pipeline.videoWidth
 		props["video-height"] = wio.pipeline.videoHeight

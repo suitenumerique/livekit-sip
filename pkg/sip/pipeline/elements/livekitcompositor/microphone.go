@@ -2,6 +2,7 @@ package livekitcompositor
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
@@ -33,7 +34,7 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 	compositorMicrophone.SilenceSrc, err = gst.NewElementWithProperties("audiotestsrc", map[string]interface{}{
 		"is-live":          true,
 		"wave":             int(4),                   // silence
-		"samplesperbuffer": int(audiobus.Rate / 100), // 10 ms, matches audiomixer default output-buffer-duration
+		"samplesperbuffer": int(audiobus.Rate / 100), // 10 ms
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create microphone silence source: %w", err)
@@ -50,6 +51,8 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 		"force-live":           true,
 		"ignore-inactive-pads": true,
 		"start-time-selection": int(3), // now
+		"latency":              uint64(20 * time.Millisecond),
+		"min-upstream-latency": uint64(time.Duration(e.audioJitter) * time.Millisecond),
 	})
 	if err != nil {
 		return err

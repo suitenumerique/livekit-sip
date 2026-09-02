@@ -698,6 +698,17 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 	audioOut := &SipAudioOutTranscode{}
 
 	var err error
+	audioOut.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-buffers": uint(0),
+		"max-size-bytes":   uint(0),
+		"max-size-time":    uint(100_000_000), // 100 ms
+		"leaky":            int(2),            // downstream
+	})
+	if err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for audio output pad\nerr=%v", err))
+		self.Error("Failed to create queue element for audio output pad", err)
+		return
+	}
 	audioOut.AudioRtp, err = gst.NewElementWithProperties("factorybin", map[string]interface{}{
 		"factories": glib.NewStrv([]string{
 			"audio-opus",
@@ -711,9 +722,15 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 		self.Error("Failed to create factorybin element for audio output pad", err)
 		return
 	}
-	if err := self.Add(audioOut.AudioRtp); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin element to SIP IO element for audio output pad\nerr=%v", err))
-		self.Error("Failed to add factorybin element to SIP IO element for audio output pad", err)
+	if err := self.AddMany(audioOut.Queue, audioOut.AudioRtp); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add queue and factorybin elements to SIP IO element for audio output pad\nerr=%v", err))
+		self.Error("Failed to add queue and factorybin elements to SIP IO element for audio output pad", err)
+		return
+	}
+
+	if err := audioOut.Queue.Link(audioOut.AudioRtp); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue element to factorybin element for audio output pad\nerr=%v", err))
+		self.Error("Failed to link queue element to factorybin element for audio output pad", err)
 		return
 	}
 
@@ -721,9 +738,9 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 
 	class := gst.ToElementClass(self.Class())
 
-	if ret := audioOut.pad.Link(audioOut.AudioRtp.GetStaticPad("sink")); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link audio output pad to factorybin sink pad\nret=%v", ret))
-		self.Error("Failed to link audio output pad to factorybin sink pad", fmt.Errorf("failed to link pads"))
+	if ret := audioOut.pad.Link(audioOut.Queue.GetStaticPad("sink")); ret != gst.PadLinkOK {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link audio output pad to queue sink pad\nret=%v", ret))
+		self.Error("Failed to link audio output pad to queue sink pad", fmt.Errorf("failed to link pads"))
 		return
 	}
 
@@ -744,6 +761,9 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 
 	if !audioOut.AudioRtp.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, "Failed to sync state of factorybin element with parent")
+	}
+	if !audioOut.Queue.SyncStateWithParent() {
+		self.Log(CAT, gst.LevelWarning, "Failed to sync state of queue element with parent")
 	}
 
 	e.AudioOut = audioOut
@@ -980,12 +1000,15 @@ func (e *IoManagerSip) padRemovedAudioOut(self *gst.Bin, pad *gst.Pad, name stri
 		return
 	}
 
+	if err := e.AudioOut.Queue.SetState(gst.StateNull); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", name, err))
+	}
 	if err := e.AudioOut.AudioRtp.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 
-	if err := self.Remove(e.AudioOut.AudioRtp); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin element from SIP IO element for pad\npad=%s\nerr=%v", name, err))
+	if err := self.RemoveMany(e.AudioOut.Queue, e.AudioOut.AudioRtp); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove queue and factorybin elements from SIP IO element for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if !self.RemovePad(e.AudioOut.gpad.Pad) {

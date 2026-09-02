@@ -37,6 +37,7 @@ type SipOpt struct {
 	ScreenshareFramerate  uint
 	Lang                  string
 	MaxActiveParticipants int
+	AudioJitterMs         int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig
 }
@@ -171,12 +172,16 @@ func (sio *SipIo) Create() error {
 		return fmt.Errorf("failed to create formats array: %w", err)
 	}
 
-	sio.SipBin, err = gst.NewElementWithProperties("sipbin", map[string]interface{}{
+	props := map[string]interface{}{
 		"ip":         sio.opts.IP,
 		"port-start": uint(sio.opts.PortStart),
 		"port-end":   uint(sio.opts.PortEnd),
 		"formats":    arr,
-	})
+	}
+	if sio.opts.AudioJitterMs > 0 {
+		props["audio-jitter"] = uint(sio.opts.AudioJitterMs)
+	}
+	sio.SipBin, err = gst.NewElementWithProperties("sipbin", props)
 	if err != nil {
 		return fmt.Errorf("failed to create SIP sipbin: %w", err)
 	}

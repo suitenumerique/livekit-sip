@@ -43,7 +43,7 @@ func (c *IOManager) Create() error {
 		return fmt.Errorf("failed to create IO Manager SIP element: %w", err)
 	}
 
-	c.LivekitController, err = gst.NewElementWithProperties("iolivekit", map[string]interface{}{
+	livekitProps := map[string]interface{}{
 		"video-width":           c.pipeline.videoWidth,
 		"video-height":          c.pipeline.videoHeight,
 		"framerate":             c.pipeline.videoFramerate,
@@ -51,7 +51,11 @@ func (c *IOManager) Create() error {
 		"screenshare-height":    c.pipeline.screenshareHeight,
 		"screenshare-framerate": c.pipeline.screenshareFramerate,
 		"lang":                  c.pipeline.lang,
-	})
+	}
+	if c.pipeline.audioJitterMs > 0 {
+		livekitProps["audio-jitter"] = uint(c.pipeline.audioJitterMs)
+	}
+	c.LivekitController, err = gst.NewElementWithProperties("iolivekit", livekitProps)
 	if err != nil {
 		return fmt.Errorf("failed to create IO Manager LiveKit element: %w", err)
 	}

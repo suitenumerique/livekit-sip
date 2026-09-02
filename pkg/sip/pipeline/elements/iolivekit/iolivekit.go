@@ -631,8 +631,8 @@ func (e *IoManagerLivekit) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name st
 	audioOut.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{
 		"max-size-buffers": uint(0),
 		"max-size-bytes":   uint(0),
-		"max-size-time":    uint(2_000_000_000), // 2 seconds
-		"leaky":            int(2),              // downstream
+		"max-size-time":    uint(100_000_000), // 100 ms
+		"leaky":            int(2),            // downstream
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for audio output pad\nerr=%v", err))

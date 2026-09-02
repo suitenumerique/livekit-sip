@@ -163,6 +163,7 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		ScreenshareFramerate:  uint(c.conf.Video.Screenshare.Framerate),
 		Lang:                  c.conf.Lang,
 		MaxActiveParticipants: c.conf.MaxActiveParticipants,
+		AudioJitterMs:         c.conf.AudioJitterMs,
 		Gst:                   c.conf.Gst,
 		PublishCodecs:         c.conf.PublishCodecs,
 	}

@@ -69,6 +69,15 @@ var properties = []*glib.ParamSpec{
 		15,
 		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewUintParam(
+		"audio-jitter",
+		"Audio Jitter",
+		"Jitterbuffer latency in milliseconds of the audio sources, used as the mixer's minimum upstream latency",
+		1,
+		10000,
+		80,
+		glib.ParameterReadable|glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 	glib.NewStringParam(
 		"lang",
 		"Language",
@@ -135,6 +144,18 @@ func (e *LivekitCompositor) SetProperty(instance *glib.Object, id uint, value *g
 			return
 		}
 		e.videoHeight = val
+	case "audio-jitter":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting audio-jitter property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for audio-jitter property")
+			return
+		}
+		e.audioJitter = val
 	case "framerate":
 		gv, err := value.GoValue()
 		if err != nil {
@@ -268,6 +289,13 @@ func (e *LivekitCompositor) GetProperty(instance *glib.Object, id uint) *glib.Va
 		value, err := glib.GValue(glib.NewStrv(e.currentLayout))
 		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting current-layout property value\nerr=%v", err))
+			return nil
+		}
+		return value
+	case "audio-jitter":
+		value, err := glib.GValue(e.audioJitter)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting audio-jitter property value\nerr=%v", err))
 			return nil
 		}
 		return value

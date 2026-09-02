@@ -168,6 +168,7 @@ type Config struct {
 	JaegerURL             string      `yaml:"jaeger_url"` // for tracing
 	Video                 VideoConfig `yaml:"video"`
 	MaxActiveParticipants int         `yaml:"max_active_participants"`
+	AudioJitterMs         int         `yaml:"audio_jitter_ms"` // jitterbuffer latency (ms) of the audio RTP sessions
 
 	// Experimental, these option might go away without notice.
 	Experimental struct {
@@ -254,6 +255,10 @@ func (c *Config) Init() error {
 
 	if c.PinTimeout <= 0 {
 		c.PinTimeout = 60 * time.Second
+	}
+
+	if c.AudioJitterMs <= 0 {
+		c.AudioJitterMs = 80
 	}
 
 	if c.Meet.Timeout <= 0 {

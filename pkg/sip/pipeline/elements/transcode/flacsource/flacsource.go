@@ -153,9 +153,9 @@ func (e *FlacSource) Constructed(instance *glib.Object) {
 		e.Queue,
 		e.FlacParse,
 		e.FlacDec,
+		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
-		e.AudioRate,
 		e.ClockSync,
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
@@ -168,9 +168,9 @@ func (e *FlacSource) Constructed(instance *glib.Object) {
 		e.Queue,
 		e.FlacParse,
 		e.FlacDec,
+		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
-		e.AudioRate,
 		e.ClockSync,
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))

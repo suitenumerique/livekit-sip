@@ -32,6 +32,7 @@ type LivekitCompositor struct {
 	screenshareWidth     uint
 	screenshareHeight    uint
 	screenshareFramerate uint
+	audioJitter          uint
 	lang                 string
 	microphone           bool
 	camera               bool
@@ -123,6 +124,7 @@ func (e *LivekitCompositor) InstanceInit(instance *glib.Object) {
 	e.screenshareWidth = 1920
 	e.screenshareHeight = 1080
 	e.screenshareFramerate = 15
+	e.audioJitter = 80
 	e.lang = "en"
 }
 

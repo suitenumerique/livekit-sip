@@ -72,6 +72,7 @@ func (t *SipAudioInTranscode) elements() []*gst.Element {
 
 type SipAudioOutTranscode struct {
 	gpad     *gst.GhostPad
+	Queue    *gst.Element
 	AudioRtp *gst.Element
 	pad      *gst.Pad
 }

@@ -32,6 +32,7 @@ type IoManagerLivekit struct {
 	screenshareHeight    uint
 	screenshareFramerate uint
 	lang                 string
+	audioJitter          uint
 
 	AudioIn  map[string]*AudioInTranscode
 	AudioOut *AudioOutTranscode
@@ -156,6 +157,15 @@ var properties = []*glib.ParamSpec{
 		nil,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewUintParam(
+		"audio-jitter",
+		"Audio Jitter",
+		"Jitterbuffer latency in milliseconds of the audio RTP sessions feeding the mixer",
+		1,
+		10000,
+		80,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 	glib.NewBoolParam(
 		"microphone",
 		"Microphone",
@@ -262,6 +272,7 @@ func (e *IoManagerLivekit) InstanceInit(instance *glib.Object) {
 	e.screenshareHeight = 1080
 	e.screenshareFramerate = 15
 	e.lang = "en"
+	e.audioJitter = 80
 }
 
 func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
@@ -278,6 +289,7 @@ func (e *IoManagerLivekit) Constructed(instance *glib.Object) {
 		"screenshare-height":    e.screenshareHeight,
 		"screenshare-framerate": e.screenshareFramerate,
 		"lang":                  e.lang,
+		"audio-jitter":          e.audioJitter,
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create livekit_compositor element\nerr=%v", err))
@@ -494,6 +506,18 @@ func (e *IoManagerLivekit) SetProperty(instance *glib.Object, id uint, value *gl
 		if val != "" {
 			e.lang = val
 		}
+	case "audio-jitter":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting audio-jitter property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for audio-jitter property")
+			return
+		}
+		e.audioJitter = val
 	case "microphone":
 		if err := e.Compositor.SetProperty("microphone", value); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set microphone property on compositor\nerr=%v", err))

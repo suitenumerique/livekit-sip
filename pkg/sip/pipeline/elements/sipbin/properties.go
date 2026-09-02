@@ -49,6 +49,15 @@ var properties = []*glib.ParamSpec{
 		glib.TYPE_ARRAY,
 		glib.ParameterReadable|glib.ParameterWritable,
 	),
+	glib.NewUintParam(
+		"audio-jitter",
+		"Audio Jitter",
+		"Jitterbuffer latency in milliseconds for audio RTP sessions",
+		1,
+		10000,
+		80,
+		glib.ParameterReadable|glib.ParameterWritable,
+	),
 	glib.NewStringParam(
 		"session-id",
 		"Session ID",
@@ -68,12 +77,13 @@ var properties = []*glib.ParamSpec{
 }
 
 type config struct {
-	portStart uint16
-	portEnd   uint16
-	ip        net.IP
-	bindIP    net.IP
-	formats   []*gst.Caps
-	sessionID string
+	portStart   uint16
+	portEnd     uint16
+	ip          net.IP
+	bindIP      net.IP
+	formats     []*gst.Caps
+	sessionID   string
+	audioJitter uint
 }
 
 func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) {
@@ -148,6 +158,18 @@ func (e *SipBin) SetProperty(instance *glib.Object, id uint, value *glib.Value) 
 			return
 		}
 		e.bindIP = ip
+	case "audio-jitter":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting audio-jitter property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for audio-jitter property")
+			return
+		}
+		e.audioJitter = val
 	case "formats":
 		gv, err := value.GoValue()
 		if err != nil {
@@ -199,6 +221,13 @@ func (e *SipBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		value, err := glib.GValue(uint(e.portEnd))
 		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting port-end property value\nerr=%v", err))
+			return nil
+		}
+		return value
+	case "audio-jitter":
+		value, err := glib.GValue(e.audioJitter)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting audio-jitter property value\nerr=%v", err))
 			return nil
 		}
 		return value

@@ -176,6 +176,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 	defer e.mu.Unlock()
 
 	e.transaction = NewSipTransaction()
+	e.audioJitter = 80
 
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
@@ -306,8 +307,6 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 	e.RtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
 		"rtp-profile":              int(3), // GST_RTP_PROFILE_AVPF
 		"autoremove":               true,
-		"max-misorder-time":        uint(0),
-		"max-dropout-time":         uint(200),
 		"max-ts-offset":            int(200000000),
 		"timeout-inactive-sources": true,
 		"drop-on-latency":          false,
