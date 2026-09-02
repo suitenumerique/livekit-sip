@@ -150,6 +150,7 @@ func (sio *SipIo) Create() error {
 	var err error
 
 	formatCaps := []*gst.Caps{
+		gst.NewCapsFromString("application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,encoding-params=(string)2"),
 		gst.NewCapsFromString("application/x-rtp,media=audio,encoding-name=G722,clock-rate=8000"),
 		gst.NewCapsFromString("application/x-rtp,media=audio,encoding-name=PCMU,clock-rate=8000"),
 		gst.NewCapsFromString("application/x-rtp,media=audio,encoding-name=PCMA,clock-rate=8000"),

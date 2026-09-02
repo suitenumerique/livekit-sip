@@ -13,7 +13,24 @@ var CAT = gst.NewDebugCategory(
 	"audio-opus Element",
 )
 
+const (
+	UsageLivekit = "livekit"
+	UsageSip     = "sip"
+)
+
+var properties = []*glib.ParamSpec{
+	glib.NewStringParam(
+		"usage",
+		"Usage",
+		"RTP leg the stream is sent on: livekit (PT 111, ssrc-audio-level extension) or sip (PT negotiated downstream, no extension)",
+		nil,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
+}
+
 type AudioOpus struct {
+	usage string
+
 	AudioConvert  *gst.Element
 	AudioResample *gst.Element
 	Level         *gst.Element
@@ -48,9 +65,15 @@ func (e *AudioOpus) ClassInit(klass *glib.ObjectClass) {
 		gst.PadPresenceAlways,
 		gst.NewCapsFromString("application/x-rtp, media=(string)audio, clock-rate=(int)48000, encoding-name=(string)OPUS"),
 	))
+
+	class.InstallProperties(properties)
 }
 
 func (e *AudioOpus) InstanceInit(instance *glib.Object) {
+	e.usage = UsageLivekit
+}
+
+func (e *AudioOpus) Constructed(instance *glib.Object) {
 	self := gst.ToGstBin(instance)
 	var err error
 
@@ -91,9 +114,14 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.RtpOpusPay, err = gst.NewElementWithProperties("rtpopuspay", map[string]interface{}{
-		"pt": 111,
-	})
+	rtpPayProperties := map[string]interface{}{}
+	rtpCaps := "application/x-rtp, media=(string)audio, clock-rate=(int)48000, encoding-name=(string)OPUS"
+	if e.usage == UsageLivekit {
+		rtpPayProperties["pt"] = 111
+		rtpCaps += ", extmap-1=(string)< \"\", urn:ietf:params:rtp-hdrext:ssrc-audio-level, \"vad=on\" >"
+	}
+
+	e.RtpOpusPay, err = gst.NewElementWithProperties("rtpopuspay", rtpPayProperties)
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpopuspay element\nerr=%v", err))
 		self.Error("Failed to create rtpopuspay element", err)
@@ -101,7 +129,7 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 	}
 
 	e.RtpFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString("application/x-rtp, media=(string)audio, clock-rate=(int)48000, encoding-name=(string)OPUS, extmap-1=(string)< \"\", urn:ietf:params:rtp-hdrext:ssrc-audio-level, \"vad=on\" >"),
+		"caps": gst.NewCapsFromString(rtpCaps),
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create capsfilter element\nerr=%v", err))
@@ -109,14 +137,18 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	self.AddMany(
+	if err := self.AddMany(
 		e.AudioConvert,
 		e.AudioResample,
 		e.Level,
 		e.OpusEnc,
 		e.RtpOpusPay,
 		e.RtpFilter,
-	)
+	); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
+		self.Error("Failed to add elements to bin", err)
+		return
+	}
 
 	if err := gst.ElementLinkMany(
 		e.AudioConvert,
@@ -138,6 +170,32 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 
 	ghostSrc := gst.NewGhostPadFromTemplate("src", e.RtpFilter.GetStaticPad("src"), elemClass.GetPadTemplate("src"))
 	self.AddPad(ghostSrc.Pad)
+}
+
+func (e *AudioOpus) SetProperty(instance *glib.Object, id uint, value *glib.Value) {
+	self := gst.ToGstBin(instance)
+	param := properties[id]
+	switch param.Name() {
+	case "usage":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting usage property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(string)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for usage property")
+			return
+		}
+		if val == "" {
+			return
+		}
+		if val != UsageLivekit && val != UsageSip {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid value for usage property\nvalue=%s", val))
+			return
+		}
+		e.usage = val
+	}
 }
 
 func (e *AudioOpus) Finalize(instance *glib.Object) {

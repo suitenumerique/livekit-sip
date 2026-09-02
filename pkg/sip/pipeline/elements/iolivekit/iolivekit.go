@@ -66,8 +66,8 @@ func (e *IoManagerLivekit) requestNewPadAudioIn(self *gst.Bin, templ *gst.PadTem
 	var err error
 	audioIn.RtpAudio, err = gst.NewElementWithProperties("factorybin", map[string]interface{}{
 		"factories": glib.NewStrv([]string{
-			"g722-audio",
 			"opus-audio",
+			"g722-audio",
 			"pcmu-audio",
 			"pcma-audio",
 		}),
@@ -351,8 +351,8 @@ func (e *IoManagerLivekit) requestNewPadScreenShareAudioIn(self *gst.Bin, templ 
 	var err error
 	screenShareAudioIn.RtpAudio, err = gst.NewElementWithProperties("factorybin", map[string]interface{}{
 		"factories": glib.NewStrv([]string{
-			"g722-audio",
 			"opus-audio",
+			"g722-audio",
 			"pcmu-audio",
 			"pcma-audio",
 		}),
@@ -640,13 +640,20 @@ func (e *IoManagerLivekit) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name st
 		return
 	}
 
+	properties := gst.NewStructure("properties")
+	if err := properties.SetString("audio-opus.usage", "sip"); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set properties for factorybin element for audio output pad\nerr=%v", err))
+		self.Error("Failed to set properties for factorybin element for audio output pad", err)
+		return
+	}
 	audioOut.AudioRtp, err = gst.NewElementWithProperties("factorybin", map[string]interface{}{
 		"factories": glib.NewStrv([]string{
-			"audio-g722",
 			"audio-opus",
+			"audio-g722",
 			"audio-pcmu",
 			"audio-pcma",
 		}),
+		"child-properties": properties,
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create factorybin element for audio output pad\nerr=%v", err))

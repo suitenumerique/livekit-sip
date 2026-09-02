@@ -84,7 +84,10 @@ func (e *SipBin) normalizeEncodingName(self *gst.Bin, kind livekit.TrackSource, 
 		}
 		encCase, exist := e.encodingCase[kind][uint8(payload)]
 		if !exist {
-			continue
+			if !strings.EqualFold(encoding, "OPUS") && !strings.EqualFold(encoding, "TELEPHONE-EVENT") {
+				continue
+			}
+			encCase = EncodingCaseLower
 		}
 		switch encCase {
 		case EncodingCaseLower:
@@ -170,10 +173,6 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 		return nil, fmt.Errorf("no offer caps found for track source %d", kind)
 	}
 
-	for i := range offerCaps {
-		offerCaps[i] = e.normalizeEncodingName(self, kind, offerCaps[i])
-	}
-
 	// Map each offered payload type to its caps for the receive path.
 	for _, caps := range offerCaps {
 		for i := range caps.GetSize() {
@@ -183,6 +182,10 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 			}
 			e.PtMap[kind][uint8(pt)] = caps.Copy()
 		}
+	}
+
+	for i := range offerCaps {
+		offerCaps[i] = mediaCapsOpusFmtp(self, e.normalizeEncodingName(self, kind, offerCaps[i]))
 	}
 
 	if ret := gstsdp.MediaSetFromCaps(offerCaps[0], media); ret != gstsdp.SDPResultOk {
@@ -195,14 +198,17 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 		}
 	}
 
-	offerCaps = offerCaps[1:]
-	for _, caps := range offerCaps {
+	for _, caps := range offerCaps[1:] {
 		for i := range caps.GetSize() {
 			structure := caps.GetStructureAt(i)
 			if ret := gstsdp.MediaAddMediaFromStructure(structure, media); ret != gstsdp.SDPResultOk {
 				return nil, fmt.Errorf("failed to add media from structure: %v", ret)
 			}
 		}
+	}
+
+	for _, caps := range offerCaps {
+		mediaAddTelephoneEventFmtp(self, media, caps)
 	}
 
 	if proto == "" {
@@ -267,6 +273,77 @@ func mediaCapsFixBareFmtp(caps *gst.Caps) *gst.Caps {
 		}
 	}
 	return caps
+}
+
+var opusFmtpParams = []string{
+	"maxplaybackrate",
+	"sprop-maxcapturerate",
+	"maxaveragebitrate",
+	"stereo",
+	"sprop-stereo",
+	"cbr",
+	"useinbandfec",
+	"usedtx",
+	"ptime",
+	"maxptime",
+	"minptime",
+}
+
+var opusFmtpValues = [][2]string{
+	{"useinbandfec", "1"},
+	{"stereo", "0"},
+	{"sprop-stereo", "0"},
+	{"maxplaybackrate", "48000"},
+	{"minptime", "10"},
+}
+
+func mediaCapsOpusFmtp(self *gst.Bin, caps *gst.Caps) *gst.Caps {
+	for i := range caps.GetSize() {
+		structure := caps.GetStructureAt(i)
+		encoding, err := structure.GetString("encoding-name")
+		if err != nil || !strings.EqualFold(encoding, "OPUS") {
+			continue
+		}
+		for _, key := range opusFmtpParams {
+			structure.RemoveValue(key)
+		}
+		for _, kv := range opusFmtpValues {
+			if err := structure.SetString(kv[0], kv[1]); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set opus fmtp parameter on caps structure\nkey=%s\nerr=%v", kv[0], err))
+			}
+		}
+	}
+	return caps
+}
+
+func mediaHasFmtp(media *gstsdp.Media, pt int) bool {
+	prefix := strconv.Itoa(pt) + " "
+	for i := 0; ; i++ {
+		value := media.GetAttributeValN("fmtp", i)
+		if value == "" {
+			return false
+		}
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+}
+
+func mediaAddTelephoneEventFmtp(self *gst.Bin, media *gstsdp.Media, caps *gst.Caps) {
+	for i := range caps.GetSize() {
+		structure := caps.GetStructureAt(i)
+		encoding, err := structure.GetString("encoding-name")
+		if err != nil || !strings.EqualFold(encoding, "TELEPHONE-EVENT") {
+			continue
+		}
+		pt, err := structure.GetInt("payload")
+		if err != nil || mediaHasFmtp(media, pt) {
+			continue
+		}
+		if ret := media.AddAttribute("fmtp", fmt.Sprintf("%d 0-15", pt)); ret != gstsdp.SDPResultOk {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to add telephone-event fmtp attribute to media\npt=%d\nerr=%v", pt, ret))
+		}
+	}
 }
 
 func kindToMediaType(kind livekit.TrackSource) string {
@@ -423,7 +500,7 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 		return nil, fmt.Errorf("no caps available for track media")
 	}
 
-	caps = e.normalizeEncodingName(self, track.Kind, caps)
+	caps = mediaCapsOpusFmtp(self, e.normalizeEncodingName(self, track.Kind, caps))
 
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Creating media for track\ntrack=%d\ncaps=%s", track.Idx, caps.String()))
 
@@ -440,6 +517,7 @@ func (e *SipBin) makeTrackMedia(self *gst.Bin, track *SipTrack, caps *gst.Caps) 
 			return nil, fmt.Errorf("failed to add media from structure: %v", ret)
 		}
 	}
+	mediaAddTelephoneEventFmtp(self, media, caps)
 
 	if ret := media.SetPortInfo(uint(track.rtpConn.LocalAddr().(*net.UDPAddr).Port), 1); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to set port info on media: %v", ret)
