@@ -15,6 +15,10 @@ var CAT = gst.NewDebugCategory(
 	"livekit SIP pipeline SIP IO element",
 )
 
+const AudioCaps = "audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"
+
+const DtmfDetectCaps = "audio/x-raw,format=S16LE,rate=8000,channels=1,layout=interleaved"
+
 type IoManagerSip struct {
 	inMu  sync.Mutex
 	outMu sync.Mutex
@@ -40,10 +44,29 @@ type IoManagerSip struct {
 }
 
 type SipAudioInTranscode struct {
-	gpad       *gst.GhostPad
-	RtpAudio   *gst.Element
-	DtmfDetect *gst.Element
-	pad        *gst.Pad
+	gpad         *gst.GhostPad
+	RtpAudio     *gst.Element
+	Filter       *gst.Element
+	Tee          *gst.Element
+	DtmfResample *gst.Element
+	DtmfFilter   *gst.Element
+	DtmfDetect   *gst.Element
+	DtmfSink     *gst.Element
+	teeMainPad   *gst.Pad
+	teeDtmfPad   *gst.Pad
+	pad          *gst.Pad
+}
+
+func (t *SipAudioInTranscode) elements() []*gst.Element {
+	return []*gst.Element{
+		t.RtpAudio,
+		t.Filter,
+		t.Tee,
+		t.DtmfResample,
+		t.DtmfFilter,
+		t.DtmfDetect,
+		t.DtmfSink,
+	}
 }
 
 type SipAudioOutTranscode struct {

@@ -81,7 +81,9 @@ func (e *PcmaAudio) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.AudioRate, err = gst.NewElement("audiorate")
+	e.AudioRate, err = gst.NewElementWithProperties("audiorate", map[string]interface{}{
+		"tolerance": uint64(0),
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element\nerr=%v", err))
 		self.Error("Failed to create audiorate element", err)
@@ -91,9 +93,9 @@ func (e *PcmaAudio) InstanceInit(instance *glib.Object) {
 	if err := self.AddMany(
 		e.RtpPcmaDepay,
 		e.ALawDec,
+		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
-		e.AudioRate,
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add elements to bin\nerr=%v", err))
 		self.Error("Failed to add elements to bin", err)
@@ -103,9 +105,9 @@ func (e *PcmaAudio) InstanceInit(instance *glib.Object) {
 	if err := gst.ElementLinkMany(
 		e.RtpPcmaDepay,
 		e.ALawDec,
+		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
-		e.AudioRate,
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link elements\nerr=%v", err))
 		self.Error("Failed to link elements", err)
@@ -117,7 +119,7 @@ func (e *PcmaAudio) InstanceInit(instance *glib.Object) {
 	ghostSink := gst.NewGhostPadFromTemplate("sink", e.RtpPcmaDepay.GetStaticPad("sink"), elemClass.GetPadTemplate("sink"))
 	self.AddPad(ghostSink.Pad)
 
-	ghostSrc := gst.NewGhostPadFromTemplate("src", e.AudioRate.GetStaticPad("src"), elemClass.GetPadTemplate("src"))
+	ghostSrc := gst.NewGhostPadFromTemplate("src", e.AudioResample.GetStaticPad("src"), elemClass.GetPadTemplate("src"))
 	self.AddPad(ghostSrc.Pad)
 }
 

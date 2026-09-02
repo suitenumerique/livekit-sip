@@ -78,7 +78,12 @@ func (e *AudioOpus) InstanceInit(instance *glib.Object) {
 	}
 
 	e.OpusEnc, err = gst.NewElementWithProperties("opusenc", map[string]interface{}{
-		"frame-size": int(2), // 2.5ms
+		"audio-type":             int(2048), // voice
+		"frame-size":             int(20),
+		"bitrate":                int(40000),
+		"complexity":             int(8),
+		"inband-fec":             true,
+		"packet-loss-percentage": int(5),
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create opusenc element\nerr=%v", err))
