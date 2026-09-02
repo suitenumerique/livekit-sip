@@ -240,6 +240,7 @@ func (e *SipBin) onRtpBinPadAddedRecvRtpSrc(self *gst.Bin, pad *gst.Pad) {
 				}
 				return gst.PadProbeOK
 			})
+			ti.RequestKeyframe(self, keyframeSSRC)
 			ti.StartPeriodicKeyframe(self, keyframeSSRC)
 		}
 	}

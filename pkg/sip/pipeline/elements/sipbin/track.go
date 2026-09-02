@@ -311,12 +311,12 @@ func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
 	t.keyframeMu.Unlock()
 
 	raw, err := rtcp.Marshal([]rtcp.Packet{
-		&rtcp.PictureLossIndication{SenderSSRC: keyframeRequestSSRC, MediaSSRC: ssrc},
 		&rtcp.FullIntraRequest{
 			SenderSSRC: keyframeRequestSSRC,
 			MediaSSRC:  ssrc,
 			FIR:        []rtcp.FIREntry{{SSRC: ssrc, SequenceNumber: firSeq}},
 		},
+		&rtcp.PictureLossIndication{SenderSSRC: keyframeRequestSSRC, MediaSSRC: ssrc},
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to marshal RTCP keyframe request\nerr=%v", err))
@@ -328,7 +328,7 @@ func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sent RTCP PLI/FIR keyframe request to device\nssrc=%d\nrtcp_addr=%s", ssrc, t.deviceRtcpAddr))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sent RTCP PLI/FIR keyframe request to device\nssrc=%d\nrtcp_addr=%s", ssrc, t.deviceRtcpAddr))
 }
 
 func (t *SipTrack) StartPeriodicKeyframe(self *gst.Bin, ssrc uint32) {
