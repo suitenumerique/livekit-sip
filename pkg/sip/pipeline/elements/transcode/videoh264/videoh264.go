@@ -190,6 +190,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		x264Props["subme"] = uint(4)
 		x264Props["option-string"] = "merange=64"
 		x264Props["key-int-max"] = uint(4 * e.videoFramerate)
+		x264Props["vbv-buf-capacity"] = uint(800)
 	}
 	e.X264Enc, err = gst.NewElementWithProperties("x264enc", x264Props)
 	if err != nil {
@@ -273,6 +274,9 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 			}
 		}
 		e.requestEncoderKeyframe(self)
+		if e.usage == UsageScreenshare {
+			e.scheduleKeyframeBurst(wself, eweak)
+		}
 	}); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect notify::caps signal\nerr=%v", err))
 		self.Error("Failed to connect notify::caps signal", err)
@@ -397,6 +401,22 @@ func (e *VideoH264) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 	}
 }
 
+// scheduleKeyframeBurst requests an IDR at +1s, +2s and +3s after the slides
+// stream is negotiated, so a device that discards the first keyframe (BFCP
+// floor not processed yet) recovers within a second instead of a GOP.
+func (e *VideoH264) scheduleKeyframeBurst(wself *glib.WeakRef, eweak weak.Pointer[VideoH264]) {
+	for i := 1; i <= 3; i++ {
+		time.AfterFunc(time.Duration(i)*time.Second, func() {
+			self := gst.ToGstBin(wself.Get())
+			e := eweak.Value()
+			if self == nil || e == nil {
+				return
+			}
+			e.requestEncoderKeyframe(self)
+		})
+	}
+}
+
 // requestEncoderKeyframe sends an upstream force-key-unit event to x264enc,
 // which consumes it without propagating it further upstream. Rate-limited to
 // one request per second.
@@ -487,8 +507,13 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 	if target > ceiling {
 		target = ceiling
 	}
-	if target < floor {
-		target = floor
+	// The floor never overrides a smaller ceiling (tight session budgets).
+	minRate := min(floor, ceiling)
+	if minRate < 64 {
+		minRate = 64
+	}
+	if target < minRate {
+		target = minRate
 	}
 
 	e.adjustScale(self, now, target, ceiling)

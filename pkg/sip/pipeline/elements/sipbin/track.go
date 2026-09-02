@@ -265,7 +265,8 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 
 	switch t.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
-		t.watchTmmbr()
+		t.watchTmmbr(self)
+		t.logFirstRtpSent(self)
 		t.StartLinkFeedback(e, self)
 	}
 
@@ -461,13 +462,13 @@ func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 
 // sendBudgetKbps splits the session-level bandwidth between the outgoing
 // video encoders: 80/20 in favor of the slides while screensharing, all for
-// the camera otherwise. 128 kbps is reserved for audio and overhead.
+// the camera otherwise. 160 kbps is reserved for audio and RTP overhead.
 func (e *SipBin) sendBudgetKbps(kind livekit.TrackSource) int {
 	total := int(e.sessionBudgetKbps.Load())
 	if total <= 0 {
 		return 0
 	}
-	avail := total - 128
+	avail := total - 160
 	if avail < 300 {
 		avail = 300
 	}
@@ -483,24 +484,70 @@ func (e *SipBin) sendBudgetKbps(kind livekit.TrackSource) int {
 	return 0
 }
 
-// watchTmmbr parses TMMBR requests from the device's incoming RTCP and
-// keeps the latest requested bitrate for the link feedback event.
-func (t *SipTrack) watchTmmbr() {
+// watchTmmbr parses the device's incoming RTCP: TMMBR requests feed the
+// link feedback event, PLI/FIR are logged.
+func (t *SipTrack) watchTmmbr(bin *gst.Bin) {
 	pad := t.RtcpSrc.GetStaticPad("src")
 	if pad == nil {
 		return
 	}
+	wself := glib.WeakRefInit(bin)
 	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		buf := info.GetBuffer()
 		if buf == nil {
 			return gst.PadProbeOK
 		}
-		if kbps := parseTmmbrKbps(buf.Bytes()); kbps > 0 {
+		data := buf.Bytes()
+		if kbps := parseTmmbrKbps(data); kbps > 0 {
 			t.keyframeMu.Lock()
 			t.tmmbrKbps = kbps
 			t.keyframeMu.Unlock()
 		}
+		if pli, fir := hasKeyframeRequest(data); pli || fir {
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Device requested keyframe\nkind=%d\npli=%t\nfir=%t", t.Kind, pli, fir))
+		}
 		return gst.PadProbeOK
+	})
+}
+
+// hasKeyframeRequest reports whether an RTCP compound packet carries a PLI
+// or a FIR (RFC 4585 §6.3.1, RFC 5104 §4.3.1).
+func hasKeyframeRequest(data []byte) (pli, fir bool) {
+	for len(data) >= 4 {
+		if data[0]>>6 != 2 {
+			return
+		}
+		length := ((int(data[2])<<8 | int(data[3])) + 1) * 4
+		if length > len(data) {
+			return
+		}
+		if data[1] == 206 {
+			switch data[0] & 0x1f {
+			case 1:
+				pli = true
+			case 4:
+				fir = true
+			}
+		}
+		data = data[length:]
+	}
+	return
+}
+
+// logFirstRtpSent logs once when the first RTP packet of the track leaves
+// toward the device.
+func (t *SipTrack) logFirstRtpSent(self *gst.Bin) {
+	pad := t.RtpSink.GetStaticPad("sink")
+	if pad == nil {
+		return
+	}
+	wself := glib.WeakRefInit(self)
+	kind := t.Kind
+	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, _ *gst.PadProbeInfo) gst.PadProbeReturn {
+		if self := gst.ToGstBin(wself.Get()); self != nil {
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("First RTP packet sent to device\nkind=%d", kind))
+		}
+		return gst.PadProbeRemove
 	})
 }
 
