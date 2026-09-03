@@ -169,7 +169,7 @@ type Config struct {
 	Video                 VideoConfig `yaml:"video"`
 	MaxActiveParticipants int         `yaml:"max_active_participants"`
 	AudioJitterMs         int         `yaml:"audio_jitter_ms"`        // jitterbuffer latency (ms) of the audio RTP sessions
-	MaxAudioParticipants  int         `yaml:"max_audio_participants"` // microphone tracks kept enabled, the most recently active ones; 0 keeps them all
+	MaxAudioParticipants  int         `yaml:"max_audio_participants"` // microphone tracks kept enabled, the most recently active ones; -1 keeps them all
 
 	// Experimental, these option might go away without notice.
 	Experimental struct {
@@ -260,6 +260,10 @@ func (c *Config) Init() error {
 
 	if c.AudioJitterMs <= 0 {
 		c.AudioJitterMs = 80
+	}
+
+	if c.MaxAudioParticipants == 0 {
+		c.MaxAudioParticipants = 8
 	}
 
 	if c.Meet.Timeout <= 0 {
