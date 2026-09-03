@@ -46,6 +46,7 @@ type config struct {
 	defaultParticipantName       string
 	defaultParticipantAttributes map[string]string
 	maxActiveParticipants        uint
+	maxAudioParticipants         uint
 	audioJitter                  uint
 	microphone                   bool
 	microphoneMimeType           string
@@ -112,6 +113,9 @@ type LivekitBin struct {
 	publications [NbTracks]*LivekitBinPublication
 
 	activeSpeakers []string
+
+	audioMu         sync.Mutex
+	audioLastActive map[string]time.Time
 
 	livekitMu sync.Mutex
 }
@@ -199,6 +203,7 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 
 	e.state.cond = sync.NewCond(&e.state.mu)
 	e.defaultParticipantAttributes = make(map[string]string)
+	e.audioLastActive = make(map[string]time.Time)
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
 	}

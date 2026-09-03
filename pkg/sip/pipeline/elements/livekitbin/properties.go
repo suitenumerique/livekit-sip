@@ -76,6 +76,15 @@ var properties = []*glib.ParamSpec{
 		80,
 		glib.ParameterReadable|glib.ParameterWritable,
 	),
+	glib.NewUintParam(
+		"max-audio-participants",
+		"Max Audio Participants",
+		"Number of microphone tracks kept enabled, the most recently active ones. 0 keeps every microphone track enabled",
+		0,
+		1000,
+		0,
+		glib.ParameterReadable|glib.ParameterWritable,
+	),
 	glib.NewBoolParam(
 		"microphone",
 		"Microphone",
@@ -315,6 +324,18 @@ func (e *LivekitBin) SetProperty(instance *glib.Object, id uint, value *glib.Val
 			return
 		}
 		e.audioJitter = val
+	case "max-audio-participants":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting max-audio-participants property value\nerr=%v", err))
+			return
+		}
+		val, ok := gv.(uint)
+		if !ok {
+			self.Log(CAT, gst.LevelError, "Invalid type for max-audio-participants property")
+			return
+		}
+		e.maxAudioParticipants = val
 	case "microphone":
 		old := e.microphone
 		boolPropSetter(&e.microphone)(self, param, value)
@@ -420,6 +441,13 @@ func (e *LivekitBin) GetProperty(instance *glib.Object, id uint) *glib.Value {
 		value, err := glib.GValue(e.audioJitter)
 		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting audio-jitter property value\nerr=%v", err))
+			return nil
+		}
+		return value
+	case "max-audio-participants":
+		value, err := glib.GValue(e.maxAudioParticipants)
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error getting max-audio-participants property value\nerr=%v", err))
 			return nil
 		}
 		return value

@@ -164,6 +164,7 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		Lang:                  c.conf.Lang,
 		MaxActiveParticipants: c.conf.MaxActiveParticipants,
 		AudioJitterMs:         c.conf.AudioJitterMs,
+		MaxAudioParticipants:  c.conf.MaxAudioParticipants,
 		Gst:                   c.conf.Gst,
 		PublishCodecs:         c.conf.PublishCodecs,
 	}

@@ -168,7 +168,8 @@ type Config struct {
 	JaegerURL             string      `yaml:"jaeger_url"` // for tracing
 	Video                 VideoConfig `yaml:"video"`
 	MaxActiveParticipants int         `yaml:"max_active_participants"`
-	AudioJitterMs         int         `yaml:"audio_jitter_ms"` // jitterbuffer latency (ms) of the audio RTP sessions
+	AudioJitterMs         int         `yaml:"audio_jitter_ms"`        // jitterbuffer latency (ms) of the audio RTP sessions
+	MaxAudioParticipants  int         `yaml:"max_audio_participants"` // microphone tracks kept enabled, the most recently active ones; 0 keeps them all
 
 	// Experimental, these option might go away without notice.
 	Experimental struct {

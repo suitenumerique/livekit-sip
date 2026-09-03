@@ -38,6 +38,7 @@ type SipOpt struct {
 	Lang                  string
 	MaxActiveParticipants int
 	AudioJitterMs         int
+	MaxAudioParticipants  int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig
 }
