@@ -133,7 +133,10 @@ func (e *VideoVp8) Constructed(instance *glib.Object) {
 	}
 
 	pixels := e.videoWidth * e.videoHeight
-	targetBitrate, maxQuantizer := 1_000_000, 32
+	// cpu-used < 0 pins the libvpx realtime speed to -cpu-used; cpu-used >= 0
+	// enables vp8_auto_select_speed, which spends (16-cpu-used)/16 of every
+	// frame period whatever the content.
+	targetBitrate, maxQuantizer, cpuUsed := 1_000_000, 56, -8
 	switch {
 	case pixels >= 1920*1080:
 		targetBitrate = 3_500_000
@@ -141,7 +144,7 @@ func (e *VideoVp8) Constructed(instance *glib.Object) {
 		targetBitrate = 2_000_000
 	}
 	if e.usage == UsageScreenshare {
-		targetBitrate, maxQuantizer = 1_500_000, 40
+		targetBitrate, maxQuantizer, cpuUsed = 1_500_000, 40, -6
 		switch {
 		case pixels >= 1920*1080:
 			targetBitrate = 6_000_000
@@ -151,7 +154,7 @@ func (e *VideoVp8) Constructed(instance *glib.Object) {
 	}
 	vp8Props := map[string]interface{}{
 		"deadline":                    int(1), // realtime
-		"cpu-used":                    int(8),
+		"cpu-used":                    cpuUsed,
 		"target-bitrate":              targetBitrate,
 		"keyframe-max-dist":           int(4 * e.videoFramerate),
 		"lag-in-frames":               int(0),
