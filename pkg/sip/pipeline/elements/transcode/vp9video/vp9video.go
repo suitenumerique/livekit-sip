@@ -114,7 +114,9 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 
 	C.vp9_add_fix_pts_probe((*C.GstElement)(unsafe.Pointer(e.Vp9Parse.Instance())))
 
-	e.Vp9Dec, err = gst.NewElementWithProperties("vp9dec", map[string]interface{}{})
+	e.Vp9Dec, err = gst.NewElementWithProperties("vp9dec", map[string]interface{}{
+		"threads": uint(4),
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create vp9dec element\nerr=%v", err))
 		self.Error("Failed to create vp9dec element", err)
