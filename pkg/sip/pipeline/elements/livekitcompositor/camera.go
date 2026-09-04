@@ -335,6 +335,21 @@ func cameraComputeSize(videoWidth, videoHeight int, idx int, nTrack int) (width,
 	return
 }
 
+// CameraTileVideoSize returns the 16:9 video area of one tile when nTrack
+// tiles share the composite.
+func CameraTileVideoSize(videoWidth, videoHeight, nTrack int) (width, height int) {
+	if nTrack < 1 {
+		nTrack = 1
+	}
+	width, height, _, _ = cameraComputeSize(videoWidth, videoHeight, 0, nTrack)
+	if width*9 > height*16 {
+		width = height * 16 / 9
+	} else {
+		height = width * 9 / 16
+	}
+	return
+}
+
 func (e *LivekitCompositor) cameraPadSetPosSize(pad *gst.Pad, idx int, nTrack int) error {
 	gpad := pad.AsGhostPad()
 	if gpad == nil {
