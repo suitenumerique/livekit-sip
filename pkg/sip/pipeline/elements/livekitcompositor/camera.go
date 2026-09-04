@@ -362,18 +362,28 @@ func (e *LivekitCompositor) cameraPadSetPosSize(pad *gst.Pad, idx int, nTrack in
 
 	width, height, x, y := cameraComputeSize(int(e.videoWidth), int(e.videoHeight), idx, nTrack)
 
+	// A width or height write makes the compositor rebuild the pad converter.
 	err := errors.Join(
-		target.SetProperty("xpos", x),
-		target.SetProperty("ypos", y),
-		target.SetProperty("width", int(width)),
-		target.SetProperty("height", int(height)),
-		target.SetProperty("alpha", float64(1)),
+		setPadPropertyIfChanged(target, "xpos", x),
+		setPadPropertyIfChanged(target, "ypos", y),
+		setPadPropertyIfChanged(target, "width", int(width)),
+		setPadPropertyIfChanged(target, "height", int(height)),
+		setPadPropertyIfChanged(target, "alpha", float64(1)),
 	)
 
 	if err != nil {
 		return fmt.Errorf("failed to set position and size for camera pad: %w", err)
 	}
 	return nil
+}
+
+func setPadPropertyIfChanged[T comparable](pad *gst.Pad, name string, want T) error {
+	if cur, err := pad.GetProperty(name); err == nil {
+		if v, ok := cur.(T); ok && v == want {
+			return nil
+		}
+	}
+	return pad.SetProperty(name, want)
 }
 
 func (e *LivekitCompositor) cleanupCamera(self *gst.Bin) {
