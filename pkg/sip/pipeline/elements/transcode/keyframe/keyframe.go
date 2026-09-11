@@ -49,9 +49,28 @@ func RequestOnBadBuffer(pad *gst.Pad) {
 		}
 		lastRequest = now
 
-		p.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0))
+		ForceKeyUnit(p)
 		return gst.PadProbeOK
 	})
+}
+
+// ForceKeyUnit sends an upstream force-key-unit event through pad and releases
+// the event: the go-gst constructor hands out an owned reference without a
+// finalizer while SendEvent takes its own, so sending it directly leaks one
+// GstEvent per request.
+func ForceKeyUnit(pad *gst.Pad) bool {
+	ev := video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)
+	ok := pad.SendEvent(ev)
+	ev.Unref()
+	return ok
+}
+
+// PushForceKeyUnit is ForceKeyUnit for a src pad, pushing the event to the peer.
+func PushForceKeyUnit(pad *gst.Pad) bool {
+	ev := video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)
+	ok := pad.PushEvent(ev)
+	ev.Unref()
+	return ok
 }
 
 // LogResolutionChanges logs every change of the decoded frame size after the

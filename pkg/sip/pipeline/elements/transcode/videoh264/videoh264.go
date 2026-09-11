@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
-	"github.com/go-gst/go-gst/gst/video"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -479,7 +479,7 @@ func (e *VideoH264) requestEncoderKeyframe(self *gst.Bin) {
 	if pad == nil {
 		return
 	}
-	if !pad.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)) {
+	if !keyframe.ForceKeyUnit(pad) {
 		self.Log(CAT, gst.LevelDebug, "Force-key-unit event not handled by encoder")
 		return
 	}

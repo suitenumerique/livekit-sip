@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
-	"github.com/go-gst/go-gst/gst/video"
 	"github.com/livekit/protocol/livekit"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 )
 
 type LivekitCompositorScreenshare struct {
@@ -40,7 +40,7 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		if pad == nil {
 			return
 		}
-		pad.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0))
+		keyframe.ForceKeyUnit(pad)
 	}); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to connect to notify::active-pad signal of fallbackswitch\nerr=%v", err))
 	}

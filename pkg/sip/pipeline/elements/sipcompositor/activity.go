@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
-	"github.com/go-gst/go-gst/gst/video"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 )
 
 const selectorSilence = 2 * time.Second
@@ -92,7 +92,7 @@ func watchSelectorSink(self *gst.Bin, e *SipCompositor, sink *gst.Pad, label str
 		if self := gst.ToGstBin(wself.Get()); self != nil {
 			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Switched %s input-selector to active branch\npad=%s", label, name))
 		}
-		pad.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0))
+		keyframe.ForceKeyUnit(pad)
 		return gst.PadProbeOK
 	})
 }

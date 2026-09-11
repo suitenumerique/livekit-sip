@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
-	"github.com/go-gst/go-gst/gst/video"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
@@ -199,7 +199,7 @@ func (p *LivekitBinPublication) requestKeyframe(self *gst.Bin, kind livekit.Trac
 	if pad == nil {
 		return
 	}
-	if !pad.PushEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0)) {
+	if !keyframe.PushForceKeyUnit(pad) {
 		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Force-key-unit event not handled\nsource=%s", kind.String()))
 		return
 	}
