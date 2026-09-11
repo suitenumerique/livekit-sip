@@ -118,6 +118,8 @@ func (o *MediaOrchestrator) init() error {
 		ScreenshareFramerate:  o.opts.ScreenshareFramerate,
 		Lang:                  o.opts.Lang,
 		MaxActiveParticipants: o.opts.MaxActiveParticipants,
+		AudioJitterMs:         o.opts.AudioJitterMs,
+		MaxAudioParticipants:  o.opts.MaxAudioParticipants,
 		Gst:                   o.opts.Gst,
 		PublishCodecs:         o.opts.PublishCodecs,
 	}, o.sipCallID)

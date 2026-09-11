@@ -2,6 +2,7 @@ package audiog722
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -73,7 +74,11 @@ func (e *AudioG722) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.RtpG722Pay, err = gst.NewElementWithProperties("rtpg722pay", map[string]interface{}{})
+	e.RtpG722Pay, err = gst.NewElementWithProperties("rtpg722pay", map[string]interface{}{
+		"min-ptime":      int64(20 * time.Millisecond.Nanoseconds()),
+		"max-ptime":      int64(20 * time.Millisecond.Nanoseconds()),
+		"ptime-multiple": int64(20 * time.Millisecond.Nanoseconds()),
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create rtpg722pay element\nerr=%v", err))
 		self.Error("Failed to create rtpg722pay element", err)

@@ -58,6 +58,8 @@ type Pipeline struct {
 	screenshareFramerate  uint
 	lang                  string
 	maxActiveParticipants int
+	audioJitterMs         int
+	maxAudioParticipants  int
 	dumpDot               bool
 	dumpDir               string
 	publishCoders         config.PublishCodecConfig
@@ -371,6 +373,8 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		screenshareFramerate:  sipOpt.ScreenshareFramerate,
 		lang:                  sipOpt.Lang,
 		maxActiveParticipants: sipOpt.MaxActiveParticipants,
+		audioJitterMs:         sipOpt.AudioJitterMs,
+		maxAudioParticipants:  sipOpt.MaxAudioParticipants,
 		sipCallID:             sipCallID,
 		dumpDot:               sipOpt.Gst.DumpDot,
 		dumpDir:               sipOpt.Gst.DumpDir,

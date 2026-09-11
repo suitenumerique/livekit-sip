@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/audiobus"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -14,6 +15,10 @@ var CAT = gst.NewDebugCategory(
 	gst.DebugColorNone,
 	"livekit SIP pipeline SIP IO element",
 )
+
+const AudioCaps = audiobus.Caps
+
+const DtmfDetectCaps = "audio/x-raw,format=S16LE,rate=8000,channels=1,layout=interleaved"
 
 type IoManagerSip struct {
 	inMu  sync.Mutex
@@ -40,14 +45,34 @@ type IoManagerSip struct {
 }
 
 type SipAudioInTranscode struct {
-	gpad       *gst.GhostPad
-	RtpAudio   *gst.Element
-	DtmfDetect *gst.Element
-	pad        *gst.Pad
+	gpad         *gst.GhostPad
+	RtpAudio     *gst.Element
+	Filter       *gst.Element
+	Tee          *gst.Element
+	DtmfResample *gst.Element
+	DtmfFilter   *gst.Element
+	DtmfDetect   *gst.Element
+	DtmfSink     *gst.Element
+	teeMainPad   *gst.Pad
+	teeDtmfPad   *gst.Pad
+	pad          *gst.Pad
+}
+
+func (t *SipAudioInTranscode) elements() []*gst.Element {
+	return []*gst.Element{
+		t.RtpAudio,
+		t.Filter,
+		t.Tee,
+		t.DtmfResample,
+		t.DtmfFilter,
+		t.DtmfDetect,
+		t.DtmfSink,
+	}
 }
 
 type SipAudioOutTranscode struct {
 	gpad     *gst.GhostPad
+	Queue    *gst.Element
 	AudioRtp *gst.Element
 	pad      *gst.Pad
 }

@@ -1182,6 +1182,8 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, mconf *sipM
 		ScreenshareFramerate:  uint(c.s.conf.Video.Screenshare.Framerate),
 		Lang:                  c.s.conf.Lang,
 		MaxActiveParticipants: c.s.conf.MaxActiveParticipants,
+		AudioJitterMs:         c.s.conf.AudioJitterMs,
+		MaxAudioParticipants:  c.s.conf.MaxAudioParticipants,
 		Gst:                   c.s.conf.Gst,
 		PublishCodecs:         c.s.conf.PublishCodecs,
 	}

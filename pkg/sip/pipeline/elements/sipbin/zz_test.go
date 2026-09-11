@@ -3225,3 +3225,63 @@ func TestLateOffer_OfferHasFormats(t *testing.T) {
 
 	f.close()
 }
+
+func fmtpFor(media *gstsdp.Media, pt int) string {
+	prefix := strconv.Itoa(pt) + " "
+	for i := 0; ; i++ {
+		value := media.GetAttributeValN("fmtp", i)
+		if value == "" {
+			return ""
+		}
+		if strings.HasPrefix(value, prefix) {
+			return strings.TrimPrefix(value, prefix)
+		}
+	}
+}
+
+func TestNegotiate_Opus_AnswerFmtp(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{opusCaps(), g722AnyCaps(), telephoneEventAnyCaps()})
+
+	offer := makeSDP("192.168.1.1",
+		"m=audio 5000 RTP/AVP 114 9 101\r\na=rtpmap:114 opus/48000/2\r\na=fmtp:114 stereo=1; maxaveragebitrate=128000\r\na=rtpmap:9 G722/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15",
+	)
+	answer := f.emitOffer(t, offer)
+	if answer == "" {
+		t.Fatal("expected non-empty answer")
+	}
+	f.emitAck(t)
+
+	msg := parseAnswer(t, answer)
+	audio := msg.Media(0)
+	if audio.GetPort() == 0 {
+		t.Fatal("expected audio port > 0")
+	}
+	firstFormat := ""
+	for _, format := range audio.Formats() {
+		firstFormat = format
+		break
+	}
+	if firstFormat != "114" {
+		t.Errorf("expected opus (114) first in answer formats, got %q", firstFormat)
+	}
+	if !strings.Contains(answer, "a=rtpmap:114 opus/48000/2") {
+		t.Errorf("expected the device's lowercase opus rtpmap in answer:\n%s", answer)
+	}
+
+	opusFmtp := fmtpFor(audio, 114)
+	for _, want := range []string{"useinbandfec=1", "stereo=0", "sprop-stereo=0", "maxplaybackrate=48000", "minptime=10"} {
+		if !strings.Contains(opusFmtp, want) {
+			t.Errorf("expected %q in opus fmtp, got %q", want, opusFmtp)
+		}
+	}
+	if strings.Contains(opusFmtp, "maxaveragebitrate") || strings.Contains(opusFmtp, "stereo=1") {
+		t.Errorf("device opus fmtp must not be echoed, got %q", opusFmtp)
+	}
+	if got := fmtpFor(audio, 101); got != "0-15" {
+		t.Errorf("expected telephone-event fmtp 0-15, got %q", got)
+	}
+
+	f.close()
+}

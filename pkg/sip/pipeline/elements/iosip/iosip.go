@@ -153,8 +153,8 @@ func (e *IoManagerSip) linkNewPadAudioMicrophone(self *gst.Bin, pad *gst.Pad, na
 	var err error
 	audioIn.RtpAudio, err = gst.NewElementWithProperties("factorybin", map[string]interface{}{
 		"factories": glib.NewStrv([]string{
-			"g722-audio",
 			"opus-audio",
+			"g722-audio",
 			"pcmu-audio",
 			"pcma-audio",
 		}),
@@ -162,17 +162,55 @@ func (e *IoManagerSip) linkNewPadAudioMicrophone(self *gst.Bin, pad *gst.Pad, na
 	if err != nil {
 		return fmt.Errorf("Failed to create factorybin element for pad %s: %w", name, err)
 	}
-	audioIn.DtmfDetect, err = gst.NewElementWithProperties("dtmfdetect", map[string]interface{}{})
+	audioIn.Filter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString(AudioCaps),
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to create capsfilter element for pad %s: %w", name, err)
+	}
+	audioIn.Tee, err = gst.NewElement("tee")
+	if err != nil {
+		return fmt.Errorf("Failed to create tee element for pad %s: %w", name, err)
+	}
+	audioIn.DtmfResample, err = gst.NewElement("audioresample")
+	if err != nil {
+		return fmt.Errorf("Failed to create audioresample element for pad %s: %w", name, err)
+	}
+	audioIn.DtmfFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
+		"caps": gst.NewCapsFromString(DtmfDetectCaps),
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to create dtmfdetect capsfilter element for pad %s: %w", name, err)
+	}
+	audioIn.DtmfDetect, err = gst.NewElement("dtmfdetect")
 	if err != nil {
 		return fmt.Errorf("Failed to create dtmfdetect element for pad %s: %w", name, err)
 	}
-
-	if err := self.AddMany(audioIn.RtpAudio, audioIn.DtmfDetect); err != nil {
-		return fmt.Errorf("Failed to add factorybin element to SIP IO element for pad %s: %w", name, err)
+	audioIn.DtmfSink, err = gst.NewElementWithProperties("fakesink", map[string]interface{}{
+		"sync":  false,
+		"async": false,
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to create fakesink element for pad %s: %w", name, err)
 	}
 
-	if ret := audioIn.RtpAudio.GetStaticPad("src").Link(audioIn.DtmfDetect.GetStaticPad("sink")); ret != gst.PadLinkOK {
-		return fmt.Errorf("Failed to link factorybin src pad to dtmfdetect sink pad for pad %s: %v", name, ret)
+	if err := self.AddMany(audioIn.elements()...); err != nil {
+		return fmt.Errorf("Failed to add audio input elements to SIP IO element for pad %s: %w", name, err)
+	}
+
+	if err := gst.ElementLinkMany(audioIn.RtpAudio, audioIn.Filter, audioIn.Tee); err != nil {
+		return fmt.Errorf("Failed to link factorybin to tee for pad %s: %w", name, err)
+	}
+	if err := gst.ElementLinkMany(audioIn.DtmfResample, audioIn.DtmfFilter, audioIn.DtmfDetect, audioIn.DtmfSink); err != nil {
+		return fmt.Errorf("Failed to link dtmfdetect branch for pad %s: %w", name, err)
+	}
+
+	audioIn.teeDtmfPad = audioIn.Tee.GetRequestPad("src_%u")
+	if audioIn.teeDtmfPad == nil {
+		return fmt.Errorf("Failed to get tee request pad for dtmfdetect branch for pad %s", name)
+	}
+	if ret := audioIn.teeDtmfPad.Link(audioIn.DtmfResample.GetStaticPad("sink")); ret != gst.PadLinkOK {
+		return fmt.Errorf("Failed to link tee src pad to dtmfdetect branch for pad %s: %v", name, ret)
 	}
 
 	audioIn.pad = e.Compositor.GetRequestPad(fmt.Sprintf("sink_%d_%d_%d", session, ssrc, pt))
@@ -180,19 +218,22 @@ func (e *IoManagerSip) linkNewPadAudioMicrophone(self *gst.Bin, pad *gst.Pad, na
 		return fmt.Errorf("Failed to get request pad from compositor for pad %s", name)
 	}
 
-	if ret := audioIn.DtmfDetect.GetStaticPad("src").Link(audioIn.pad); ret != gst.PadLinkOK {
-		return fmt.Errorf("Failed to link dtmfdetect src pad to compositor pad for pad %s: %v", name, ret)
+	audioIn.teeMainPad = audioIn.Tee.GetRequestPad("src_%u")
+	if audioIn.teeMainPad == nil {
+		return fmt.Errorf("Failed to get tee request pad for compositor branch for pad %s", name)
+	}
+	if ret := audioIn.teeMainPad.Link(audioIn.pad); ret != gst.PadLinkOK {
+		return fmt.Errorf("Failed to link tee src pad to compositor pad for pad %s: %v", name, ret)
+	}
+
+	for _, element := range audioIn.elements() {
+		if !element.SyncStateWithParent() {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of element with parent for pad\nname=%s\npad=%s", element.GetName(), name))
+		}
 	}
 
 	if !gpad.SetTarget(audioIn.RtpAudio.GetStaticPad("sink")) {
 		return fmt.Errorf("Failed to set target pad for ghost pad %s", name)
-	}
-
-	if !audioIn.RtpAudio.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of factorybin element with parent for pad\npad=%s", name))
-	}
-	if !audioIn.DtmfDetect.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of dtmfdetect element with parent for pad\npad=%s", name))
 	}
 
 	e.AudioIn[name] = audioIn
@@ -513,27 +554,32 @@ func (e *IoManagerSip) releasePadAudioIn(self *gst.Bin, _ *gst.GhostPad, pname s
 		return
 	}
 
-	if audioIn.RtpAudio != nil {
-		if err := audioIn.RtpAudio.SetState(gst.StateNull); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set decoder element to NULL state for pad\npad=%s\nerr=%v", pname, err))
+	for _, element := range audioIn.elements() {
+		if element == nil {
+			continue
 		}
-		if audioIn.DtmfDetect != nil {
-			if err := audioIn.DtmfDetect.SetState(gst.StateNull); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set dtmfdetect element to NULL state for pad\npad=%s\nerr=%v", pname, err))
+		if err := element.SetState(gst.StateNull); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set element to NULL state for pad\nname=%s\npad=%s\nerr=%v", element.GetName(), pname, err))
+		}
+	}
+
+	if audioIn.pad != nil {
+		e.Compositor.ReleaseRequestPad(audioIn.pad)
+	}
+	if audioIn.Tee != nil {
+		for _, teePad := range []*gst.Pad{audioIn.teeMainPad, audioIn.teeDtmfPad} {
+			if teePad != nil {
+				audioIn.Tee.ReleaseRequestPad(teePad)
 			}
 		}
+	}
 
-		if audioIn.pad != nil {
-			e.Compositor.ReleaseRequestPad(audioIn.pad)
+	for _, element := range audioIn.elements() {
+		if element == nil {
+			continue
 		}
-
-		if err := self.Remove(audioIn.RtpAudio); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove decoder element from SIP IO element for pad\npad=%s\nerr=%v", pname, err))
-		}
-		if audioIn.DtmfDetect != nil {
-			if err := self.Remove(audioIn.DtmfDetect); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove dtmfdetect element from SIP IO element for pad\npad=%s\nerr=%v", pname, err))
-			}
+		if err := self.Remove(element); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove element from SIP IO element for pad\nname=%s\npad=%s\nerr=%v", element.GetName(), pname, err))
 		}
 	}
 
@@ -652,10 +698,21 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 	audioOut := &SipAudioOutTranscode{}
 
 	var err error
+	audioOut.Queue, err = gst.NewElementWithProperties("queue", map[string]interface{}{
+		"max-size-buffers": uint(0),
+		"max-size-bytes":   uint(0),
+		"max-size-time":    uint(100_000_000), // 100 ms
+		"leaky":            int(2),            // downstream
+	})
+	if err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create queue element for audio output pad\nerr=%v", err))
+		self.Error("Failed to create queue element for audio output pad", err)
+		return
+	}
 	audioOut.AudioRtp, err = gst.NewElementWithProperties("factorybin", map[string]interface{}{
 		"factories": glib.NewStrv([]string{
-			"audio-g722",
 			"audio-opus",
+			"audio-g722",
 			"audio-pcmu",
 			"audio-pcma",
 		}),
@@ -665,9 +722,15 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 		self.Error("Failed to create factorybin element for audio output pad", err)
 		return
 	}
-	if err := self.Add(audioOut.AudioRtp); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add factorybin element to SIP IO element for audio output pad\nerr=%v", err))
-		self.Error("Failed to add factorybin element to SIP IO element for audio output pad", err)
+	if err := self.AddMany(audioOut.Queue, audioOut.AudioRtp); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to add queue and factorybin elements to SIP IO element for audio output pad\nerr=%v", err))
+		self.Error("Failed to add queue and factorybin elements to SIP IO element for audio output pad", err)
+		return
+	}
+
+	if err := audioOut.Queue.Link(audioOut.AudioRtp); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link queue element to factorybin element for audio output pad\nerr=%v", err))
+		self.Error("Failed to link queue element to factorybin element for audio output pad", err)
 		return
 	}
 
@@ -675,9 +738,9 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 
 	class := gst.ToElementClass(self.Class())
 
-	if ret := audioOut.pad.Link(audioOut.AudioRtp.GetStaticPad("sink")); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link audio output pad to factorybin sink pad\nret=%v", ret))
-		self.Error("Failed to link audio output pad to factorybin sink pad", fmt.Errorf("failed to link pads"))
+	if ret := audioOut.pad.Link(audioOut.Queue.GetStaticPad("sink")); ret != gst.PadLinkOK {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link audio output pad to queue sink pad\nret=%v", ret))
+		self.Error("Failed to link audio output pad to queue sink pad", fmt.Errorf("failed to link pads"))
 		return
 	}
 
@@ -698,6 +761,9 @@ func (e *IoManagerSip) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name string
 
 	if !audioOut.AudioRtp.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, "Failed to sync state of factorybin element with parent")
+	}
+	if !audioOut.Queue.SyncStateWithParent() {
+		self.Log(CAT, gst.LevelWarning, "Failed to sync state of queue element with parent")
 	}
 
 	e.AudioOut = audioOut
@@ -934,12 +1000,15 @@ func (e *IoManagerSip) padRemovedAudioOut(self *gst.Bin, pad *gst.Pad, name stri
 		return
 	}
 
+	if err := e.AudioOut.Queue.SetState(gst.StateNull); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", name, err))
+	}
 	if err := e.AudioOut.AudioRtp.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set factorybin element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
 
-	if err := self.Remove(e.AudioOut.AudioRtp); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove factorybin element from SIP IO element for pad\npad=%s\nerr=%v", name, err))
+	if err := self.RemoveMany(e.AudioOut.Queue, e.AudioOut.AudioRtp); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove queue and factorybin elements from SIP IO element for pad\npad=%s\nerr=%v", name, err))
 	}
 
 	if !self.RemovePad(e.AudioOut.gpad.Pad) {

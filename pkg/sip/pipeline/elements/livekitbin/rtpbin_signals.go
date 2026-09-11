@@ -58,6 +58,18 @@ func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
 		return
 	}
 
+	if _, err := e.RtpBin.Connect("new-jitterbuffer", func(_ *gst.Element, jitterbuffer *gst.Element, session uint, ssrc uint) {
+		ptr := eweak.Value()
+		if ptr == nil {
+			return
+		}
+		ptr.OnRtpBinNewJitterbuffer(jitterbuffer, session, ssrc)
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to rtpbin new-jitterbuffer signal\nerr=%v", err))
+		self.Error("Error connecting to rtpbin new-jitterbuffer signal", err)
+		return
+	}
+
 	if _, err := e.RtpBin.Connect("on-timeout", func(_ *gst.Element, session uint, ssrc uint) {
 		ptr := eweak.Value()
 		if ptr == nil {
@@ -158,6 +170,27 @@ func (e *LivekitBin) OnRtpBinRequestPtMap(session, pt uint) *gst.Caps {
 	}
 
 	return caps
+}
+
+func (e *LivekitBin) OnRtpBinNewJitterbuffer(jitterbuffer *gst.Element, session, ssrc uint) {
+	self := gst.ToGstBin(e.self.Get())
+	if self == nil || self.Instance() == nil {
+		return
+	}
+
+	kind := livekit.TrackSource(session)
+	switch kind {
+	case livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
+	default:
+		return
+	}
+
+	latency := e.config.audioJitter
+	if err := jitterbuffer.SetProperty("latency", latency); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set latency on new audio jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d\nerr=%v", kind, ssrc, latency, err))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Configured audio jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d", kind, ssrc, latency))
 }
 
 func (e *LivekitBin) OnSSRCCollision(session, ssrc uint) {

@@ -46,6 +46,8 @@ type config struct {
 	defaultParticipantName       string
 	defaultParticipantAttributes map[string]string
 	maxActiveParticipants        uint
+	maxAudioParticipants         uint
+	audioJitter                  uint
 	microphone                   bool
 	microphoneMimeType           string
 	camera                       bool
@@ -111,6 +113,9 @@ type LivekitBin struct {
 	publications [NbTracks]*LivekitBinPublication
 
 	activeSpeakers []string
+
+	audioMu         sync.Mutex
+	audioLastActive map[string]time.Time
 
 	livekitMu sync.Mutex
 }
@@ -198,11 +203,13 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 
 	e.state.cond = sync.NewCond(&e.state.mu)
 	e.defaultParticipantAttributes = make(map[string]string)
+	e.audioLastActive = make(map[string]time.Time)
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
 	}
 	e.self = glib.WeakRefInit(self)
 	e.config.maxActiveParticipants = 6
+	e.config.audioJitter = 80
 	e.config.microphoneMimeType = webrtc.MimeTypeOpus
 	e.config.cameraMimeType = webrtc.MimeTypeVP8
 	e.config.screenshareMimeType = webrtc.MimeTypeVP8
@@ -223,8 +230,6 @@ func (e *LivekitBin) Constructed(instance *glib.Object) {
 	e.RtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
 		"rtp-profile":              int(3), // GST_RTP_PROFILE_AVPF
 		"autoremove":               true,
-		"max-misorder-time":        uint(200),
-		"max-dropout-time":         uint(200),
 		"max-ts-offset":            int(200000000),
 		"timeout-inactive-sources": true,
 		"drop-on-latency":          false,

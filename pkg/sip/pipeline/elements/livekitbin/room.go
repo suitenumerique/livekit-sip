@@ -168,6 +168,8 @@ func (e *LivekitBin) OnActiveSpeakersChanged(p []lksdk.Participant) {
 		return ok
 	})
 
+	e.audioTouch(p)
+
 	maxParticipants := e.maxActiveParticipants
 	if maxParticipants == 0 {
 		maxParticipants = MAX_ACTIVE_PARTICIPANTS
@@ -229,6 +231,9 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 		return
 	}
 	e.requestHighQuality(self, publication, rp.Identity())
+	if publication.Source() == livekit.TrackSource_MICROPHONE {
+		e.audioSleep(self)
+	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to track publication\nsource=%s\nparticipant=%s", publication.Source(), rp.Identity()))
 }
 
@@ -271,6 +276,7 @@ func (e *LivekitBin) OnParticipantDisconnected(rp *lksdk.RemoteParticipant) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	e.audioForget(rp.SID())
 	e.updateActiveSpeakers(self, lo.Filter(e.getCurrentActiveSpeakers(), func(p lksdk.Participant, _ int) bool {
 		return p.SID() != rp.SID()
 	}))
@@ -300,6 +306,10 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 		return
 	}
 	ssrc := pub.TrackRemote().SSRC()
+
+	if pub.Source() == livekit.TrackSource_MICROPHONE {
+		e.audioSleep(self)
+	}
 
 	e.wg.Add(1)
 	go func() {
@@ -342,6 +352,11 @@ func (e *LivekitBin) OnTrackUnmuted(publication lksdk.TrackPublication, particip
 	ssrc := pub.TrackRemote().SSRC()
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Unmuted track\nsource=%s\ntrack=%s\nssrc=%d\nparticipant=%s", pub.Source(), pub.SID(), ssrc, participant.SID()))
+
+	if pub.Source() == livekit.TrackSource_MICROPHONE {
+		e.audioTouch([]lksdk.Participant{participant})
+		e.audioSleep(self)
+	}
 }
 
 func (e *LivekitBin) getCurrentActiveSpeakers() []lksdk.Participant {
@@ -416,6 +431,7 @@ func (e *LivekitBin) updateActiveSpeakers(self *gst.Bin, p []lksdk.Participant) 
 	}
 
 	e.cameraSleep(self, p)
+	e.audioSleep(self)
 }
 
 func (e *LivekitBin) updateSubscriptions(self *gst.Bin) {
