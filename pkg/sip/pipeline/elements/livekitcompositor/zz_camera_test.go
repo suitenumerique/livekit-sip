@@ -1,6 +1,7 @@
 package livekitcompositor_test
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -333,6 +334,70 @@ func TestCamera_ReleasePad(t *testing.T) {
 
 	alice.cleanup()
 	bob.cleanup()
+	sink.cleanup()
+	compositor = nil
+	pipeline = nil
+	_, _ = compositor, pipeline
+}
+
+// Releasing the only participant pad must not restart the compositor output
+// timeline: PTS stay monotonic and the frame rate stays nominal.
+func TestCamera_ReleaseLastPadKeepsTimeline(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	pipeline, compositor := newPipeline(t, "test-camera-release-last")
+	alice := attachCameraParticipant(t, pipeline, compositor, "alice", 2001, 0)
+	sink := newFakeSink(t, pipeline)
+	linkCompositorVideoOut(t, compositor, sink.Convert)
+
+	var backwards atomic.Int32
+	var havePTS bool
+	var lastPTS gst.ClockTime
+	sink.Sink.GetStaticPad("sink").AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		buf := info.GetBuffer()
+		if buf == nil {
+			return gst.PadProbeOK
+		}
+		pts := buf.PresentationTimestamp()
+		if pts == gst.ClockTimeNone {
+			return gst.PadProbeOK
+		}
+		if havePTS && pts < lastPTS {
+			backwards.Add(1)
+		}
+		havePTS, lastPTS = true, pts
+		return gst.PadProbeOK
+	})
+
+	if err := pipeline.SetState(gst.StatePlaying); err != nil {
+		t.Fatalf("failed to set PLAYING: %v", err)
+	}
+	emitActiveSpeakers(t, compositor, "alice")
+	time.Sleep(2 * time.Second)
+	before := sink.Count.Load()
+	if before == 0 {
+		t.Fatal("no video buffers before release")
+	}
+
+	alice.release(compositor)
+	time.Sleep(1500 * time.Millisecond)
+	produced := sink.Count.Load() - before
+
+	if n := backwards.Load(); n > 0 {
+		t.Fatalf("PTS went backwards %d times after releasing the last camera pad", n)
+	}
+	if produced == 0 {
+		t.Fatal("video stalled after releasing the last camera pad")
+	}
+	if produced > 60 {
+		t.Fatalf("frame burst after releasing the last camera pad: %d buffers in 1.5s", produced)
+	}
+	t.Logf("buffers in the 1.5s after release: %d", produced)
+
+	if err := pipeline.SetState(gst.StateNull); err != nil {
+		t.Fatalf("failed to set NULL: %v", err)
+	}
+	alice.cleanup()
 	sink.cleanup()
 	compositor = nil
 	pipeline = nil

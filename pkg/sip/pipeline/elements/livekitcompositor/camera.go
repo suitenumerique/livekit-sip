@@ -25,6 +25,10 @@ type LivekitCompositorCamera struct {
 	Overlay    *gst.Element
 	Filter     *gst.Element
 
+	// KeepalivePad is never linked: it keeps the compositor from resetting its
+	// output timeline when the last participant pad is released.
+	KeepalivePad *gst.Pad
+
 	overlayCache atomic.Pointer[overlayCache]
 
 	// Pango objects reused across draw callbacks (single streaming thread).
@@ -98,6 +102,11 @@ func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
 	}
 	if !self.AddPad(gpad.Pad) {
 		return fmt.Errorf("failed to add ghost pad for camera source to bin")
+	}
+
+	e.LivekitCompositorCamera.KeepalivePad = e.LivekitCompositorCamera.Compositor.GetRequestPad("sink_0")
+	if e.LivekitCompositorCamera.KeepalivePad == nil {
+		return fmt.Errorf("failed to request keepalive sink pad from compositor")
 	}
 
 	if !e.LivekitCompositorCamera.Compositor.SyncStateWithParent() {
@@ -400,7 +409,7 @@ func (e *LivekitCompositor) cleanupCamera(self *gst.Bin) {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to get sink pads while handling pad-removed signal\nerr=%v", err))
 		return
 	}
-	if len(sinks) > 1 {
+	if len(sinks) > 2 {
 		return
 	}
 
