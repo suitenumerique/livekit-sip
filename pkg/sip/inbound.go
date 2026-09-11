@@ -41,6 +41,7 @@ import (
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
 	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transport"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/i18n"
@@ -721,6 +722,13 @@ type inboundCall struct {
 	sigTs       SignalingTimestamps
 	jitterBuf   bool
 	projectID   string
+
+	keepalive atomic.Pointer[flowKeepalive] // set once the flow keep-alive loop is started (TCP/TLS only)
+}
+
+// flowKeepalive tracks the keep-alive loop of an inbound call's signaling flow.
+type flowKeepalive struct {
+	done <-chan struct{} // closed when the loop exits
 }
 
 func (s *Server) newInboundCall(
@@ -1028,6 +1036,9 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 			c.log().Errorw("Cannot accept the call", err)
 			c.close(ctx, callAcceptFailed, stats.ServerError("accept-failed"))
 			return false, err
+		}
+		if done := c.s.startFlowKeepalive(c.ctx, c.cc.invite.Transport(), c.cc.invite.Source(), c.s.conf.SIPKeepaliveInterval, c.log()); done != nil {
+			c.keepalive.Store(&flowKeepalive{done: done})
 		}
 		if !c.s.conf.Experimental.InboundWaitACK {
 			ackReceived = c.cc.InviteACK()
@@ -2338,9 +2349,18 @@ func (c *sipInbound) swapSrcDst(req *sip.Request) {
 		req.Recipient = c.from.Address
 	}
 	dest := c.routedDestination()
-	// Send in-dialog requests on the flow the INVITE came from.
+	// Send in-dialog requests on the flow the INVITE came from. A stream flow the
+	// peer already closed is skipped in favor of the routed destination.
 	if src := c.invite.Source(); src != "" {
-		dest = src
+		if dest == "" || !transport.IsReliable(c.invite.Transport()) || c.s.flowAlive(c.invite.Transport(), src) {
+			dest = src
+		}
+	}
+	// In-dialog requests use the transport of the dialog: once the Via headers are
+	// stripped below, Transport() would otherwise fall back to UDP unless the
+	// Request-URI carries an explicit transport parameter.
+	if tr := c.invite.Transport(); tr != "" {
+		req.SetTransport(tr)
 	}
 	req.SetSource(c.inviteOk.Source())
 	req.SetDestination(dest)
@@ -2389,8 +2409,19 @@ func (c *sipInbound) ResetRtpTimeout() {
 
 // sendReInvite sends a re-INVITE with the given SDP offer and waits for the response.
 // Used by the MediaOrchestrator to renegotiate media (e.g. video upgrade).
+// established reports whether the INVITE was answered with 200 OK and ACKed,
+// i.e. whether in-dialog requests can be sent.
+func (c *sipInbound) established() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.invite != nil && c.inviteOk != nil && c.acked.IsBroken()
+}
+
 func (c *sipInbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.Response, error) {
-	if c.invite == nil || c.inviteOk == nil {
+	c.mu.RLock()
+	ok := c.invite != nil && c.inviteOk != nil
+	c.mu.RUnlock()
+	if !ok {
 		return nil, fmt.Errorf("call not established")
 	}
 
@@ -2435,6 +2466,7 @@ func (c *sipInbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.Re
 	if err != nil {
 		// Retry once via the Contact/Record-Route destination.
 		if dest := c.routedDestination(); dest != "" && dest != req.Destination() {
+			c.log.Infow("re-INVITE retry via routed destination", "failedDest", req.Destination(), "dest", dest, "error", err.Error())
 			if via := req.Via(); via != nil {
 				via.Params.Add("branch", sip.GenerateBranchN(16))
 			}
@@ -2507,11 +2539,11 @@ func (c *sipInbound) sendStatus(ctx context.Context, code sip.StatusCode, status
 }
 
 func (c *sipInbound) WriteRequest(req *sip.Request) error {
-	return c.s.sipSrv.TransportLayer().WriteMsg(req)
+	return c.s.writeRequest(req, c.log)
 }
 
 func (c *sipInbound) Transaction(req *sip.Request) (sip.ClientTransaction, error) {
-	return c.s.sipSrv.TransactionLayer().Request(req)
+	return c.s.transactionRequest(req, c.log)
 }
 
 func (c *sipInbound) newReferReq(transferTo string, headers map[string]string) (*sip.Request, error) {

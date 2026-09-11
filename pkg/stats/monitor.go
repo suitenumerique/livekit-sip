@@ -80,6 +80,7 @@ type Monitor struct {
 	transfersSucceeded       *prometheus.CounterVec
 	transfersFailed          *prometheus.CounterVec
 	transfersActive          *prometheus.GaugeVec
+	transportReconnects      *prometheus.CounterVec
 
 	cpu            *hwstats.CPUStats
 	maxUtilization float64
@@ -294,6 +295,14 @@ func (m *Monitor) Start(conf *config.Config) error {
 		ConstLabels: prometheus.Labels{"node_id": conf.NodeID},
 	}, []string{"dir"}))
 
+	m.transportReconnects = mustRegister(m, prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace:   "livekit",
+		Subsystem:   "sip",
+		Name:        "transport_reconnects_total",
+		Help:        "Total number of SIP requests retried on a fresh TCP/TLS connection after a transport failure",
+		ConstLabels: prometheus.Labels{"node_id": conf.NodeID},
+	}, []string{"transport"}))
+
 	m.started.Break()
 
 	return nil
@@ -494,6 +503,10 @@ func (c *CallMonitor) SDPSize(sz int, isOffer bool) {
 		typ = "offer"
 	}
 	c.m.sdpSize.WithLabelValues(typ).Observe(float64(sz))
+}
+
+func (m *Monitor) TransportReconnect(transport string) {
+	m.transportReconnects.WithLabelValues(transport).Inc()
 }
 
 func (m *Monitor) TransferStarted(dir CallDir) {

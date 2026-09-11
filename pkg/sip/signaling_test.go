@@ -429,6 +429,9 @@ func NewServiceTest(t *testing.T, options *serviceTestConfig) *serviceTest {
 		// ApiKey:             "test",
 		// ApiSecret:          strings.Repeat("k", 32),
 	}
+	// Apply the same defaults as production (video sizes, timeouts, keep-alive).
+	require.NoError(t, conf.Init())
+	conf.NodeID = "test-node"
 	mon, err := stats.NewMonitor(conf)
 	require.NoError(t, err)
 	require.NoError(t, mon.Start(conf), "start monitor so metrics (e.g. inviteReqRaw) are registered")

@@ -116,6 +116,7 @@ type Config struct {
 	SIPHostname          string              `yaml:"sip_hostname"`
 	OutboundRouteHeaders []string            `yaml:"outbound_route_headers"` // Route headers prepended to outbound requests, e.g. "<sip:proxy:5060;transport=tcp;lr>"
 	SIPRingingInterval   time.Duration       `yaml:"sip_ringing_interval"`   // from 1 sec up to 60 (default '1s')
+	SIPKeepaliveInterval time.Duration       `yaml:"sip_keepalive_interval"` // double-CRLF keep-alive on TCP/TLS inbound flows (default '30s', negative disables)
 	TCP                  *TCPConfig          `yaml:"tcp"`
 	TLS                  *TLSConfig          `yaml:"tls"`
 	RTPPort              rtcconfig.PortRange `yaml:"rtp_port"`
@@ -256,6 +257,10 @@ func (c *Config) Init() error {
 
 	if c.PinTimeout <= 0 {
 		c.PinTimeout = 60 * time.Second
+	}
+
+	if c.SIPKeepaliveInterval == 0 {
+		c.SIPKeepaliveInterval = 30 * time.Second
 	}
 
 	if c.AudioJitterMs <= 0 {

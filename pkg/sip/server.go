@@ -189,6 +189,9 @@ type Server struct {
 
 	cli *Client // optional, for outbound reinvite handling
 
+	// txRequest starts a client transaction; overridable in tests to inject transport failures.
+	txRequest func(req *sip.Request) (sip.ClientTransaction, error)
+
 	res mediaRes
 }
 
@@ -348,6 +351,13 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	)
 	if err != nil {
 		return err
+	}
+	s.txRequest = func(req *sip.Request) (sip.ClientTransaction, error) {
+		tx, err := s.sipSrv.TransactionLayer().Request(req)
+		if err != nil {
+			return nil, err
+		}
+		return tx, nil
 	}
 
 	s.sipSrv.OnOptions(s.onOptions)
