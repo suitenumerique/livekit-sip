@@ -33,6 +33,13 @@ var (
 		Help:      "Remote video tracks whose RTP stream stopped (rtpbin SSRC timeout), by reason",
 	}, []string{"reason"})
 
+	screenshareTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "screenshare_transitions_total",
+		Help:      "Screenshare presenter switches by outcome: frames resumed (ok), resumed after a forced keyframe (reconciled), or not at all (lost)",
+	}, []string{"result"})
+
 	tracksSubscribed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "livekit",
 		Subsystem: "sip",
@@ -42,7 +49,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(trackPadErrors, trackPaused, tracksSubscribed)
+	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed)
 }
 
 // TrackPadError counts an rtpbin pad event that did not match a subscribed track.
@@ -53,6 +60,11 @@ func TrackPadError(reason string) {
 // TrackPaused counts a remote track whose RTP stream timed out in rtpbin.
 func TrackPaused(reason string) {
 	trackPaused.WithLabelValues(reason).Inc()
+}
+
+// ScreenshareTransition counts the outcome of a screenshare presenter switch.
+func ScreenshareTransition(result string) {
+	screenshareTransitions.WithLabelValues(result).Inc()
 }
 
 // TrackSubscribed adjusts the number of wired tracks for a source by delta.

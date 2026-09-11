@@ -212,12 +212,11 @@ func (s *SrcTrackRtp) Start(self *base.GstBaseSrc) bool {
 	return true
 }
 
+// Stop only stops the source: the subscription is owned by the LiveKit bin,
+// which unsubscribes explicitly. Unsubscribing from a GStreamer state change
+// made any transient stop of the element permanent.
 func (s *SrcTrackRtp) Stop(self *base.GstBaseSrc) bool {
 	self.Log(CAT, gst.LevelDebug, "Stopping")
-	if err := s.Pub.SetSubscribed(false); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unsubscribe from track publication\nerr=%v", err))
-	}
-
 	return true
 }
 

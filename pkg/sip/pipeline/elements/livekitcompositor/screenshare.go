@@ -4,18 +4,42 @@ import (
 	"fmt"
 	"math"
 	"sync/atomic"
+	"time"
+	"weak"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
+	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
 )
+
+const (
+	// screenshareGrace is how long the screenshare output chain survives after
+	// its last presenter pad is released. Web apps stop the previous presenter
+	// before the next one publishes: measured on staging, the next presenter's
+	// first frame lands 1.2 to 2.3 s after the release. Tearing the chain down
+	// in between releases the BFCP floor and rebuilds the SIP encoder, which
+	// the device shows as a black screen until the next keyframe.
+	screenshareGrace = 3 * time.Second
+	// screenshareSwitchWatchdog bounds how long a new presenter may take to
+	// deliver its first frame before a keyframe is forced again.
+	screenshareSwitchWatchdog = 2 * time.Second
+)
+
+// screenshareState carries the counters that deferred timers observe. It holds
+// no GStreamer wrapper so a pending timer never keeps the pipeline alive.
+type screenshareState struct {
+	frames     atomic.Int64  // buffers that left the screenshare chain
+	generation atomic.Uint64 // bumped on every sink pad request/release
+}
 
 type LivekitCompositorScreenshare struct {
 	FallbackSwitch *gst.Element
 	Filter         *gst.Element
 	priority       atomic.Int64
 	gpad           *gst.GhostPad
+	state          *screenshareState
 }
 
 func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
@@ -24,7 +48,7 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 	}
 
 	self.Log(CAT, gst.LevelInfo, "Initializing screenshare compositor")
-	e.LivekitCompositorScreenshare = &LivekitCompositorScreenshare{}
+	e.LivekitCompositorScreenshare = &LivekitCompositorScreenshare{state: &screenshareState{}}
 
 	e.LivekitCompositorScreenshare.priority.Store(math.MaxInt64)
 
@@ -66,6 +90,11 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		return fmt.Errorf("failed to create ghost pad for screenshare source")
 	}
 	e.LivekitCompositorScreenshare.gpad = gpad
+	st := e.LivekitCompositorScreenshare.state
+	gpad.Pad.AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeBufferList, func(_ *gst.Pad, _ *gst.PadProbeInfo) gst.PadProbeReturn {
+		st.frames.Add(1)
+		return gst.PadProbeOK
+	})
 	if !gpad.SetActive(true) {
 		return fmt.Errorf("failed to activate ghost pad for screenshare source")
 	}
@@ -89,7 +118,17 @@ func (e *LivekitCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *g
 		return nil
 	}
 
-	sink := e.LivekitCompositorScreenshare.FallbackSwitch.GetRequestPad("sink_%u")
+	ss := e.LivekitCompositorScreenshare
+	presenters, err := ss.FallbackSwitch.GetSinkPads()
+	if err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to list screenshare sink pads\nerr=%v", err))
+	}
+	// A pending cleanup (last presenter just left) or an existing presenter
+	// both mean this pad is a presenter switch, not a new share.
+	switching := len(presenters) > 0 || ss.state.frames.Load() > 0
+	gen := ss.state.generation.Add(1)
+
+	sink := ss.FallbackSwitch.GetRequestPad("sink_%u")
 	if sink == nil {
 		self.Log(CAT, gst.LevelError, "Failed to request new sink pad from fallbackswitch")
 		return nil
@@ -112,9 +151,60 @@ func (e *LivekitCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *g
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new screenshare sink pad\npad=%s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new screenshare sink pad\npad=%s\nswitch=%t\ngeneration=%d", gpad.GetName(), switching, gen))
+
+	if switching {
+		e.watchScreenshareSwitch(self, gpad.GetName(), gen)
+	}
 
 	return gpad.Pad
+}
+
+// watchScreenshareSwitch checks that frames flow again after a presenter
+// switch; it forces one more keyframe if they do not, and reports the outcome.
+func (e *LivekitCompositor) watchScreenshareSwitch(self *gst.Bin, padName string, gen uint64) {
+	st := e.LivekitCompositorScreenshare.state
+	wself := glib.WeakRefInit(self)
+	start := st.frames.Load()
+	startedAt := time.Now()
+
+	report := func(result string) {
+		metrics.ScreenshareTransition(result)
+		if self := gst.ToGstBin(wself.Get()); self != nil && self.Instance() != nil {
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Screenshare presenter switch %s\ngeneration=%d\nelapsed=%s", result, gen, time.Since(startedAt).Round(time.Millisecond)))
+		}
+	}
+	forceKeyUnit := func() {
+		self := gst.ToGstBin(wself.Get())
+		if self == nil || self.Instance() == nil {
+			return
+		}
+		if pad := self.GetStaticPad(padName); pad != nil {
+			keyframe.ForceKeyUnit(pad)
+		}
+	}
+
+	time.AfterFunc(screenshareSwitchWatchdog, func() {
+		if st.generation.Load() != gen {
+			return // superseded by another switch or by the end of the share
+		}
+		if st.frames.Load() > start {
+			report("ok")
+			return
+		}
+		forceKeyUnit()
+		mid := st.frames.Load()
+		time.AfterFunc(screenshareSwitchWatchdog, func() {
+			if st.generation.Load() != gen {
+				return
+			}
+			if st.frames.Load() > mid {
+				report("reconciled")
+			} else {
+				report("lost")
+			}
+		})
+	})
 }
 
 func (e *LivekitCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.GhostPad) {
@@ -136,7 +226,40 @@ func (e *LivekitCompositor) releaseScreenshareSinkPad(self *gst.Bin, gpad *gst.G
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Released screenshare sink pad\npad=%s", gpad.GetName()))
 
-	e.cleanupScreenshare(self)
+	e.scheduleScreenshareCleanup(self)
+}
+
+// scheduleScreenshareCleanup tears the screenshare chain down once no presenter
+// pad has been requested for screenshareGrace. Runs on the GLib main loop like
+// every other compositor pad change.
+func (e *LivekitCompositor) scheduleScreenshareCleanup(self *gst.Bin) {
+	ss := e.LivekitCompositorScreenshare
+	if ss == nil {
+		return
+	}
+	sinks, err := ss.FallbackSwitch.GetSinkPads()
+	if err != nil || len(sinks) > 0 {
+		return
+	}
+	st := ss.state
+	gen := st.generation.Add(1)
+	wself := glib.WeakRefInit(self)
+	we := weak.Make(e)
+	time.AfterFunc(screenshareGrace, func() {
+		if _, err := glib.IdleAdd(func() {
+			self := gst.ToGstBin(wself.Get())
+			e := we.Value()
+			if self == nil || self.Instance() == nil || e == nil {
+				return
+			}
+			if cur := e.LivekitCompositorScreenshare; cur == nil || cur.state != st || st.generation.Load() != gen {
+				return // a new presenter arrived within the grace period
+			}
+			e.cleanupScreenshare(self)
+		}); err != nil {
+			CAT.Log(gst.LevelError, fmt.Sprintf("Failed to schedule screenshare cleanup\nerr=%v", err))
+		}
+	})
 }
 
 func (e *LivekitCompositor) applyScreenshareLayout(self *gst.Bin, layout []string) {}
@@ -154,6 +277,7 @@ func (e *LivekitCompositor) cleanupScreenshare(self *gst.Bin) {
 	if len(sinks) > 0 {
 		return
 	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Tearing down screenshare compositor\nframes=%d", e.LivekitCompositorScreenshare.state.frames.Load()))
 
 	if err := e.LivekitCompositorScreenshare.FallbackSwitch.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set fallbackswitch to null state after releasing last screenshare sink pad\nerr=%v", err))

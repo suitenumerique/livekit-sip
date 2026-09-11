@@ -28,6 +28,21 @@ func (e *BFCPServer) startScreenshare(self *gst.Element, floorID int) {
 		return
 	}
 
+	// The signal is emitted from the compositor's streaming thread; the
+	// release/grant sequence sleeps and must not stall media.
+	wself := glib.WeakRefInit(self)
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		self := gst.ToElement(wself.Get())
+		if self == nil {
+			return
+		}
+		e.grantFloor(self, floor, floorID)
+	}()
+}
+
+func (e *BFCPServer) grantFloor(self *gst.Element, floor *bfcp.FloorStateMachine, floorID int) {
 	if floor.IsGranted() {
 		if err := floor.Release(floor.GetOwner()); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release floor\nfloor_id=%d\nerr=%v", floorID, err))

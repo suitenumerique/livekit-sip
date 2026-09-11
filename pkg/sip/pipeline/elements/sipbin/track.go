@@ -1016,7 +1016,21 @@ func (e *SipBin) clearTrack(self *gst.Bin, kind livekit.TrackSource) {
 	if len(ssrcs) == 0 {
 		return
 	}
-	time.Sleep(500 * time.Millisecond)
+	// Let the last packets of the previous presenter drain before clearing;
+	// the wait must not block the BFCP callback thread.
+	wself := glib.WeakRefInit(self)
+	e.wg.Add(1)
+	time.AfterFunc(500*time.Millisecond, func() {
+		defer e.wg.Done()
+		self := gst.ToGstBin(wself.Get())
+		if self == nil || self.Instance() == nil {
+			return
+		}
+		e.clearSSRCs(self, kind, rtpSession, ssrcs, nptk)
+	})
+}
+
+func (e *SipBin) clearSSRCs(self *gst.Bin, kind livekit.TrackSource, rtpSession *glib.Object, ssrcs []uint32, nptk []uint64) {
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Clearing SSRCs from RTP session for track source\ncount=%d\nsource=%s\nssrcs=%v", len(ssrcs), kind, ssrcs))
 	for i, ssrc := range ssrcs {
 		rtpSourceVal, err := rtpSession.Emit("get-source-by-ssrc", uint(ssrc))

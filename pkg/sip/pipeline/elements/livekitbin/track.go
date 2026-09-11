@@ -667,8 +667,8 @@ func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remote
 
 	srcTrack, ok := e.lookupTrack(pub.SID())
 	if ok {
+		// A duplicate notification must not touch the subscription that is already wired.
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track with SID already exists, skipping subscription\nsid=%s\ntrack=%s", pub.SID(), track.ID()))
-		pub.SetSubscribed(false)
 		return
 	}
 

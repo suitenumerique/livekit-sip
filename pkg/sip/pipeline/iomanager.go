@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"weak"
 
 	"github.com/go-gst/go-gst/gst"
@@ -23,6 +24,8 @@ type IOManager struct {
 
 	SipController     *gst.Element
 	LivekitController *gst.Element
+
+	screenshareOn atomic.Bool // last has-screenshare value forwarded to the SIP bin
 }
 
 var _ GstChain = (*IOManager)(nil)
@@ -191,6 +194,11 @@ func (c *IOManager) toggleScreenshare(e *gst.Element, hasScreenshare bool) {
 	if sio == nil || sio.SipBin == nil {
 		return
 	}
+	if !c.screenshareOn.CompareAndSwap(!hasScreenshare, hasScreenshare) {
+		c.log.Debugw("Ignoring repeated screenshare toggle", "hasScreenshare", hasScreenshare)
+		return
+	}
+	c.log.Infow("Screenshare toggle toward the SIP side", "hasScreenshare", hasScreenshare)
 	if _, err := sio.SipBin.Emit("toggle-screenshare", hasScreenshare); err != nil {
 		c.log.Errorw("Failed to emit toggle-screenshare signal", err)
 	}
