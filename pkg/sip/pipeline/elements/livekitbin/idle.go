@@ -22,20 +22,20 @@ import (
 	"github.com/go-gst/go-gst/gst"
 )
 
-// subscriptionIdleGrace is how long a camera or microphone stays subscribed
-// after leaving the mosaic / active-audio window, so a participant flapping in
-// and out does not churn the SFU subscription and the decode chain.
+// subscriptionIdleGrace is how long a camera stays subscribed after leaving
+// the mosaic, so a participant flapping in and out does not churn the SFU
+// subscription and the decode chain.
 const subscriptionIdleGrace = 10 * time.Second
 
 type idleSubscription struct {
 	since       time.Time
 	timer       *time.Timer
-	unsubscribe func() error
+	unsubscribe func(self *gst.Bin) error
 }
 
 // markIdle schedules unsubscribe for sid once the grace period elapses. It is
 // a no-op when sid is already scheduled.
-func (e *LivekitBin) markIdle(sid string, unsubscribe func() error) {
+func (e *LivekitBin) markIdle(sid string, unsubscribe func(self *gst.Bin) error) {
 	e.idleMu.Lock()
 	defer e.idleMu.Unlock()
 	if e.idle == nil {
@@ -101,7 +101,7 @@ func (e *LivekitBin) idleExpired(sid string) {
 		if !ok {
 			return
 		}
-		if err := s.unsubscribe(); err != nil {
+		if err := s.unsubscribe(self); err != nil {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unsubscribe idle track\nsid=%s\nerr=%v", sid, err))
 			return
 		}

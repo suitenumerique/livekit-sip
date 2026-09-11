@@ -193,6 +193,8 @@ func (e *LivekitBin) OnRtpBinNewJitterbuffer(jitterbuffer *gst.Element, session,
 		return
 	}
 
+	e.rememberJitterbuffer(self, jitterbuffer, session, ssrc)
+
 	if err := jitterbuffer.SetProperty("latency", latency); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set latency on new jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d\nerr=%v", kind, ssrc, latency, err))
 		return
@@ -222,6 +224,7 @@ func (e *LivekitBin) OnTimeout(session, ssrc uint) {
 	}
 	self.Log(CAT, level, fmt.Sprintf("SSRC has timed out\nssrc=%d\nsession=%d\nreason=%s", ssrc, session, reason))
 	metrics.TrackPaused(reason)
+	e.logJitterbufferStats(self, session, ssrc, "timeout")
 
 	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal\nerr=%v", err))

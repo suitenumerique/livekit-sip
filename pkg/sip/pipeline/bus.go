@@ -108,10 +108,38 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 		case p.dumpCH <- false:
 		default:
 		}
+	case gst.MessageQoS:
+		p.logQoS(msg)
 	default:
 		pipeline.Log(CAT, gst.LevelTrace, fmt.Sprintf("Unhandled bus message\ntype=%v", msg.Type()))
 	}
 	return true
+}
+
+// logQoS reports buffers dropped by an element that posts QoS messages, at
+// most once per second per source; the counters are cumulative.
+func (p *Pipeline) logQoS(msg *gst.Message) {
+	src := msg.Source()
+	now := time.Now()
+	p.qosMu.Lock()
+	if now.Sub(p.qosLast[src]) < time.Second {
+		p.qosMu.Unlock()
+		return
+	}
+	p.qosLast[src] = now
+	p.qosMu.Unlock()
+
+	values := msg.ParseQoS()
+	processed, dropped := "?", "?"
+	if st := msg.GetStructure(); st != nil {
+		if v, err := st.GetValue("processed"); err == nil {
+			processed = fmt.Sprint(v)
+		}
+		if v, err := st.GetValue("dropped"); err == nil {
+			dropped = fmt.Sprint(v)
+		}
+	}
+	p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Buffers dropped\nsource=%s\nlive=%t\nrunning_time=%s\nprocessed=%s\ndropped=%s", src, values.Live, values.RunningTime, processed, dropped))
 }
 
 func (p *Pipeline) DTMF() chan int {

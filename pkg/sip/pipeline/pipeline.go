@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +62,8 @@ type Pipeline struct {
 	audioJitterMs         int
 	videoJitterMs         int
 	latencyWarned         atomic.Bool
+	qosMu                 sync.Mutex
+	qosLast               map[string]time.Time
 	maxAudioParticipants  int
 	dumpDot               bool
 	dumpDir               string
@@ -367,6 +370,7 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		cancel:                cancel,
 		dtmfCh:                make(chan int, 10),
 		dumpCH:                make(chan bool, 1024),
+		qosLast:               make(map[string]time.Time),
 		videoWidth:            sipOpt.VideoWidth,
 		videoHeight:           sipOpt.VideoHeight,
 		videoFramerate:        sipOpt.Framerate,

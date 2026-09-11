@@ -672,6 +672,16 @@ func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remote
 		return
 	}
 
+	// The SDK re-requests every track it ever received when it resumes a
+	// session, released ones included.
+	if !e.wantsTrack(pub.SID()) {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Track arrived without a pending request, releasing it\nsid=%s\ntrack=%s\nsource=%s", pub.SID(), track.ID(), kind.String()))
+		if err := pub.SetSubscribed(false); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to release unrequested track\nsid=%s\nerr=%v", pub.SID(), err))
+		}
+		return
+	}
+
 	if err := funnel.Init(e, self, kind); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error initializing funnel for track source\nsource=%s\nerr=%v", kind.String(), err))
 		self.Error(fmt.Sprintf("Error initializing funnel for track source %s", kind.String()), err)
@@ -833,13 +843,14 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 
 	ssrc := track.SSRC()
 	sid := pub.SID()
+	e.dropTrack(sid)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	srcTrack, ok := e.lookupTrack(sid)
 	if !ok {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track with SID not found during unsubscribe\nsid=%s\ntrack=%s", sid, track.ID()))
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Track already released\nsid=%s\ntrack=%s", sid, track.ID()))
 		releaseFunnelPads(funnel, uint32(ssrc))
 		return
 	}
@@ -858,6 +869,7 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 		e.cameraForgetDimensions(pub)
 	}
 
+	e.logJitterbufferStats(self, uint(kind), uint(ssrc), "unsubscribe")
 	if _, err := e.RtpBin.Emit("clear-ssrc", uint(kind), uint(ssrc)); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting pad removed signal\ntrack=%s\nerr=%v", track.ID(), err))
 		self.Error(fmt.Sprintf("Error emitting pad removed signal for track ID %s", track.ID()), err)
@@ -883,6 +895,8 @@ func (e *LivekitBin) onRtpBinPadRemovedRecvRtp(self *gst.Bin, pad *gst.Pad, pnam
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Unknown track source in pad name\npad=%s", pname))
 		return
 	}
+
+	e.forgetJitterbuffer(uint(session), uint(ssrc))
 
 	gpname := fmt.Sprintf("recv_rtp_src_%d_%d_%d", session, ssrc, pt)
 	gpad := self.GetStaticPad(gpname)

@@ -4,13 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-gst/go-gst/gst"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIdleBookkeeping(t *testing.T) {
 	e := &LivekitBin{idleGrace: time.Hour}
 	calls := 0
-	unsub := func() error { calls++; return nil }
+	unsub := func(*gst.Bin) error { calls++; return nil }
 
 	require.False(t, e.cancelIdle("TR_1"), "nothing scheduled yet")
 	e.markIdle("TR_1", unsub)

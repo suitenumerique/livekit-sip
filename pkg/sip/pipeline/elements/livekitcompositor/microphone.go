@@ -199,7 +199,7 @@ func (e *LivekitCompositor) requestNewMicrophoneSinkPad(self *gst.Bin, templ *gs
 		return nil
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new microphone sink pad\npad=%s", gpad.GetName()))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Created new microphone sink pad\npad=%s\nmixer_pad=%s", gpad.GetName(), sink.GetName()))
 
 	return gpad.Pad
 }

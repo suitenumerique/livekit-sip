@@ -131,6 +131,13 @@ type LivekitBin struct {
 	idle      map[string]*idleSubscription // key is track SID
 	idleGrace time.Duration                // 0 = subscriptionIdleGrace
 
+	subMu  sync.Mutex
+	wanted map[string]struct{} // track SIDs requested from the SFU and not released yet
+
+	jbMu          sync.Mutex
+	jitterbuffers map[uint64]*gst.Element // key is session<<32 | ssrc
+	jbStatsTimer  bool
+
 	livekitMu sync.Mutex
 }
 
@@ -221,6 +228,8 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 	e.announced = make(map[string]struct{})
 	e.seenAt = make(map[string]time.Time)
 	e.cameraDims = make(map[string][2]uint32)
+	e.wanted = make(map[string]struct{})
+	e.jitterbuffers = make(map[uint64]*gst.Element)
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
 	}

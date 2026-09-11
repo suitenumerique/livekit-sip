@@ -167,9 +167,20 @@ func (e *LivekitBin) OnActiveSpeakersChanged(p []lksdk.Participant) {
 		return
 	}
 
+	// The SDK never removes a departed participant from its speaker list.
+	present := make(map[string]struct{})
+	for _, rp := range e.room.GetRemoteParticipants() {
+		present[rp.SID()] = struct{}{}
+	}
 	p = lo.Filter(p, func(part lksdk.Participant, i int) bool {
-		_, ok := part.(*lksdk.RemoteParticipant)
-		return ok
+		if _, ok := part.(*lksdk.RemoteParticipant); !ok {
+			return false
+		}
+		if _, ok := present[part.SID()]; !ok {
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Ignoring departed active speaker\nparticipant=%s", part.SID()))
+			return false
+		}
+		return true
 	})
 
 	e.audioTouch(p)
@@ -206,21 +217,32 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 	}
 
 	switch publication.Source() {
-	case livekit.TrackSource_CAMERA, livekit.TrackSource_MICROPHONE:
-		// Subscribed on demand by cameraSleep/audioSleep: participants outside
-		// the mosaic and the active-audio window cost no decode chain at all.
+	case livekit.TrackSource_CAMERA:
+		// Subscribed on demand by cameraSleep: participants outside the mosaic
+		// cost no decode chain at all.
 		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Deferring track subscription to the layout scheduler\nparticipant=%s\nsource=%s", rp.Identity(), publication.Source().String()))
+		e.refreshSubscriptionsLater()
+		return
+	case livekit.TrackSource_MICROPHONE:
+		// The SFU only reports the active speakers among the participants we
+		// are subscribed to, so every microphone stays subscribed; audioSleep
+		// enables the active-audio window and keeps the other ones muted at
+		// the SFU, where a disabled subscription carries no media.
+		if err := e.subscribeTrack(self, publication, "published"); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to microphone track\nparticipant=%s\nerr=%v", rp.Identity(), err))
+			return
+		}
+		publication.SetEnabled(false)
 		e.refreshSubscriptionsLater()
 		return
 	}
 
-	if err := publication.SetSubscribed(true); err != nil {
+	if err := e.subscribeTrack(self, publication, "published"); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to track publication\nsource=%s\nparticipant=%s\nerr=%v", publication.Source(), rp.Identity(), err))
 		self.Error(fmt.Sprintf("Failed to subscribe to %s track publication for participant %s", publication.Source(), rp.Identity()), err)
 		return
 	}
 	e.requestHighQuality(self, publication, rp.Identity())
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to track publication\nsource=%s\nparticipant=%s", publication.Source(), rp.Identity()))
 }
 
 // refreshSubscriptionsLater re-evaluates the mosaic and active-audio window on
@@ -281,6 +303,7 @@ func (e *LivekitBin) OnParticipantDisconnected(rp *lksdk.RemoteParticipant) {
 	e.forget(rp.SID())
 	for _, pub := range rp.TrackPublications() {
 		e.cancelIdle(pub.SID())
+		e.dropTrack(pub.SID())
 	}
 	e.updateActiveSpeakers(self, lo.Filter(e.getCurrentActiveSpeakers(), func(p lksdk.Participant, _ int) bool {
 		return p.SID() != rp.SID()
@@ -314,6 +337,10 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 
 	if pub.Source() == livekit.TrackSource_MICROPHONE {
 		e.audioSleep(self)
+	}
+
+	if _, wired := e.lookupTrack(pub.SID()); !wired {
+		return
 	}
 
 	e.wg.Add(1)
@@ -478,6 +505,10 @@ func (e *LivekitBin) updateSubscriptions(self *gst.Bin) {
 		{livekit.TrackSource_SCREEN_SHARE_AUDIO, e.screenshareAudio},
 	}
 
+	if e.room == nil {
+		return
+	}
+
 	changed := false
 	for _, participant := range e.room.GetRemoteParticipants() {
 		for _, config := range trackConfig {
@@ -488,10 +519,15 @@ func (e *LivekitBin) updateSubscriptions(self *gst.Bin) {
 			if !ok || pub == nil {
 				continue
 			}
-			if pub.IsSubscribed() {
+			if config.kind == livekit.TrackSource_CAMERA {
+				// Requested on demand by cameraSleep.
+				changed = true
 				continue
 			}
-			if err := pub.SetSubscribed(true); err != nil {
+			if e.wantsTrack(pub.SID()) {
+				continue
+			}
+			if err := e.subscribeTrack(self, pub, "configuration"); err != nil {
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to subscribe to track\ntrack=%s\nparticipant=%s\nerr=%v", config.kind, participant.Identity(), err))
 			} else {
 				e.requestHighQuality(self, pub, participant.Identity())

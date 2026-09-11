@@ -33,12 +33,8 @@ func (e *LivekitBin) cameraSleep(self *gst.Bin, p []lksdk.Participant) {
 		}
 
 		e.cancelIdle(camera.SID())
-		if !camera.IsSubscribed() {
-			if err := camera.SetSubscribed(true); err != nil {
-				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to camera track\nidentity=%s\nerr=%v", rp.Identity(), err))
-			} else {
-				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to camera track for the mosaic\nidentity=%s\nsid=%s", rp.Identity(), camera.SID()))
-			}
+		if err := e.subscribeTrack(self, camera, "mosaic"); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to camera track\nidentity=%s\nerr=%v", rp.Identity(), err))
 		}
 
 		e.cameraRequestDimensions(camera, uint32(tileW), uint32(tileH))
@@ -63,8 +59,8 @@ func (e *LivekitBin) cameraSleep(self *gst.Bin, p []lksdk.Participant) {
 			camera.SetEnabled(false)
 		}
 		e.cameraForgetDimensions(camera)
-		if camera.IsSubscribed() {
-			e.markIdle(camera.SID(), func() error { return camera.SetSubscribed(false) })
+		if e.wantsTrack(camera.SID()) {
+			e.markIdle(camera.SID(), func(self *gst.Bin) error { return e.releaseTrack(self, camera, "idle") })
 		}
 	}
 }

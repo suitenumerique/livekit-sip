@@ -64,18 +64,23 @@ func (e *LivekitBin) audioSleepLater() {
 }
 
 // audioSleep enables the microphone tracks of the participants who spoke most
-// recently, up to max-audio-participants, and disables the other ones.
+// recently, up to max-audio-participants (0 = all of them), and disables the
+// other ones. Microphones stay subscribed either way: the SFU only reports
+// the speakers we are subscribed to.
 func (e *LivekitBin) audioSleep(self *gst.Bin) {
 	limit := int(e.maxAudioParticipants)
-	if limit == 0 || !e.config.microphone || e.room == nil {
+	if !e.config.microphone || e.room == nil {
 		return
 	}
 
 	type candidate struct {
 		pub    *lksdk.RemoteTrackPublication
+		sid    string
 		active time.Time
 	}
 
+	// A participant who has not spoken yet ranks below every speaker: a
+	// newcomer must not push the current speaker out of the window.
 	e.audioMu.Lock()
 	candidates := make([]candidate, 0, len(e.audioLastActive))
 	for _, rp := range e.room.GetRemoteParticipants() {
@@ -83,36 +88,28 @@ func (e *LivekitBin) audioSleep(self *gst.Bin) {
 		if !ok || pub == nil {
 			continue
 		}
-		active, known := e.audioLastActive[rp.SID()]
-		if !known {
-			active = time.Now()
-			e.audioLastActive[rp.SID()] = active
-		}
+		active := e.audioLastActive[rp.SID()]
 		if pub.IsMuted() {
 			active = time.Time{}
 		}
-		candidates = append(candidates, candidate{pub: pub, active: active})
+		candidates = append(candidates, candidate{pub: pub, sid: rp.SID(), active: active})
 	}
 	e.audioMu.Unlock()
 
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].active.After(candidates[j].active)
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].active.Equal(candidates[j].active) {
+			return candidates[i].active.After(candidates[j].active)
+		}
+		return candidates[i].sid < candidates[j].sid
 	})
 
 	for i, c := range candidates {
-		enabled := i < limit
+		enabled := limit <= 0 || i < limit
 		if enabled {
-			e.cancelIdle(c.pub.SID())
-			if !c.pub.IsSubscribed() {
-				if err := c.pub.SetSubscribed(true); err != nil {
-					self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to microphone track\ntrack=%s\nerr=%v", c.pub.SID(), err))
-					continue
-				}
-				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to microphone track for the active-audio window\ntrack=%s", c.pub.SID()))
+			if err := e.subscribeTrack(self, c.pub, "active-audio window"); err != nil {
+				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to microphone track\ntrack=%s\nerr=%v", c.pub.SID(), err))
+				continue
 			}
-		} else if c.pub.IsSubscribed() {
-			pub := c.pub
-			e.markIdle(pub.SID(), func() error { return pub.SetSubscribed(false) })
 		}
 		if c.pub.IsEnabled() == enabled {
 			continue
