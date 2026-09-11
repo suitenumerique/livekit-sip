@@ -124,6 +124,7 @@ func (e *Vp9Video) Constructed(instance *glib.Object) {
 	}
 	keyframe.RequestOnBadBuffer(e.Vp9Dec.GetStaticPad("src"))
 	keyframe.LogFirstDecodedFrame(CAT, self, e.Vp9Dec.GetStaticPad("src"))
+	keyframe.LogResolutionChanges(CAT, self, e.Vp9Dec.GetStaticPad("src"))
 
 	e.VideoScale, err = gst.NewElementWithProperties("videoscale", map[string]interface{}{
 		"add-borders": true,

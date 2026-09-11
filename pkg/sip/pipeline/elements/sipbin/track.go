@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"weak"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -46,6 +47,7 @@ type SipTrack struct {
 
 	linkFeedbackStop    chan struct{}
 	linkFeedbackStarted bool
+	linkFeedbackTicks   int
 
 	tmmbrKbps      int
 	rxLossTicks    int
@@ -265,7 +267,7 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 
 	switch t.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
-		t.watchTmmbr(self)
+		t.watchTmmbr(e, self)
 		t.logFirstRtpSent(self)
 		t.StartLinkFeedback(e, self)
 	}
@@ -438,7 +440,13 @@ func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\nrtt_ms=%d\ntmmbr_kbps=%d\nbudget_kbps=%d", t.Kind, fractionLost, rttMs, tmmbrKbps, budgetKbps))
+	t.linkFeedbackTicks++
+	level := gst.LevelDebug
+	if fractionLost > 0 || t.linkFeedbackTicks%5 == 1 {
+		level = gst.LevelInfo
+	}
+	packetsLost, jitter := e.deviceReportDetails(t.Kind)
+	self.Log(CAT, level, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\npackets_lost=%d\njitter=%d\nrtt_ms=%d\ntmmbr_kbps=%d\nbudget_kbps=%d", t.Kind, fractionLost, packetsLost, jitter, rttMs, tmmbrKbps, budgetKbps))
 
 	st := gst.NewStructure("vopenia-link-feedback")
 	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
@@ -485,13 +493,14 @@ func (e *SipBin) sendBudgetKbps(kind livekit.TrackSource) int {
 }
 
 // watchTmmbr parses the device's incoming RTCP: TMMBR requests feed the
-// link feedback event, PLI/FIR are logged.
-func (t *SipTrack) watchTmmbr(bin *gst.Bin) {
+// link feedback event, PLI/FIR are logged with the SSRCs they target.
+func (t *SipTrack) watchTmmbr(e *SipBin, bin *gst.Bin) {
 	pad := t.RtcpSrc.GetStaticPad("src")
 	if pad == nil {
 		return
 	}
 	wself := glib.WeakRefInit(bin)
+	eweak := weak.Make(e)
 	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		buf := info.GetBuffer()
 		if buf == nil {
@@ -504,12 +513,69 @@ func (t *SipTrack) watchTmmbr(bin *gst.Bin) {
 			t.keyframeMu.Unlock()
 		}
 		if pli, fir := hasKeyframeRequest(data); pli || fir {
-			if self := gst.ToGstBin(wself.Get()); self != nil {
-				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Device requested keyframe\nkind=%d\npli=%t\nfir=%t", t.Kind, pli, fir))
+			self := gst.ToGstBin(wself.Get())
+			e := eweak.Value()
+			if self != nil && e != nil {
+				req := keyframeRequestInfo(data)
+				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Device requested keyframe\nkind=%d\npli=%t\nfir=%t\nsender_ssrc=%d\nmedia_ssrc=%d\nfir_ssrc=%d\nfir_seq=%d\nour_ssrc=%d", t.Kind, pli, fir, req.senderSSRC, req.mediaSSRC, req.firSSRC, req.firSeq, e.sendSSRC(t.Kind)))
 			}
 		}
 		return gst.PadProbeOK
 	})
+}
+
+type keyframeRequest struct {
+	senderSSRC uint32
+	mediaSSRC  uint32
+	firSSRC    uint32
+	firSeq     uint8
+}
+
+// keyframeRequestInfo returns the SSRCs carried by the first PLI or FIR of
+// an RTCP compound packet (RFC 4585 §6.1, RFC 5104 §4.3.1.1).
+func keyframeRequestInfo(data []byte) keyframeRequest {
+	var req keyframeRequest
+	for len(data) >= 4 {
+		if data[0]>>6 != 2 {
+			return req
+		}
+		length := ((int(data[2])<<8 | int(data[3])) + 1) * 4
+		if length > len(data) {
+			return req
+		}
+		if data[1] == 206 && length >= 12 {
+			switch data[0] & 0x1f {
+			case 1:
+				req.senderSSRC = binary.BigEndian.Uint32(data[4:8])
+				req.mediaSSRC = binary.BigEndian.Uint32(data[8:12])
+				return req
+			case 4:
+				req.senderSSRC = binary.BigEndian.Uint32(data[4:8])
+				req.mediaSSRC = binary.BigEndian.Uint32(data[8:12])
+				if length >= 20 {
+					req.firSSRC = binary.BigEndian.Uint32(data[12:16])
+					req.firSeq = data[16]
+				}
+				return req
+			}
+		}
+		data = data[length:]
+	}
+	return req
+}
+
+// sendSSRC returns the SSRC of our sending source in the track's RTP session.
+func (e *SipBin) sendSSRC(kind livekit.TrackSource) uint32 {
+	st, err := e.getStats(kind)
+	if err != nil || st == nil {
+		return 0
+	}
+	for _, src := range st.Sources {
+		if src.Internal && src.IsSender {
+			return src.SSRC
+		}
+	}
+	return 0
 }
 
 // hasKeyframeRequest reports whether an RTCP compound packet carries a PLI
@@ -683,6 +749,22 @@ func (t *SipTrack) sendTmmbr(self *gst.Bin, mediaSSRC uint32, bps uint64) {
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sent RTCP TMMBR to device\nssrc=%d\nbps=%d", mediaSSRC, bps))
+}
+
+// deviceReportDetails returns the cumulative packets lost and the jitter of
+// the latest receiver report from the device for our sending source.
+func (e *SipBin) deviceReportDetails(kind livekit.TrackSource) (packetsLost int32, jitter uint32) {
+	st, err := e.getStats(kind)
+	if err != nil || st == nil {
+		return 0, 0
+	}
+	for _, src := range st.Sources {
+		for _, rr := range src.ReceivedRR {
+			packetsLost = rr.PacketsLost
+			jitter = rr.Jitter
+		}
+	}
+	return packetsLost, jitter
 }
 
 func (e *SipBin) linkFeedback(kind livekit.TrackSource) (rttMs int, fractionLost uint8) {

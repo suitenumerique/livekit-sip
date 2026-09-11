@@ -1,6 +1,7 @@
 package keyframe
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
@@ -49,6 +50,41 @@ func RequestOnBadBuffer(pad *gst.Pad) {
 		lastRequest = now
 
 		p.SendEvent(video.NewEventUpstreamForceKeyUnit(gst.ClockTimeNone, true, 0))
+		return gst.PadProbeOK
+	})
+}
+
+// LogResolutionChanges logs every change of the decoded frame size after the
+// first caps seen on pad.
+func LogResolutionChanges(cat *gst.DebugCategory, self *gst.Bin, pad *gst.Pad) {
+	wself := glib.WeakRefInit(self)
+	var lastWidth, lastHeight int
+	pad.AddProbe(gst.PadProbeTypeEventDownstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		ev := info.GetEvent()
+		if ev == nil || ev.Type() != gst.EventTypeCaps {
+			return gst.PadProbeOK
+		}
+		caps := ev.ParseCaps()
+		if caps == nil || caps.GetSize() == 0 {
+			return gst.PadProbeOK
+		}
+		st := caps.GetStructureAt(0)
+		w, errW := st.GetValue("width")
+		h, errH := st.GetValue("height")
+		if errW != nil || errH != nil {
+			return gst.PadProbeOK
+		}
+		width, okW := w.(int)
+		height, okH := h.(int)
+		if !okW || !okH {
+			return gst.PadProbeOK
+		}
+		if lastWidth != 0 && (width != lastWidth || height != lastHeight) {
+			if self := gst.ToGstBin(wself.Get()); self != nil {
+				self.Log(cat, gst.LevelInfo, fmt.Sprintf("Decoded resolution changed\nfrom=%dx%d\nto=%dx%d", lastWidth, lastHeight, width, height))
+			}
+		}
+		lastWidth, lastHeight = width, height
 		return gst.PadProbeOK
 	})
 }

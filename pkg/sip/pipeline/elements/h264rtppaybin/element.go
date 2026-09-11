@@ -201,6 +201,8 @@ func (e *H264RtpPayBin) Constructed(instance *glib.Object) {
 
 	ghostSrc := gst.NewGhostPadFromTemplate("src", e.PlidPatch.GetStaticPad("src"), elemClass.GetPadTemplate("src"))
 	self.AddPad(ghostSrc.Pad)
+
+	e.watchRTP(self, e.PlidPatch.GetStaticPad("src"))
 }
 
 func (e *H264RtpPayBin) setMaxResolution(self *gst.Bin, caps *gst.Caps) {

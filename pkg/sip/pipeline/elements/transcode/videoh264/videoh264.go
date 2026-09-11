@@ -202,6 +202,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		self.Error("Failed to create x264enc element", err)
 		return
 	}
+	e.watchKeyframes(self)
 
 	e.H264RtpPayBin, err = gst.NewElementWithProperties("h264rtppaybin", map[string]interface{}{
 		"allow-high": e.usage == UsageScreenshare,
@@ -419,6 +420,41 @@ func (e *VideoH264) scheduleKeyframeBurst(wself *glib.WeakRef, eweak weak.Pointe
 			e.requestEncoderKeyframe(self)
 		})
 	}
+}
+
+// watchKeyframes logs every keyframe request reaching x264enc and the size
+// of every keyframe it emits.
+func (e *VideoH264) watchKeyframes(self *gst.Bin) {
+	pad := e.X264Enc.GetStaticPad("src")
+	if pad == nil {
+		return
+	}
+	wself := glib.WeakRefInit(self)
+	pad.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		if ev := info.GetEvent(); ev != nil && ev.HasName("GstForceKeyUnit") {
+			if self := gst.ToGstBin(wself.Get()); self != nil {
+				self.Log(CAT, gst.LevelInfo, "Keyframe request reached encoder")
+			}
+		}
+		return gst.PadProbeOK
+	})
+	var lastKeyframe time.Time
+	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		buf := info.GetBuffer()
+		if buf == nil || buf.HasFlags(gst.BufferFlagDeltaUnit) {
+			return gst.PadProbeOK
+		}
+		now := time.Now()
+		var since time.Duration
+		if !lastKeyframe.IsZero() {
+			since = now.Sub(lastKeyframe)
+		}
+		lastKeyframe = now
+		if self := gst.ToGstBin(wself.Get()); self != nil {
+			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Encoded keyframe\nsize=%d\nsince_ms=%d", buf.GetSize(), since.Milliseconds()))
+		}
+		return gst.PadProbeOK
+	})
 }
 
 // requestEncoderKeyframe sends an upstream force-key-unit event to x264enc,
