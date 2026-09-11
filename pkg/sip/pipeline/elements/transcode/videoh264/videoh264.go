@@ -73,6 +73,7 @@ type VideoH264 struct {
 	bitrateMu         sync.Mutex
 	maxBitrate        uint
 	curBitrate        uint
+	lastBudget        uint
 	lastBitrateAdjust time.Time
 	limitWidth        uint
 	limitHeight       uint
@@ -517,10 +518,15 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 	}
 
 	now := time.Now()
-	if !e.lastBitrateAdjust.IsZero() && now.Sub(e.lastBitrateAdjust) < time.Second {
+	if !e.lastBitrateAdjust.IsZero() && now.Sub(e.lastBitrateAdjust) < 900*time.Millisecond {
 		return
 	}
 	e.lastBitrateAdjust = now
+
+	budgetRestored := budget > 0 && e.lastBudget > 0 && uint(budget) > e.lastBudget
+	if budget > 0 {
+		e.lastBudget = uint(budget)
+	}
 
 	const floor = uint(300)
 	ceiling := e.maxBitrate
@@ -533,9 +539,14 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 
 	const rttHigh = 500
 	target := e.curBitrate
-	if loss > 5 || rtt > rttHigh {
+	switch {
+	case loss > 5 || rtt > rttHigh:
 		target = target * 85 / 100
-	} else {
+	case budgetRestored:
+		// Our own split gave the budget back: the link carried that rate
+		// before, so take it back at once.
+		target = ceiling
+	default:
 		// Clean link: climb by 5% or a quarter of the headroom, whichever
 		// is larger, so a released budget is reclaimed within seconds.
 		step := target * 5 / 100
@@ -567,7 +578,10 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set adaptive x264enc bitrate\nerr=%v", err))
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nbudget_kbps=%d\nfraction_lost=%d\nrtt_ms=%d", target, ceiling, tmmbr, budget, loss, rtt))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate (adaptive)\nbitrate=%d\nceiling=%d\ntmmbr_kbps=%d\nbudget_kbps=%d\nfraction_lost=%d\nrtt_ms=%d\nbudget_restored=%t", target, ceiling, tmmbr, budget, loss, rtt, budgetRestored))
+	if budgetRestored {
+		e.requestEncoderKeyframe(self)
+	}
 }
 
 const (
