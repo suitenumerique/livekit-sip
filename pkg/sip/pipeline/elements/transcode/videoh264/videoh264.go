@@ -169,7 +169,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 	}
 
 	x264Props := map[string]interface{}{
-		"speed-preset":                int(1),  // ultrafast
+		"speed-preset":                int(2),  // superfast
 		"tune":                        uint(4), // zerolatency
 		"threads":                     uint(4),
 		"sliced-threads":              true,
