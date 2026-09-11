@@ -69,7 +69,11 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 	case gst.MessageLatency:
 		pipeline.Log(CAT, gst.LevelDebug, "Pipeline latency changed")
 		if !p.Pipeline().RecalculateLatency() {
-			pipeline.Log(CAT, gst.LevelWarning, "Failed to recalculate pipeline latency")
+			level := gst.LevelWarning
+			if p.latencyWarned.Swap(true) {
+				level = gst.LevelDebug
+			}
+			pipeline.Log(CAT, level, "Failed to recalculate pipeline latency")
 		}
 	case gst.MessageElement:
 		structure := msg.GetStructure()

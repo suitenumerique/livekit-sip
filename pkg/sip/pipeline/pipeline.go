@@ -60,6 +60,7 @@ type Pipeline struct {
 	maxActiveParticipants int
 	audioJitterMs         int
 	videoJitterMs         int
+	latencyWarned         atomic.Bool
 	maxAudioParticipants  int
 	dumpDot               bool
 	dumpDir               string

@@ -101,6 +101,19 @@ func (e *LivekitBin) audioSleep(self *gst.Bin) {
 
 	for i, c := range candidates {
 		enabled := i < limit
+		if enabled {
+			e.cancelIdle(c.pub.SID())
+			if !c.pub.IsSubscribed() {
+				if err := c.pub.SetSubscribed(true); err != nil {
+					self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to microphone track\ntrack=%s\nerr=%v", c.pub.SID(), err))
+					continue
+				}
+				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to microphone track for the active-audio window\ntrack=%s", c.pub.SID()))
+			}
+		} else if c.pub.IsSubscribed() {
+			pub := c.pub
+			e.markIdle(pub.SID(), func() error { return pub.SetSubscribed(false) })
+		}
 		if c.pub.IsEnabled() == enabled {
 			continue
 		}

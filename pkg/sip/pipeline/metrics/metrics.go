@@ -26,6 +26,13 @@ var (
 		Help:      "RTP pad events from rtpbin that could not be matched to a subscribed LiveKit track",
 	}, []string{"reason"})
 
+	trackPaused = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "track_paused_total",
+		Help:      "Remote video tracks whose RTP stream stopped (rtpbin SSRC timeout), by reason",
+	}, []string{"reason"})
+
 	tracksSubscribed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "livekit",
 		Subsystem: "sip",
@@ -35,12 +42,17 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(trackPadErrors, tracksSubscribed)
+	prometheus.MustRegister(trackPadErrors, trackPaused, tracksSubscribed)
 }
 
 // TrackPadError counts an rtpbin pad event that did not match a subscribed track.
 func TrackPadError(reason string) {
 	trackPadErrors.WithLabelValues(reason).Inc()
+}
+
+// TrackPaused counts a remote track whose RTP stream timed out in rtpbin.
+func TrackPaused(reason string) {
+	trackPaused.WithLabelValues(reason).Inc()
 }
 
 // TrackSubscribed adjusts the number of wired tracks for a source by delta.

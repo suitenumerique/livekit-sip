@@ -3,8 +3,10 @@ package livekitbin
 import (
 	"fmt"
 	"runtime"
+	"sort"
 	"time"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	protoCodecs "github.com/livekit/protocol/codecs"
 	"github.com/livekit/protocol/livekit"
@@ -65,6 +67,7 @@ func (e *LivekitBin) OnConnectSignal(instance *gst.Element) {
 		lksdk.WithAutoSubscribe(false),
 		lksdk.WithExtraAttributes(e.defaultParticipantAttributes),
 		lksdk.WithCodecs(codecs),
+		lksdk.WithDisableTURN(),
 	); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error connecting to LiveKit room\nerr=%v", err))
 		self.ErrorMessage(apperror.AppErrorDomain, apperror.AppFatalError, fmt.Sprintf("Error connecting to LiveKit room: %v", err), "")
@@ -126,6 +129,7 @@ func (e *LivekitBin) Close() {
 	}
 
 	e.Set(RoomStateClosed)
+	e.stopIdleTimers()
 
 	if e.room == nil {
 		return
@@ -170,30 +174,6 @@ func (e *LivekitBin) OnActiveSpeakersChanged(p []lksdk.Participant) {
 
 	e.audioTouch(p)
 
-	maxParticipants := e.maxActiveParticipants
-	if maxParticipants == 0 {
-		maxParticipants = MAX_ACTIVE_PARTICIPANTS
-	}
-
-	if len(p) >= int(maxParticipants) {
-		p = p[:maxParticipants]
-	} else {
-		for _, sid := range e.activeSpeakers {
-			if len(p) >= int(maxParticipants) {
-				break
-			}
-			if lo.ContainsBy(p, func(part lksdk.Participant) bool { return part.SID() == sid }) {
-				continue
-			}
-			part := e.room.GetParticipantBySID(sid)
-			if part == nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Could not find participant with SID\nsid=%s", sid))
-				continue
-			}
-			p = append(p, part)
-		}
-	}
-
 	e.updateActiveSpeakers(self, p)
 }
 
@@ -225,16 +205,41 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 		return
 	}
 
+	switch publication.Source() {
+	case livekit.TrackSource_CAMERA, livekit.TrackSource_MICROPHONE:
+		// Subscribed on demand by cameraSleep/audioSleep: participants outside
+		// the mosaic and the active-audio window cost no decode chain at all.
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Deferring track subscription to the layout scheduler\nparticipant=%s\nsource=%s", rp.Identity(), publication.Source().String()))
+		e.refreshSubscriptionsLater()
+		return
+	}
+
 	if err := publication.SetSubscribed(true); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to subscribe to track publication\nsource=%s\nparticipant=%s\nerr=%v", publication.Source(), rp.Identity(), err))
 		self.Error(fmt.Sprintf("Failed to subscribe to %s track publication for participant %s", publication.Source(), rp.Identity()), err)
 		return
 	}
 	e.requestHighQuality(self, publication, rp.Identity())
-	if publication.Source() == livekit.TrackSource_MICROPHONE {
-		e.audioSleepLater()
-	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to track publication\nsource=%s\nparticipant=%s", publication.Source(), rp.Identity()))
+}
+
+// refreshSubscriptionsLater re-evaluates the mosaic and active-audio window on
+// the GLib main loop: the SDK invokes OnTrackPublished while holding the room
+// lock that the schedulers read.
+func (e *LivekitBin) refreshSubscriptionsLater() {
+	if _, err := glib.IdleAdd(func() {
+		e.livekitMu.Lock()
+		defer e.livekitMu.Unlock()
+		self := gst.ToGstBin(e.self.Get())
+		if self == nil || self.Instance() == nil || e.room == nil || e.Is(RoomStateClosed) {
+			return
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.updateActiveSpeakers(self, e.getCurrentActiveSpeakers())
+	}); err != nil {
+		CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add subscription refresh to main loop\nerr=%v", err))
+	}
 }
 
 // requestHighQuality asks the SFU for the top simulcast/SVC layer of a
@@ -255,16 +260,12 @@ func (e *LivekitBin) OnParticipantConnected(rp *lksdk.RemoteParticipant) {
 	}
 
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Participant connected\nparticipant=%s", rp.SID()))
-	if _, err := self.Emit("participant-join", livekittracks.NewParticipantInfo(rp).Structure()); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-join signal\nerr=%v", err))
-		self.Error("Error emitting participant-join signal", err)
-		return
-	}
+	e.announce(self, rp)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.updateActiveSpeakers(self, append(e.getCurrentActiveSpeakers(), rp))
+	e.updateActiveSpeakers(self, e.getCurrentActiveSpeakers())
 }
 
 func (e *LivekitBin) OnParticipantDisconnected(rp *lksdk.RemoteParticipant) {
@@ -277,6 +278,10 @@ func (e *LivekitBin) OnParticipantDisconnected(rp *lksdk.RemoteParticipant) {
 	defer e.mu.Unlock()
 
 	e.audioForget(rp.SID())
+	e.forget(rp.SID())
+	for _, pub := range rp.TrackPublications() {
+		e.cancelIdle(pub.SID())
+	}
 	e.updateActiveSpeakers(self, lo.Filter(e.getCurrentActiveSpeakers(), func(p lksdk.Participant, _ int) bool {
 		return p.SID() != rp.SID()
 	}))
@@ -369,69 +374,97 @@ func (e *LivekitBin) getCurrentActiveSpeakers() []lksdk.Participant {
 }
 
 func (e *LivekitBin) updateActiveSpeakers(self *gst.Bin, p []lksdk.Participant) {
-	p = lo.Filter(p, func(part lksdk.Participant, i int) bool {
-		_, ok := part.(*lksdk.RemoteParticipant)
-		return ok
-	})
-	activeSpeakers := lo.Map(p, func(part lksdk.Participant, i int) string { return part.SID() })
-	activeSpeakers = lo.Uniq(activeSpeakers)
-
-	rp := lo.Map(p, func(part lksdk.Participant, i int) *lksdk.RemoteParticipant {
-		return part.(*lksdk.RemoteParticipant)
-	})
-	rp = append(rp, e.room.GetRemoteParticipants()...)
-	rp = lo.UniqBy(rp, func(part *lksdk.RemoteParticipant) string {
-		return part.SID()
-	})
-	activeSpeakers = lo.Filter(activeSpeakers, func(sid string, i int) bool {
-		if !lo.ContainsBy(rp, func(part *lksdk.RemoteParticipant) bool {
-			return part.SID() == sid
-		}) {
-			return false
+	present := make(map[string]*lksdk.RemoteParticipant)
+	for _, rp := range e.room.GetRemoteParticipants() {
+		present[rp.SID()] = rp
+	}
+	speakers := make([]string, 0, len(p))
+	for _, part := range p {
+		rp, ok := part.(*lksdk.RemoteParticipant)
+		if !ok {
+			continue
 		}
-		return true
+		present[rp.SID()] = rp
+		speakers = append(speakers, rp.SID())
+	}
+
+	// Candidates for the free slots in arrival order: a stable order keeps the
+	// mosaic from reshuffling on every event (map iteration is random).
+	others := lo.Keys(present)
+	e.partMu.Lock()
+	now := time.Now()
+	for _, sid := range others {
+		if _, ok := e.seenAt[sid]; !ok {
+			e.seenAt[sid] = now
+		}
+	}
+	sort.SliceStable(others, func(i, j int) bool {
+		ti, tj := e.seenAt[others[i]], e.seenAt[others[j]]
+		if ti.Equal(tj) {
+			return others[i] < others[j]
+		}
+		return ti.Before(tj)
 	})
+	e.partMu.Unlock()
 
 	maxActive := int(e.maxActiveParticipants)
 	if maxActive == 0 {
 		maxActive = MAX_ACTIVE_PARTICIPANTS
 	}
+	e.activeSpeakers = nextLayout(e.activeSpeakers, speakers, others, maxActive)
 
-	if len(activeSpeakers) > maxActive {
-		activeSpeakers = activeSpeakers[:maxActive]
+	members := make([]lksdk.Participant, 0, len(e.activeSpeakers))
+	for _, sid := range e.activeSpeakers {
+		rp := present[sid]
+		// The compositor must know every member before the layout names it.
+		e.announce(self, rp)
+		members = append(members, rp)
 	}
 
-	if len(activeSpeakers) < maxActive {
-		for _, part := range rp {
-			if len(activeSpeakers) >= maxActive {
-				break
-			}
-			if lo.Contains(activeSpeakers, part.SID()) {
-				continue
-			}
-			activeSpeakers = append(activeSpeakers, part.SID())
-		}
-	}
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers updated\nspeakers=%v", e.activeSpeakers))
 
-	e.activeSpeakers = activeSpeakers
+	// Subscribe and wake the tiles first so the compositor finds their pads
+	// when it applies the new layout.
+	e.cameraSleep(self, members)
+	e.audioSleep(self)
 
-	p = lo.Filter(lo.Map(rp, func(part *lksdk.RemoteParticipant, _ int) lksdk.Participant {
-		return part
-	}), func(part lksdk.Participant, i int) bool {
-		return lo.Contains(e.activeSpeakers, part.SID())
-	})
-
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Active speakers updated\nspeakers=%v", activeSpeakers))
-
-	structure := livekittracks.NewActiveSpeakerChangeInfo(p).Structure()
+	structure := livekittracks.NewActiveSpeakerChangeInfo(members).Structure()
 	if _, err := self.Emit("active-speakers-changed", structure.Transfer()); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting active-speakers-changed signal\nerr=%v", err))
 		self.Error("Error emitting active-speakers-changed signal", err)
 		return
 	}
+}
 
-	e.cameraSleep(self, p)
-	e.audioSleep(self)
+// announce introduces rp to the compositor once (participant-join) and records
+// its arrival for the mosaic fill order.
+func (e *LivekitBin) announce(self *gst.Bin, rp *lksdk.RemoteParticipant) {
+	if rp == nil {
+		return
+	}
+	sid := rp.SID()
+	e.partMu.Lock()
+	_, done := e.announced[sid]
+	e.announced[sid] = struct{}{}
+	if _, ok := e.seenAt[sid]; !ok {
+		e.seenAt[sid] = time.Now()
+	}
+	e.partMu.Unlock()
+	if done {
+		return
+	}
+	if _, err := self.Emit("participant-join", livekittracks.NewParticipantInfo(rp).Structure()); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting participant-join signal\nerr=%v", err))
+		self.Error("Error emitting participant-join signal", err)
+	}
+}
+
+// forget drops the bookkeeping of a participant that left.
+func (e *LivekitBin) forget(sid string) {
+	e.partMu.Lock()
+	delete(e.announced, sid)
+	delete(e.seenAt, sid)
+	e.partMu.Unlock()
 }
 
 func (e *LivekitBin) updateSubscriptions(self *gst.Bin) {

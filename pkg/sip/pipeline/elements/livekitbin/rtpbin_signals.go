@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
+	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
 )
 
 func (e *LivekitBin) setupRtpBinSignals(self *gst.Bin) {
@@ -214,7 +215,13 @@ func (e *LivekitBin) OnTimeout(session, ssrc uint) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("SSRC has timed out\nssrc=%d\nsession=%d", ssrc, session))
+	level, reason := gst.LevelInfo, "ssrc_timeout"
+	if _, t, ok := e.trackBySSRC(uint32(ssrc)); ok && t.Pub != nil && !t.Pub.IsEnabled() {
+		// The SFU stops forwarding a track we disabled: rtpbin times it out by design.
+		level, reason = gst.LevelDebug, "disabled"
+	}
+	self.Log(CAT, level, fmt.Sprintf("SSRC has timed out\nssrc=%d\nsession=%d\nreason=%s", ssrc, session, reason))
+	metrics.TrackPaused(reason)
 
 	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal\nerr=%v", err))

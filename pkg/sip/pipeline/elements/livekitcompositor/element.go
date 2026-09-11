@@ -243,8 +243,8 @@ func (e *LivekitCompositor) requestNewSinkPad(self *gst.Bin, templ *gst.PadTempl
 		}
 
 		if _, exist := e.participants[info.ParticipantSID]; !exist {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from track source info not found in participants map\nsid=%s", info.ParticipantSID))
-			return
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant from track source info not introduced yet, adding it\nsid=%s\nname=%s", info.ParticipantSID, info.ParticipantName))
+			e.participants[info.ParticipantSID] = livekittracks.ParticipantInfo{SID: info.ParticipantSID, Name: info.ParticipantName}
 		}
 
 		if ssrc != int(info.SSRC) || session != int(info.Source) || pt != int(info.PT) {

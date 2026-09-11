@@ -28,13 +28,16 @@ func (e *LivekitCompositor) onActiveSpeakersChanged(instance *gst.Element, struc
 		e.participants[sid] = p
 	}
 
-	info.ParticipantsSID = lo.Filter(info.ParticipantsSID, func(sid string, _ int) bool {
-		if _, exist := e.participants[sid]; !exist {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Participant SID from active speaker change info not found in participants map\nsid=%s", sid))
-			return false
+	for _, sid := range info.ParticipantsSID {
+		if _, exist := e.participants[sid]; exist {
+			continue
 		}
-		return true
-	})
+		// Keep the slot: shrinking the grid to the participants already known
+		// is what emptied the mosaic under load. The name arrives with the
+		// participant-join or the track source info.
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Participant not introduced yet, adding a placeholder\nsid=%s", sid))
+		e.participants[sid] = livekittracks.ParticipantInfo{SID: sid, Name: sid}
+	}
 
 	for sid, l := range info.AudioLevels {
 		p, ok := e.participants[sid]

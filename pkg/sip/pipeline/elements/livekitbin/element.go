@@ -117,11 +117,19 @@ type LivekitBin struct {
 
 	activeSpeakers []string
 
+	partMu    sync.Mutex
+	announced map[string]struct{}  // participants introduced to the compositor (participant-join sent)
+	seenAt    map[string]time.Time // first sighting, for a stable mosaic fill order
+
 	audioMu         sync.Mutex
 	audioLastActive map[string]time.Time
 
 	cameraMu   sync.Mutex
 	cameraDims map[string][2]uint32 // key is track SID
+
+	idleMu    sync.Mutex
+	idle      map[string]*idleSubscription // key is track SID
+	idleGrace time.Duration                // 0 = subscriptionIdleGrace
 
 	livekitMu sync.Mutex
 }
@@ -210,6 +218,8 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 	e.state.cond = sync.NewCond(&e.state.mu)
 	e.defaultParticipantAttributes = make(map[string]string)
 	e.audioLastActive = make(map[string]time.Time)
+	e.announced = make(map[string]struct{})
+	e.seenAt = make(map[string]time.Time)
 	e.cameraDims = make(map[string][2]uint32)
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)

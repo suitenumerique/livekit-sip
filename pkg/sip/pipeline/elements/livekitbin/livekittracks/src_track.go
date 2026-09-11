@@ -296,18 +296,9 @@ func filterSSRC(pkt rtcp.Packet, ssrc uint32) rtcp.Packet {
 		}
 		return res
 	case *rtcp.SourceDescription:
-		res := &rtcp.SourceDescription{
-			Chunks: []rtcp.SourceDescriptionChunk{},
-		}
-		for _, c := range p.Chunks {
-			if c.Source == ssrc {
-				res.Chunks = append(res.Chunks, c)
-			}
-		}
-		if len(res.Chunks) == 0 {
-			return nil
-		}
-		return res
+		// Pushed alone (without a leading SR/RR) an SDES fails rtpbin's compound
+		// packet validation and is dropped with a warning; rtpbin does not need it.
+		return nil
 	case *rtcp.PictureLossIndication:
 		if p.SenderSSRC != ssrc {
 			return nil
