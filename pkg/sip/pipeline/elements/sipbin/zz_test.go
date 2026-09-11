@@ -1433,8 +1433,8 @@ func TestNegotiate_BFCP_Attributes(t *testing.T) {
 	if v := bfcp.GetAttributeVal("userid"); v == "" {
 		t.Error("expected userid attribute to be present")
 	}
-	if v := bfcp.GetAttributeVal("setup"); v != "actpass" {
-		t.Errorf("expected setup 'actpass', got '%s'", v)
+	if v := bfcp.GetAttributeVal("setup"); v != "passive" {
+		t.Errorf("expected setup 'passive', got '%s'", v)
 	}
 
 	f.close()
@@ -3281,6 +3281,139 @@ func TestNegotiate_Opus_AnswerFmtp(t *testing.T) {
 	}
 	if got := fmtpFor(audio, 101); got != "0-15" {
 		t.Errorf("expected telephone-event fmtp 0-15, got %q", got)
+	}
+
+	f.close()
+}
+
+func bfcpAnswerMedia(t *testing.T, f *sipBinFixture, mline string) *gstsdp.Media {
+	t.Helper()
+	answer := f.emitOffer(t, makeSDP("192.168.1.1", mline))
+	if answer == "" {
+		t.Fatal("expected non-empty answer")
+	}
+	f.emitAck(t)
+	msg := parseAnswer(t, answer)
+	if msg.MediasLen() != 1 {
+		t.Fatalf("expected 1 media in answer, got %d", msg.MediasLen())
+	}
+	return msg.Media(0)
+}
+
+func TestNegotiate_BFCP_ServerOnlyOffer(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+	media := bfcpAnswerMedia(t, f, "m=application 5000 UDP/BFCP *\r\na=floorctrl:s-only\r\na=confid:1\r\na=floorid:0 mstrm:2\r\na=userid:2\r\na=setup:passive\r\na=connection:new")
+
+	if media.GetPort() == 0 {
+		t.Fatal("expected BFCP port > 0 for a server-only offer")
+	}
+	if media.GetProto() != "UDP/BFCP" {
+		t.Errorf("expected proto 'UDP/BFCP', got '%s'", media.GetProto())
+	}
+	if v := media.GetAttributeVal("floorctrl"); v != "c-only" {
+		t.Errorf("expected floorctrl 'c-only', got '%s'", v)
+	}
+	if v := media.GetAttributeVal("setup"); v != "active" {
+		t.Errorf("expected setup 'active', got '%s'", v)
+	}
+	if v := media.GetAttributeVal("bfcpver"); v == "" {
+		t.Error("expected a bfcpver attribute")
+	}
+	for _, attr := range []string{"confid", "userid", "floorid"} {
+		if v := media.GetAttributeVal(attr); v != "" {
+			t.Errorf("client answer must not carry %s, got '%s'", attr, v)
+		}
+	}
+
+	f.close()
+}
+
+func TestNegotiate_BFCP_ActpassOffer(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+	media := bfcpAnswerMedia(t, f, "m=application 5000 UDP/BFCP *\r\na=floorctrl:c-s\r\na=confid:1\r\na=userid:2\r\na=bfcpver:1\r\na=setup:actpass")
+
+	if media.GetPort() == 0 {
+		t.Fatal("expected BFCP port > 0")
+	}
+	if v := media.GetAttributeVal("floorctrl"); v != "s-only" {
+		t.Errorf("expected floorctrl 's-only', got '%s'", v)
+	}
+	if v := media.GetAttributeVal("setup"); v != "passive" {
+		t.Errorf("expected setup 'passive', got '%s'", v)
+	}
+	if v := media.GetAttributeVal("confid"); v == "" {
+		t.Error("server answer must carry confid")
+	}
+	if v := media.GetAttributeVal("floorid"); v == "" {
+		t.Error("server answer must carry floorid")
+	}
+
+	f.close()
+}
+
+func TestNegotiate_BFCP_PassiveClientOffer(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+	media := bfcpAnswerMedia(t, f, "m=application 5000 UDP/BFCP *\r\na=floorctrl:c-s\r\na=confid:1\r\na=userid:2\r\na=setup:passive")
+
+	if media.GetPort() == 0 {
+		t.Fatal("expected BFCP port > 0")
+	}
+	if v := media.GetAttributeVal("floorctrl"); v != "s-only" {
+		t.Errorf("expected floorctrl 's-only', got '%s'", v)
+	}
+	if v := media.GetAttributeVal("setup"); v != "active" {
+		t.Errorf("expected setup 'active', got '%s'", v)
+	}
+
+	f.close()
+}
+
+func TestNegotiate_BFCP_NoSetupOffer(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+	media := bfcpAnswerMedia(t, f, "m=application 5000 UDP/BFCP *\r\na=floorctrl:c-only\r\na=confid:1\r\na=userid:2")
+
+	if media.GetPort() == 0 {
+		t.Fatal("expected BFCP port > 0")
+	}
+	if v := media.GetAttributeVal("setup"); v != "passive" {
+		t.Errorf("expected setup 'passive', got '%s'", v)
+	}
+
+	f.close()
+}
+
+func TestNegotiate_BFCP_HoldconnOffer(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+	media := bfcpAnswerMedia(t, f, "m=application 5000 UDP/BFCP *\r\na=floorctrl:c-s\r\na=confid:1\r\na=userid:2\r\na=setup:holdconn")
+
+	if media.GetPort() == 0 {
+		t.Fatal("expected BFCP port > 0")
+	}
+	if v := media.GetAttributeVal("setup"); v != "holdconn" {
+		t.Errorf("expected setup 'holdconn', got '%s'", v)
+	}
+
+	f.close()
+}
+
+func TestNegotiate_BFCP_TCPStillDisabled(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	f := newFixture(t, []*gst.Caps{pcmuCaps()})
+	media := bfcpAnswerMedia(t, f, "m=application 5000 TCP/BFCP *\r\na=floorctrl:s-only\r\na=confid:1\r\na=userid:2\r\na=setup:passive")
+
+	if media.GetPort() != 0 {
+		t.Errorf("expected TCP/BFCP media disabled, got port %d", media.GetPort())
 	}
 
 	f.close()

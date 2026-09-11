@@ -13,6 +13,13 @@ import (
 	"github.com/livekit/protocol/livekit"
 )
 
+type BfcpRole string
+
+const (
+	BfcpRoleServer BfcpRole = "server"
+	BfcpRoleClient BfcpRole = "client"
+)
+
 type BfcpTrack struct {
 	initialized bool
 	Idx         int
@@ -22,6 +29,9 @@ type BfcpTrack struct {
 	ConfID      uint32
 	UserID      uint16
 	FloorID     uint16
+	Role        BfcpRole
+	RemoteSetup string
+	Mstrm       string
 }
 
 func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack, error) {
@@ -117,6 +127,7 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 		ConfID:      1,
 		UserID:      1,
 		FloorID:     1,
+		Role:        BfcpRoleServer,
 	}, nil
 }
 
@@ -136,23 +147,20 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 
 	if setup := media.GetAttributeVal("setup"); setup != "" {
 		switch setup {
-		case "active", "actpass":
+		case "active", "actpass", "passive", "holdconn":
 		default:
-			return fmt.Errorf("Failed to initialize BFCP track: unsupported setup attribute value %q", setup)
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Unknown setup attribute value on BFCP media, answering passive\nvalue=%s", setup))
 		}
+		b.RemoteSetup = setup
 	}
 
-	if floorCtrl := media.GetAttributeVal("floorctrl"); floorCtrl != "" {
-		clientCapable := false
-		for _, role := range strings.Fields(floorCtrl) {
-			if role == "c-only" || role == "c-s" {
-				clientCapable = true
-				break
-			}
-		}
-		if !clientCapable {
-			return fmt.Errorf("Failed to initialize BFCP track: unsupported floorctrl attribute value %q", floorCtrl)
-		}
+	role, err := bfcpRoleForFloorctrl(media.GetAttributeVal("floorctrl"))
+	if err != nil {
+		return fmt.Errorf("Failed to initialize BFCP track: %w", err)
+	}
+	b.Role = role
+	if role == BfcpRoleClient {
+		b.readServerIDs(self, media)
 	}
 
 	if !b.BfcpServer.SyncStateWithParent() {
@@ -173,15 +181,76 @@ func (b *BfcpTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session 
 			host = ip.To4().String()
 		}
 		remote := net.JoinHostPort(host, strconv.Itoa(int(media.GetPort())))
-		if _, err := b.BfcpServer.Emit("register-client", remote, int(b.UserID), b.BfcpVersion); err != nil {
+		if b.Role == BfcpRoleClient {
+			if _, err := b.BfcpServer.Emit("connect-server", remote, int(b.ConfID), int(b.UserID), int(b.FloorID), b.BfcpVersion); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to emit connect-server signal\nremote=%s\nerr=%v", remote, err))
+			}
+		} else if _, err := b.BfcpServer.Emit("register-client", remote, int(b.UserID), b.BfcpVersion); err != nil {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to emit register-client signal\nremote=%s\nerr=%v", remote, err))
 		}
 	} else {
-		self.Log(CAT, gst.LevelWarning, "No connection address in SDP for BFCP media, client not pre-registered")
+		self.Log(CAT, gst.LevelWarning, "No connection address in SDP for BFCP media, peer not registered")
 	}
 
 	b.initialized = true
 	return nil
+}
+
+func bfcpRoleForFloorctrl(floorctrl string) (BfcpRole, error) {
+	if floorctrl == "" {
+		return BfcpRoleServer, nil
+	}
+	serverOnly := false
+	for _, role := range strings.Fields(floorctrl) {
+		switch role {
+		case "c-only", "c-s":
+			return BfcpRoleServer, nil
+		case "s-only":
+			serverOnly = true
+		}
+	}
+	if serverOnly {
+		return BfcpRoleClient, nil
+	}
+	return "", fmt.Errorf("unsupported floorctrl attribute value %q", floorctrl)
+}
+
+func (b *BfcpTrack) readServerIDs(self *gst.Bin, media *gstsdp.Media) {
+	if v := media.GetAttributeVal("confid"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 32); err == nil {
+			b.ConfID = uint32(id)
+		} else {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid confid attribute on BFCP media\nvalue=%s", v))
+		}
+	}
+	if v := media.GetAttributeVal("userid"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 16); err == nil {
+			b.UserID = uint16(id)
+		} else {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid userid attribute on BFCP media\nvalue=%s", v))
+		}
+	}
+	if v := media.GetAttributeVal("floorid"); v != "" {
+		id, mstrm, _ := strings.Cut(v, " ")
+		if fid, err := strconv.ParseUint(id, 10, 16); err == nil {
+			b.FloorID = uint16(fid)
+		} else {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Invalid floorid attribute on BFCP media\nvalue=%s", v))
+		}
+		b.Mstrm = strings.TrimPrefix(strings.TrimSpace(mstrm), "mstrm:")
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Taking the BFCP client role\nconf_id=%d\nuser_id=%d\nfloor_id=%d\nmstrm=%s\nsetup=%s", b.ConfID, b.UserID, b.FloorID, b.Mstrm, b.RemoteSetup))
+}
+
+func bfcpSetupAnswer(offered string) string {
+	switch offered {
+	case "passive":
+		return "active"
+	case "holdconn":
+		return "holdconn"
+	default:
+		return "passive"
+	}
 }
 
 func (e *SipBin) makeBfcpMedia(bfcp *BfcpTrack) (*gstsdp.Media, error) {
@@ -222,20 +291,26 @@ func (e *SipBin) makeBfcpMedia(bfcp *BfcpTrack) (*gstsdp.Media, error) {
 		return nil, fmt.Errorf("failed to add format to BFCP media: %v", ret)
 	}
 
-	if ret := media.AddAttribute("floorctrl", "s-only"); ret != gstsdp.SDPResultOk {
+	floorctrl := "s-only"
+	if bfcp.Role == BfcpRoleClient {
+		floorctrl = "c-only"
+	}
+	if ret := media.AddAttribute("floorctrl", floorctrl); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to add floorctrl attribute to BFCP media: %v", ret)
 	}
 	if ret := media.AddAttribute("bfcpver", strconv.Itoa(bfcp.BfcpVersion)); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to add bfcpver attribute to BFCP media: %v", ret)
 	}
-	if ret := media.AddAttribute("confid", strconv.FormatUint(uint64(bfcp.ConfID), 10)); ret != gstsdp.SDPResultOk {
-		return nil, fmt.Errorf("failed to add confid attribute to BFCP media: %v", ret)
-	}
-	if ret := media.AddAttribute("userid", strconv.FormatUint(uint64(bfcp.UserID), 10)); ret != gstsdp.SDPResultOk {
-		return nil, fmt.Errorf("failed to add userid attribute to BFCP media: %v", ret)
+	if bfcp.Role != BfcpRoleClient {
+		if ret := media.AddAttribute("confid", strconv.FormatUint(uint64(bfcp.ConfID), 10)); ret != gstsdp.SDPResultOk {
+			return nil, fmt.Errorf("failed to add confid attribute to BFCP media: %v", ret)
+		}
+		if ret := media.AddAttribute("userid", strconv.FormatUint(uint64(bfcp.UserID), 10)); ret != gstsdp.SDPResultOk {
+			return nil, fmt.Errorf("failed to add userid attribute to BFCP media: %v", ret)
+		}
 	}
 
-	if ret := media.AddAttribute("setup", "passive"); ret != gstsdp.SDPResultOk {
+	if ret := media.AddAttribute("setup", bfcpSetupAnswer(bfcp.RemoteSetup)); ret != gstsdp.SDPResultOk {
 		return nil, fmt.Errorf("failed to add setup attribute to BFCP media: %v", ret)
 	}
 	if ret := media.AddAttribute("connection", "new"); ret != gstsdp.SDPResultOk {
@@ -270,7 +345,7 @@ func (e *SipBin) CleanupBfcp(self *gst.Bin, bfcp *BfcpTrack) error {
 }
 
 func (e *SipBin) bfcpMediaAddStreams(self *gst.Bin, medias []*gstsdp.Media) error {
-	if e.Bfcp == nil || e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx] == nil {
+	if e.Bfcp == nil || e.Bfcp.Idx >= len(medias) || medias[e.Bfcp.Idx] == nil || e.Bfcp.Role == BfcpRoleClient {
 		return nil
 	}
 

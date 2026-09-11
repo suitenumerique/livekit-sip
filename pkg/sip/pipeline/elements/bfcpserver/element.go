@@ -27,6 +27,7 @@ var (
 	signalStartScreenshare uint
 	signalStopScreenshare  uint
 	signalRegisterClient   uint
+	signalConnectServer    uint
 )
 
 type BFCPServer struct {
@@ -38,6 +39,8 @@ type BFCPServer struct {
 	requestID        atomic.Int64
 	lastFloorRelease time.Time
 	expectedPeer     atomic.Pointer[string]
+	clientMu         sync.Mutex
+	client           *bfcp.UDPClient
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -109,6 +112,18 @@ func (e *BFCPServer) ClassInit(klass *glib.ObjectClass) {
 		glib.TYPE_NONE,
 		glib.TYPE_STRING, // remote address "ip:port" from SDP
 		glib.TYPE_INT,    // user ID
+		glib.TYPE_INT,    // BFCP version
+	)
+
+	signalConnectServer = gst.SignalNew(
+		class.Type(),
+		"connect-server",
+		gst.SignalRunLast,
+		glib.TYPE_NONE,
+		glib.TYPE_STRING, // remote server address "ip:port" from SDP
+		glib.TYPE_INT,    // conference ID
+		glib.TYPE_INT,    // user ID assigned by the server
+		glib.TYPE_INT,    // floor ID
 		glib.TYPE_INT,    // BFCP version
 	)
 
@@ -219,6 +234,7 @@ func (e *BFCPServer) ChangeState(self *gst.Element, transition gst.StateChange) 
 
 	if transition == gst.StateChangeReadyToNull {
 		e.cancel()
+		e.closeClient()
 		if err := e.bfcpServer.Close(); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to close BFCP server\nerr=%v", err))
 		}

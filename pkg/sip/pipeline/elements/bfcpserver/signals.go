@@ -16,6 +16,11 @@ const FloorRequestDebounceDuration = 3 * time.Second
 func (e *BFCPServer) startScreenshare(self *gst.Element, floorID int) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received start-screenshare signal\nfloor_id=%d", floorID))
 
+	if client := e.udpClient(); client != nil {
+		e.clientStartScreenshare(self, client, floorID)
+		return
+	}
+
 	floor, ok := e.bfcpServer.GetFloor(uint16(floorID))
 	if !ok {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Floor not found\nfloor_id=%d", floorID))
@@ -53,6 +58,11 @@ func (e *BFCPServer) startScreenshare(self *gst.Element, floorID int) {
 
 func (e *BFCPServer) stopScreenshare(self *gst.Element, floorID int) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received stop-screenshare signal\nfloor_id=%d", floorID))
+
+	if client := e.udpClient(); client != nil {
+		e.clientStopScreenshare(self, client, floorID)
+		return
+	}
 
 	floor, ok := e.bfcpServer.GetFloor(uint16(floorID))
 	if !ok {
@@ -190,4 +200,13 @@ func (e *BFCPServer) SetupSignals(self *gst.Element) {
 		self.Error("Failed to connect to register-client signal", err)
 	}
 
+	if _, err := self.Connect("connect-server", func(instance *gst.Element, remoteAddr string, confID, userID, floorID, version int) {
+		ptr := eweak.Value()
+		if ptr != nil {
+			ptr.connectServer(instance, remoteAddr, confID, userID, floorID, version)
+		}
+	}); err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to connect to connect-server signal\nerr=%v", err))
+		self.Error("Failed to connect to connect-server signal", err)
+	}
 }
