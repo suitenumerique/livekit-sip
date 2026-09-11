@@ -117,6 +117,9 @@ type LivekitBin struct {
 	audioMu         sync.Mutex
 	audioLastActive map[string]time.Time
 
+	cameraMu   sync.Mutex
+	cameraDims map[string][2]uint32 // key is track SID
+
 	livekitMu sync.Mutex
 }
 
@@ -204,6 +207,7 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 	e.state.cond = sync.NewCond(&e.state.mu)
 	e.defaultParticipantAttributes = make(map[string]string)
 	e.audioLastActive = make(map[string]time.Time)
+	e.cameraDims = make(map[string][2]uint32)
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
 	}

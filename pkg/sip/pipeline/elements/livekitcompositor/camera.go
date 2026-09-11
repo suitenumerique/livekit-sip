@@ -335,6 +335,21 @@ func cameraComputeSize(videoWidth, videoHeight int, idx int, nTrack int) (width,
 	return
 }
 
+// CameraTileVideoSize returns the 16:9 video area of one tile when nTrack
+// tiles share the composite.
+func CameraTileVideoSize(videoWidth, videoHeight, nTrack int) (width, height int) {
+	if nTrack < 1 {
+		nTrack = 1
+	}
+	width, height, _, _ = cameraComputeSize(videoWidth, videoHeight, 0, nTrack)
+	if width*9 > height*16 {
+		width = height * 16 / 9
+	} else {
+		height = width * 9 / 16
+	}
+	return
+}
+
 func (e *LivekitCompositor) cameraPadSetPosSize(pad *gst.Pad, idx int, nTrack int) error {
 	gpad := pad.AsGhostPad()
 	if gpad == nil {
@@ -347,18 +362,28 @@ func (e *LivekitCompositor) cameraPadSetPosSize(pad *gst.Pad, idx int, nTrack in
 
 	width, height, x, y := cameraComputeSize(int(e.videoWidth), int(e.videoHeight), idx, nTrack)
 
+	// A width or height write makes the compositor rebuild the pad converter.
 	err := errors.Join(
-		target.SetProperty("xpos", x),
-		target.SetProperty("ypos", y),
-		target.SetProperty("width", int(width)),
-		target.SetProperty("height", int(height)),
-		target.SetProperty("alpha", float64(1)),
+		setPadPropertyIfChanged(target, "xpos", x),
+		setPadPropertyIfChanged(target, "ypos", y),
+		setPadPropertyIfChanged(target, "width", int(width)),
+		setPadPropertyIfChanged(target, "height", int(height)),
+		setPadPropertyIfChanged(target, "alpha", float64(1)),
 	)
 
 	if err != nil {
 		return fmt.Errorf("failed to set position and size for camera pad: %w", err)
 	}
 	return nil
+}
+
+func setPadPropertyIfChanged[T comparable](pad *gst.Pad, name string, want T) error {
+	if cur, err := pad.GetProperty(name); err == nil {
+		if v, ok := cur.(T); ok && v == want {
+			return nil
+		}
+	}
+	return pad.SetProperty(name, want)
 }
 
 func (e *LivekitCompositor) cleanupCamera(self *gst.Bin) {

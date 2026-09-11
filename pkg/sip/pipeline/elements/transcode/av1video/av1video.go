@@ -99,7 +99,9 @@ func (e *Av1Video) Constructed(instance *glib.Object) {
 		return
 	}
 
-	e.AV1Dec, err = gst.NewElementWithProperties("dav1ddec", map[string]interface{}{})
+	e.AV1Dec, err = gst.NewElementWithProperties("dav1ddec", map[string]interface{}{
+		"n-threads": uint(4),
+	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create dav1ddec element\nerr=%v", err))
 		self.Error("Failed to create dav1ddec element", err)
