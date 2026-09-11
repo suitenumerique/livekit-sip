@@ -185,7 +185,13 @@ func (c *IOManager) handleLivekitCompositorPadRemoved(_ *gst.Element, pad *gst.P
 }
 
 func (c *IOManager) toggleScreenshare(e *gst.Element, hasScreenshare bool) {
-	if _, err := c.pipeline.SipIo.SipBin.Emit("toggle-screenshare", hasScreenshare); err != nil {
+	// The compositor tears its screenshare pads down from the GLib main loop
+	// while cleanupChains may already have released the SIP side.
+	sio := c.pipeline.SipIo
+	if sio == nil || sio.SipBin == nil {
+		return
+	}
+	if _, err := sio.SipBin.Emit("toggle-screenshare", hasScreenshare); err != nil {
 		c.log.Errorw("Failed to emit toggle-screenshare signal", err)
 	}
 }

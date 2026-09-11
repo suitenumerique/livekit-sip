@@ -19,6 +19,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
@@ -44,6 +45,22 @@ func (e *LivekitBin) audioForget(sid string) {
 	e.audioMu.Lock()
 	defer e.audioMu.Unlock()
 	delete(e.audioLastActive, sid)
+}
+
+// audioSleepLater runs audioSleep on the GLib main loop: the SDK invokes
+// OnTrackPublished while holding the room lock that audioSleep reads.
+func (e *LivekitBin) audioSleepLater() {
+	if _, err := glib.IdleAdd(func() {
+		e.livekitMu.Lock()
+		defer e.livekitMu.Unlock()
+		self := gst.ToGstBin(e.self.Get())
+		if self == nil || self.Instance() == nil {
+			return
+		}
+		e.audioSleep(self)
+	}); err != nil {
+		CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add audio sleep to main loop\nerr=%v", err))
+	}
 }
 
 // audioSleep enables the microphone tracks of the participants who spoke most

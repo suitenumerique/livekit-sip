@@ -19,32 +19,29 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				return
 			}
 			self.Log(CAT, gst.LevelDebug, "Disconnected from LiveKit room, closing LivekitBin")
-			e.livekitMu.Lock()
 			if _, err := glib.IdleAdd(func() {
+				e.livekitMu.Lock()
 				defer e.livekitMu.Unlock()
 				e.Close()
 			}); err != nil {
-				e.livekitMu.Unlock()
 				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add LivekitBin close to main loop\nerr=%v", err))
 			}
 		},
 		OnParticipantConnected: func(rp *lksdk.RemoteParticipant) {
-			e.livekitMu.Lock()
 			if _, err := glib.IdleAdd(func() {
+				e.livekitMu.Lock()
 				defer e.livekitMu.Unlock()
 				e.OnParticipantConnected(rp)
 			}); err != nil {
-				e.livekitMu.Unlock()
 				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add participant connection to main loop\nerr=%v", err))
 			}
 		},
 		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
-			e.livekitMu.Lock()
 			if _, err := glib.IdleAdd(func() {
+				e.livekitMu.Lock()
 				defer e.livekitMu.Unlock()
 				e.OnParticipantDisconnected(rp)
 			}); err != nil {
-				e.livekitMu.Unlock()
 				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add participant disconnection to main loop\nerr=%v", err))
 			}
 		},
@@ -65,44 +62,40 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 				// 	return
 				// }
 
-				e.livekitMu.Lock()
 				if _, err := glib.IdleAdd(func() {
+					e.livekitMu.Lock()
 					defer e.livekitMu.Unlock()
 					e.SubscribeTrack(track, publication, rp)
 					time.Sleep(5 * time.Millisecond)
 				}); err != nil {
-					e.livekitMu.Unlock()
 					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track subscription to main loop\nerr=%v", err))
 				}
 			},
 			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, publication *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
-				e.livekitMu.Lock()
 				if _, err := glib.IdleAdd(func() {
+					e.livekitMu.Lock()
 					defer e.livekitMu.Unlock()
 					e.UnsubscribeTrack(track, publication, rp)
 				}); err != nil {
-					e.livekitMu.Unlock()
 					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track unsubscription to main loop\nerr=%v", err))
 				}
 			},
 			OnTrackPublished: e.OnTrackPublished,
 			OnTrackMuted: func(pub lksdk.TrackPublication, p lksdk.Participant) {
-				e.livekitMu.Lock()
 				if _, err := glib.IdleAdd(func() {
+					e.livekitMu.Lock()
 					defer e.livekitMu.Unlock()
 					e.OnTrackMuted(pub, p)
 				}); err != nil {
-					e.livekitMu.Unlock()
 					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track muted to main loop\nerr=%v", err))
 				}
 			},
 			OnTrackUnmuted: func(pub lksdk.TrackPublication, p lksdk.Participant) {
-				e.livekitMu.Lock()
 				if _, err := glib.IdleAdd(func() {
+					e.livekitMu.Lock()
 					defer e.livekitMu.Unlock()
 					e.OnTrackUnmuted(pub, p)
 				}); err != nil {
-					e.livekitMu.Unlock()
 					CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add track unmuted to main loop\nerr=%v", err))
 				}
 			},
@@ -128,12 +121,11 @@ func (e *LivekitBin) callabcks() *lksdk.RoomCallback {
 			},
 		},
 		OnActiveSpeakersChanged: func(p []lksdk.Participant) {
-			e.livekitMu.Lock()
 			if _, err := glib.IdleAdd(func() {
+				e.livekitMu.Lock()
 				defer e.livekitMu.Unlock()
 				e.OnActiveSpeakersChanged(p)
 			}); err != nil {
-				e.livekitMu.Unlock()
 				CAT.Log(gst.LevelError, fmt.Sprintf("Failed to add active speakers update to main loop\nerr=%v", err))
 			}
 		},

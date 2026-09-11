@@ -232,7 +232,7 @@ func (e *LivekitBin) OnTrackPublished(publication *lksdk.RemoteTrackPublication,
 	}
 	e.requestHighQuality(self, publication, rp.Identity())
 	if publication.Source() == livekit.TrackSource_MICROPHONE {
-		e.audioSleep(self)
+		e.audioSleepLater()
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Subscribed to track publication\nsource=%s\nparticipant=%s", publication.Source(), rp.Identity()))
 }

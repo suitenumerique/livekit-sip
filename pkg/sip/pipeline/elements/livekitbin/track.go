@@ -732,6 +732,13 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 		return
 	}
 
+	// After Close the bin teardown drops every track; replaying the per-track
+	// removal here would race the pipeline cleanup.
+	if e.Is(RoomStateClosed) {
+		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Ignoring track unsubscribe after close\nsid=%s", pub.SID()))
+		return
+	}
+
 	kind := pub.Source()
 	var funnel *LivekitBinTrackFunnel
 	switch kind {

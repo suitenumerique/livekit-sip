@@ -1,0 +1,36 @@
+// Copyright 2026 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// 	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package pipeline
+
+import (
+	"testing"
+
+	"github.com/livekit/protocol/logger"
+)
+
+// The has-screenshare signal can fire from the GLib main loop after
+// cleanupChains released the SIP side; the toggle must then be a no-op.
+func TestToggleScreenshareAfterSipIoClosed(t *testing.T) {
+	for name, p := range map[string]*Pipeline{
+		"nil SipIo":  {},
+		"nil SipBin": {SipIo: &SipIo{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := &IOManager{log: logger.GetLogger(), pipeline: p}
+			c.toggleScreenshare(nil, false)
+			c.toggleScreenshare(nil, true)
+		})
+	}
+}
