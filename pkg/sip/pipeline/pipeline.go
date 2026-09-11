@@ -59,6 +59,7 @@ type Pipeline struct {
 	lang                  string
 	maxActiveParticipants int
 	audioJitterMs         int
+	videoJitterMs         int
 	maxAudioParticipants  int
 	dumpDot               bool
 	dumpDir               string
@@ -374,6 +375,7 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		lang:                  sipOpt.Lang,
 		maxActiveParticipants: sipOpt.MaxActiveParticipants,
 		audioJitterMs:         sipOpt.AudioJitterMs,
+		videoJitterMs:         sipOpt.VideoJitterMs,
 		maxAudioParticipants:  sipOpt.MaxAudioParticipants,
 		sipCallID:             sipCallID,
 		dumpDot:               sipOpt.Gst.DumpDot,

@@ -21,6 +21,10 @@ const keyframeRequestSSRC uint32 = 0xCAFE
 
 const keyframePeriod = 2 * time.Second
 
+// keyframeDemandWindow is how long the periodic FIR/PLI keeps running after the
+// last sync-point request coming from the decoder.
+const keyframeDemandWindow = 3 * keyframePeriod
+
 type SipTrack struct {
 	initialized bool
 	Idx         int
@@ -40,6 +44,7 @@ type SipTrack struct {
 	deviceRtcpAddr  *net.UDPAddr
 	keyframeMu      sync.Mutex
 	lastKeyframeReq time.Time
+	lastDemand      time.Time
 	firSeq          uint8
 	videoSSRC       uint32
 	keyframeStop    chan struct{}
@@ -342,6 +347,20 @@ func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sent RTCP PLI/FIR keyframe request to device\nssrc=%d\nrtcp_addr=%s", ssrc, t.deviceRtcpAddr))
 }
 
+// NoteKeyframeDemand records that the decoder asked for a sync point, which
+// arms the periodic keyframe requests for keyframeDemandWindow.
+func (t *SipTrack) NoteKeyframeDemand() {
+	t.keyframeMu.Lock()
+	t.lastDemand = time.Now()
+	t.keyframeMu.Unlock()
+}
+
+func (t *SipTrack) keyframeDemanded(now time.Time) bool {
+	t.keyframeMu.Lock()
+	defer t.keyframeMu.Unlock()
+	return !t.lastDemand.IsZero() && now.Sub(t.lastDemand) < keyframeDemandWindow
+}
+
 func (t *SipTrack) StartPeriodicKeyframe(self *gst.Bin, ssrc uint32) {
 	t.keyframeMu.Lock()
 	t.videoSSRC = ssrc
@@ -361,11 +380,11 @@ func (t *SipTrack) StartPeriodicKeyframe(self *gst.Bin, ssrc uint32) {
 			select {
 			case <-stop:
 				return
-			case <-ticker.C:
+			case now := <-ticker.C:
 				t.keyframeMu.Lock()
 				ssrc := t.videoSSRC
 				t.keyframeMu.Unlock()
-				if ssrc != 0 {
+				if ssrc != 0 && t.keyframeDemanded(now) {
 					t.RequestKeyframe(self, ssrc)
 				}
 			}

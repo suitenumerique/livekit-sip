@@ -115,18 +115,24 @@ func (e *SipBin) onRtpBinSsrcCollision(self *gst.Bin, session, ssrc uint) {
 
 func (e *SipBin) onRtpBinNewJitterbuffer(self *gst.Bin, jitterbuffer *gst.Element, session, ssrc uint) {
 	kind := livekit.TrackSource(session)
+	var latency uint
 	switch kind {
 	case livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
+		latency = e.audioJitter
+	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
+		latency = e.videoJitter
 	default:
 		return
 	}
-
-	latency := e.audioJitter
-	if err := jitterbuffer.SetProperty("latency", latency); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set latency on new audio jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d\nerr=%v", kind, ssrc, latency, err))
+	if latency == 0 {
 		return
 	}
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Configured audio jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d", kind, ssrc, latency))
+
+	if err := jitterbuffer.SetProperty("latency", latency); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set latency on new jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d\nerr=%v", kind, ssrc, latency, err))
+		return
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Configured jitterbuffer\nsource=%d\nssrc=%d\nlatency=%d", kind, ssrc, latency))
 }
 
 func (e *SipBin) onRtpBinPadAdded(self *gst.Bin, pad *gst.Pad) {
@@ -230,6 +236,7 @@ func (e *SipBin) onRtpBinPadAddedRecvRtpSrc(self *gst.Bin, pad *gst.Pad) {
 			keyframeSSRC := uint32(ssrc)
 			gpad.Pad.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 				if ev := info.GetEvent(); ev != nil && ev.HasName("GstForceKeyUnit") {
+					ti.NoteKeyframeDemand()
 					ti.RequestKeyframe(self, keyframeSSRC)
 				}
 				return gst.PadProbeOK

@@ -177,6 +177,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 
 	e.transaction = NewSipTransaction()
 	e.audioJitter = 80
+	e.videoJitter = 200
 
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)

@@ -38,6 +38,7 @@ type SipOpt struct {
 	Lang                  string
 	MaxActiveParticipants int
 	AudioJitterMs         int
+	VideoJitterMs         int
 	MaxAudioParticipants  int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig
@@ -181,6 +182,9 @@ func (sio *SipIo) Create() error {
 	}
 	if sio.opts.AudioJitterMs > 0 {
 		props["audio-jitter"] = uint(sio.opts.AudioJitterMs)
+	}
+	if sio.opts.VideoJitterMs > 0 {
+		props["video-jitter"] = uint(sio.opts.VideoJitterMs)
 	}
 	sio.SipBin, err = gst.NewElementWithProperties("sipbin", props)
 	if err != nil {

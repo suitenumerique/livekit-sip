@@ -339,6 +339,7 @@ type MediaOptions struct {
 	Lang                  string
 	MaxActiveParticipants int
 	AudioJitterMs         int
+	VideoJitterMs         int
 	MaxAudioParticipants  int
 	Gst                   config.GstConfig
 	PublishCodecs         config.PublishCodecConfig

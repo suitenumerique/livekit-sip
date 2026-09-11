@@ -13,6 +13,7 @@ import (
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
+	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
@@ -570,6 +571,75 @@ func (f *LivekitBinTrackFunnel) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	return nil
 }
 
+// lookupTrack returns the wired track for a publication SID.
+func (e *LivekitBin) lookupTrack(sid string) (*LivekitBinTrack, bool) {
+	e.trackMu.RLock()
+	defer e.trackMu.RUnlock()
+	t, ok := e.tracks[sid]
+	return t, ok
+}
+
+// trackBySSRC resolves the wired track behind an RTP SSRC. Safe to call from
+// rtpbin streaming threads: only the maps are locked, never the pipeline.
+func (e *LivekitBin) trackBySSRC(ssrc uint32) (string, *LivekitBinTrack, bool) {
+	e.trackMu.RLock()
+	defer e.trackMu.RUnlock()
+	sid, ok := e.sidBySsrc[ssrc]
+	if !ok {
+		return "", nil, false
+	}
+	t, ok := e.tracks[sid]
+	return sid, t, ok
+}
+
+// registerTrack publishes a wired track to the SSRC lookup. It must run before
+// the source element starts so the first RTP pad always resolves.
+func (e *LivekitBin) registerTrack(sid string, ssrc uint32, t *LivekitBinTrack) bool {
+	e.trackMu.Lock()
+	defer e.trackMu.Unlock()
+	if e.tracks == nil || e.sidBySsrc == nil {
+		return false
+	}
+	e.tracks[sid] = t
+	e.sidBySsrc[ssrc] = sid
+	metrics.TrackSubscribed(trackSourceLabel(t), 1)
+	return true
+}
+
+// unregisterTrack removes a wired track from the SSRC lookup.
+func (e *LivekitBin) unregisterTrack(sid string, ssrc uint32) (*LivekitBinTrack, bool) {
+	e.trackMu.Lock()
+	defer e.trackMu.Unlock()
+	t, ok := e.tracks[sid]
+	if !ok {
+		return nil, false
+	}
+	delete(e.tracks, sid)
+	delete(e.sidBySsrc, ssrc)
+	metrics.TrackSubscribed(trackSourceLabel(t), -1)
+	return t, true
+}
+
+func trackSourceLabel(t *LivekitBinTrack) string {
+	if t == nil || t.Pub == nil {
+		return "unknown"
+	}
+	return t.Pub.Source().String()
+}
+
+func releaseFunnelPads(funnel *LivekitBinTrackFunnel, ssrc uint32) {
+	if funnel.RtpFunnel != nil {
+		if pad := funnel.RtpFunnel.GetStaticPad(fmt.Sprintf("sink_%d", ssrc)); pad != nil {
+			funnel.RtpFunnel.ReleaseRequestPad(pad)
+		}
+	}
+	if funnel.RtcpFunnel != nil {
+		if pad := funnel.RtcpFunnel.GetStaticPad(fmt.Sprintf("sink_%d", ssrc)); pad != nil {
+			funnel.RtcpFunnel.ReleaseRequestPad(pad)
+		}
+	}
+}
+
 func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 	self := gst.ToGstBin(e.self.Get())
 	if self == nil || self.Instance() == nil {
@@ -595,7 +665,7 @@ func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remote
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	srcTrack, ok := e.tracks[pub.SID()]
+	srcTrack, ok := e.lookupTrack(pub.SID())
 	if ok {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track with SID already exists, skipping subscription\nsid=%s\ntrack=%s", pub.SID(), track.ID()))
 		pub.SetSubscribed(false)
@@ -653,20 +723,25 @@ func (e *LivekitBin) SubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remote
 		return
 	}
 
-	if !element.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error syncing state with parent for track\ntrack=%s\nerr=%v", track.ID(), err))
-		self.Error(fmt.Sprintf("Error syncing state with parent for track %s", track.ID()), fmt.Errorf("sync error"))
-		return
-	}
-
+	// Publish the SSRC mapping before the source starts: rtpbin emits the first
+	// recv pad from the streaming thread as soon as the first packet is pushed.
 	srcTrack = &LivekitBinTrack{
 		Track:    track,
 		Pub:      pub,
 		Rp:       rp,
 		TrackSrc: element,
 	}
-	e.tracks[pub.SID()] = srcTrack
-	e.sidBySsrc[uint32(track.SSRC())] = pub.SID()
+	if !e.registerTrack(pub.SID(), uint32(track.SSRC()), srcTrack) {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Bin is closing, dropping track subscription\ntrack=%s", track.ID()))
+		return
+	}
+
+	if !element.SyncStateWithParent() {
+		e.unregisterTrack(pub.SID(), uint32(track.SSRC()))
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error syncing state with parent for track\ntrack=%s\nerr=%v", track.ID(), err))
+		self.Error(fmt.Sprintf("Error syncing state with parent for track %s", track.ID()), fmt.Errorf("sync error"))
+		return
+	}
 
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Linked RTCP source pad to sink funnel\ntrack=%s", track.ID()))
 }
@@ -689,16 +764,16 @@ func (e *LivekitBin) onRtpBinPadAddedRecvRtp(self *gst.Bin, pad *gst.Pad, pname 
 		return
 	}
 
-	sid, exists := e.sidBySsrc[uint32(ssrc)]
-	if !exists {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to find track SID for pad name\npad=%s", pname))
-		self.Error(fmt.Sprintf("Failed to find track SID for pad name: %s", pname), fmt.Errorf("track error"))
+	sid, track, ok := e.trackBySSRC(uint32(ssrc))
+	if sid == "" {
+		// Late packets of a track that was just unsubscribed can still create a pad.
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to find track SID for pad name\npad=%s", pname))
+		metrics.TrackPadError("unknown_ssrc")
 		return
 	}
-	track, ok := e.tracks[sid]
 	if !ok {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to find track for SID in pad name\nsid=%s\npad=%s", sid, pname))
-		self.Error(fmt.Sprintf("Failed to find track for SID %s in pad name: %s", sid, pname), fmt.Errorf("track error"))
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to find track for SID in pad name\nsid=%s\npad=%s", sid, pname))
+		metrics.TrackPadError("unknown_sid")
 		return
 	}
 
@@ -720,6 +795,7 @@ func (e *LivekitBin) onRtpBinPadAddedRecvRtp(self *gst.Bin, pad *gst.Pad, pname 
 	}
 	if !gpad.SetActive(true) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error activating ghost pad for pad\npad=%s", pname))
+		self.RemovePad(gpad.Pad)
 		return
 	}
 
@@ -761,9 +837,10 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	srcTrack, ok := e.tracks[sid]
+	srcTrack, ok := e.lookupTrack(sid)
 	if !ok {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Track with SID not found during unsubscribe\nsid=%s\ntrack=%s", sid, track.ID()))
+		releaseFunnelPads(funnel, uint32(ssrc))
 		return
 	}
 
@@ -775,15 +852,11 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error removing track source element from bin\ntrack=%s\nerr=%v", track.ID(), err))
 	}
 
-	if pad := funnel.RtpFunnel.GetStaticPad(fmt.Sprintf("sink_%d", ssrc)); pad != nil {
-		funnel.RtpFunnel.ReleaseRequestPad(pad)
+	releaseFunnelPads(funnel, uint32(ssrc))
+	e.unregisterTrack(sid, uint32(ssrc))
+	if kind == livekit.TrackSource_CAMERA {
+		e.cameraForgetDimensions(pub)
 	}
-	if pad := funnel.RtcpFunnel.GetStaticPad(fmt.Sprintf("sink_%d", ssrc)); pad != nil {
-		funnel.RtcpFunnel.ReleaseRequestPad(pad)
-	}
-
-	delete(e.tracks, sid)
-	delete(e.sidBySsrc, uint32(ssrc))
 
 	if _, err := e.RtpBin.Emit("clear-ssrc", uint(kind), uint(ssrc)); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting pad removed signal\ntrack=%s\nerr=%v", track.ID(), err))
@@ -814,7 +887,9 @@ func (e *LivekitBin) onRtpBinPadRemovedRecvRtp(self *gst.Bin, pad *gst.Pad, pnam
 	gpname := fmt.Sprintf("recv_rtp_src_%d_%d_%d", session, ssrc, pt)
 	gpad := self.GetStaticPad(gpname)
 	if gpad == nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to find ghost pad for pad name\npad=%s", pname))
+		// rtpbin removes the pad on RTCP BYE (autoremove) and again on clear-ssrc.
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to find ghost pad for pad name\npad=%s", pname))
+		metrics.TrackPadError("ghost_pad_missing")
 		return
 	}
 	if !self.RemovePad(gpad) {

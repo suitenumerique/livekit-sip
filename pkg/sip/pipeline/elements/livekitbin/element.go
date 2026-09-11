@@ -11,6 +11,7 @@ import (
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
+	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -48,6 +49,7 @@ type config struct {
 	maxActiveParticipants        uint
 	maxAudioParticipants         uint
 	audioJitter                  uint
+	videoJitter                  uint
 	microphone                   bool
 	microphoneMimeType           string
 	camera                       bool
@@ -108,6 +110,7 @@ type LivekitBin struct {
 
 	rtcp         LivekitBinRtcp
 	funnels      [NbTracks]LivekitBinTrackFunnel // indexed by livekit.TrackSource
+	trackMu      sync.RWMutex                    // guards tracks and sidBySsrc, which rtpbin streaming threads read
 	tracks       map[string]*LivekitBinTrack     // key is track SID
 	sidBySsrc    map[uint32]string               // maps track SSRC to track SID
 	publications [NbTracks]*LivekitBinPublication
@@ -214,6 +217,7 @@ func (e *LivekitBin) InstanceInit(instance *glib.Object) {
 	e.self = glib.WeakRefInit(self)
 	e.config.maxActiveParticipants = 6
 	e.config.audioJitter = 80
+	e.config.videoJitter = 200
 	e.config.microphoneMimeType = webrtc.MimeTypeOpus
 	e.config.cameraMimeType = webrtc.MimeTypeVP8
 	e.config.screenshareMimeType = webrtc.MimeTypeVP8
@@ -323,8 +327,13 @@ func (e *LivekitBin) Finalize(instance *glib.Object) {
 	defer e.livekitMu.Unlock()
 
 	e.RtpBin = nil
+	e.trackMu.Lock()
+	for _, t := range e.tracks {
+		metrics.TrackSubscribed(trackSourceLabel(t), -1)
+	}
 	e.tracks = nil
 	e.sidBySsrc = nil
+	e.trackMu.Unlock()
 	e.publications = [NbTracks]*LivekitBinPublication{}
 	e.rtcp = LivekitBinRtcp{}
 	e.funnels = [NbTracks]LivekitBinTrackFunnel{}

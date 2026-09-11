@@ -57,9 +57,13 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 	case gst.MessageError:
 		gErr := msg.ParseError()
 		pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Pipeline error\nerr=%v\ndebug=%s", gErr, gErr.DebugString()))
-		p.dumpCH <- true
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case p.dumpCH <- true:
+		default:
+		}
 		if gErr.Domain() == apperror.AppErrorDomain.ToDomainQuark() && gErr.Code() == apperror.AppFatalError {
+			// Leave the dump loop a moment to capture the failing graph before teardown.
+			time.Sleep(500 * time.Millisecond)
 			p.Close()
 		}
 	case gst.MessageLatency:
