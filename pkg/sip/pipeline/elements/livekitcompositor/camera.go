@@ -35,6 +35,11 @@ type LivekitCompositorCamera struct {
 	pangoLayout *pango.Layout
 	pangoBold   *pango.FontDescription
 	pangoSans   *pango.FontDescription
+	pangoMono   *pango.FontDescription
+
+	// Raster of the screen currently shown, keyed by its serialized content.
+	screenSurface *cairo.Surface
+	screenKey     string
 }
 
 func (e *LivekitCompositor) initCamera(self *gst.Bin) error {

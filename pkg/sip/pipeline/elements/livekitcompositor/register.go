@@ -5,6 +5,7 @@ import (
 )
 
 func Register() bool {
+	registerFonts()
 	return gst.RegisterElement(
 		nil,
 		"livekit_compositor",

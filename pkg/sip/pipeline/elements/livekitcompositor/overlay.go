@@ -11,14 +11,13 @@ import (
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
-	"github.com/livekit/sip/pkg/i18n"
 	"github.com/livekit/sip/res"
 	"github.com/vopenia-io/go-pangocairo/cairo"
 	"github.com/vopenia-io/go-pangocairo/pango"
 	"golang.org/x/sys/unix"
 )
 
-//go:embed assets/mute-icon.png
+//go:embed assets/mute-icon.png assets/logo-visio.png
 var assets embed.FS
 
 const (
@@ -72,8 +71,7 @@ type overlayCache struct {
 	vH               int
 	nTracks          int
 	ParticipantCount int
-	message          overlayMessage
-	fontScale        float64
+	screen           *Screen
 }
 
 type participantOverlayInfo struct {
@@ -98,8 +96,7 @@ func (e *LivekitCompositor) refreshOverlayCache() {
 		vH:               int(e.videoHeight),
 		nTracks:          len(e.currentLayout),
 		ParticipantCount: len(e.participants),
-		message:          e.overlayMessage,
-		fontScale:        float64(e.videoWidth) / float64(1280) * float64(pango.SCALE),
+		screen:           e.overlayScreen,
 	}
 
 	e.LivekitCompositorCamera.overlayCache.Store(cache)
@@ -172,83 +169,61 @@ func (e *LivekitCompositor) collectParticipantOverlayInfo() []participantOverlay
 	return out
 }
 
-// pangoFor returns the cached pango layout bound to cr, plus the cached font
-// description for the requested family. pango_cairo_create_layout allocates
+type fontStyle int
+
+const (
+	fontSans fontStyle = iota
+	fontSansBold
+	fontMonoBold
+)
+
+func newFontDesc(family string, bold bool) *pango.FontDescription {
+	desc := pango.FontDescriptionNew()
+	desc.SetFamily(family)
+	if bold {
+		desc.SetWeight(pango.WEIGHT_BOLD)
+	}
+	return desc
+}
+
+// layoutFor returns the cached pango layout bound to cr, plus the cached font
+// description for the requested style. pango_cairo_create_layout allocates
 // native objects the bindings never free, so per-frame creation leaks; the
 // cache is unsynchronized because draw callbacks run on a single streaming
 // thread.
-func (e *LivekitCompositor) pangoFor(cr *cairo.Context, bold bool) (*pango.Layout, *pango.FontDescription) {
+func (e *LivekitCompositor) layoutFor(cr *cairo.Context, style fontStyle) (*pango.Layout, *pango.FontDescription) {
 	c := e.LivekitCompositorCamera
 	if c == nil {
-		layout := pango.CairoCreateLayout(cr)
-		if bold {
-			return layout, pango.FontDescriptionFromString("Sans Bold")
+		switch style {
+		case fontSansBold:
+			return pango.CairoCreateLayout(cr), newFontDesc(screenFontSans, true)
+		case fontMonoBold:
+			return pango.CairoCreateLayout(cr), newFontDesc(screenFontMono, true)
 		}
-		return layout, pango.FontDescriptionFromString("Sans")
+		return pango.CairoCreateLayout(cr), newFontDesc(screenFontSans, false)
 	}
 	if c.pangoLayout == nil {
 		c.pangoLayout = pango.CairoCreateLayout(cr)
-		c.pangoBold = pango.FontDescriptionFromString("Sans Bold")
-		c.pangoSans = pango.FontDescriptionFromString("Sans")
+		c.pangoBold = newFontDesc(screenFontSans, true)
+		c.pangoSans = newFontDesc(screenFontSans, false)
+		c.pangoMono = newFontDesc(screenFontMono, true)
 	} else {
 		pango.CairoUpdateLayout(cr, c.pangoLayout)
 	}
-	if bold {
+	switch style {
+	case fontSansBold:
 		return c.pangoLayout, c.pangoBold
+	case fontMonoBold:
+		return c.pangoLayout, c.pangoMono
 	}
 	return c.pangoLayout, c.pangoSans
 }
 
-func (e *LivekitCompositor) drawOverlayNoTracks(self *gst.Bin, cr *cairo.Context, cache *overlayCache) {
-	cr.Save()
-	cr.SetSourceRGBA(bgColorR, bgColorG, bgColorB, 1.0)
-	cr.Rectangle(0, 0, float64(e.videoWidth), float64(e.videoHeight))
-	cr.Fill()
-	cr.Restore()
-
-	layout, desc := e.pangoFor(cr, true)
-	desc.SetSize(int(cache.fontScale * 14))
-	layout.SetFontDescription(desc)
-	layout.SetText(i18n.Printer(e.lang).Sprintf("You are the only participant..."), -1)
-	pw, ph := layout.GetSize()
-	w := float64(pw) / float64(pango.SCALE)
-	h := float64(ph) / float64(pango.SCALE)
-
-	cr.Save()
-	cr.SetSourceRGBA(1, 1, 1, 1)
-	cr.MoveTo(float64(e.videoWidth)/2-w/2, float64(e.videoHeight)/2-h/2)
-	pango.CairoShowLayout(cr, layout)
-	cr.Restore()
-
-	if status := cr.Status(); status != cairo.STATUS_SUCCESS {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after drawing no-tracks overlay\nstatus_code=%d\nstatus=%v", int(status), status))
+func (e *LivekitCompositor) pangoFor(cr *cairo.Context, bold bool) (*pango.Layout, *pango.FontDescription) {
+	if bold {
+		return e.layoutFor(cr, fontSansBold)
 	}
-}
-
-func (e *LivekitCompositor) drawOverlayMessage(self *gst.Bin, cr *cairo.Context, cache *overlayCache) {
-	cr.Save()
-	cr.SetSourceRGBA(bgColorR, bgColorG, bgColorB, 1.0)
-	cr.Rectangle(0, 0, float64(e.videoWidth), float64(e.videoHeight))
-	cr.Fill()
-	cr.Restore()
-
-	layout, desc := e.pangoFor(cr, true)
-	desc.SetSize(int(cache.fontScale * 14))
-	layout.SetFontDescription(desc)
-	layout.SetText(cache.message.Message, -1)
-	pw, ph := layout.GetSize()
-	w := float64(pw) / float64(pango.SCALE)
-	h := float64(ph) / float64(pango.SCALE)
-
-	cr.Save()
-	cr.SetSourceRGBA(1, 1, 1, 1)
-	cr.MoveTo(float64(e.videoWidth)/2-w/2, float64(e.videoHeight)/2-h/2)
-	pango.CairoShowLayout(cr, layout)
-	cr.Restore()
-
-	if status := cr.Status(); status != cairo.STATUS_SUCCESS {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("cairo context in error state after drawing no-tracks overlay\nstatus_code=%d\nstatus=%v", int(status), status))
-	}
+	return e.layoutFor(cr, fontSans)
 }
 
 func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gst.Element, cr *cairo.Context, timestamp gst.ClockTime) {
@@ -264,18 +239,17 @@ func (e *LivekitCompositor) cameraOverlayDrawCallback(self *gst.Bin, overlay *gs
 		}
 	}
 
-	if cache.message.Show {
-		e.drawOverlayMessage(self, cr, cache)
-		return
-	}
-
 	infos := cache.infos
 	vW := cache.vW
 	vH := cache.vH
 	nTracks := cache.nTracks
 
+	if cache.screen != nil {
+		e.drawScreen(cr, cache.screen, vW, vH)
+		return
+	}
 	if nTracks == 0 {
-		e.drawOverlayNoTracks(self, cr, cache)
+		e.drawScreen(cr, e.aloneScreen(), vW, vH)
 		return
 	}
 

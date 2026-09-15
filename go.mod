@@ -55,7 +55,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/tools v0.44.0 // indirect
 )
 
 require (
@@ -156,3 +158,5 @@ require (
 replace github.com/go-gst/go-gst => github.com/vopenia-io/go-gst v0.0.0-20260618125001-7c94d3bb0444
 
 replace github.com/go-gst/go-glib => github.com/vopenia-io/go-glib v0.0.0-20260519120019-03a8b66c8c02
+
+tool golang.org/x/text/cmd/gotext

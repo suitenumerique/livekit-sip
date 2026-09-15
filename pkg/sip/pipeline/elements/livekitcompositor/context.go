@@ -1,61 +1,61 @@
 package livekitcompositor
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-gst/go-gst/gst"
 )
 
-const ContextOverlayMessage = "livekit.compositor.overlay.message"
+const ContextOverlayScreen = "livekit.compositor.overlay.screen"
 
-type overlayMessage struct {
-	Message string
-	Level   gst.DebugLevel
-	Show    bool
-}
-
-func NewContextOverlayMessage(message string, level gst.DebugLevel, show bool) *gst.Context {
-	ctx := gst.NewContext(ContextOverlayMessage, false)
-	s := ctx.WritableStructure()
-	s.SetString("message", message)
-	s.SetInt("level", int(level))
-	s.SetBool("show", show)
+// NewContextOverlayScreen shows s in place of the mosaic; nil hides the screen.
+func NewContextOverlayScreen(s *Screen) *gst.Context {
+	ctx := gst.NewContext(ContextOverlayScreen, false)
+	st := ctx.WritableStructure()
+	if s == nil {
+		st.SetBool("show", false)
+		return ctx
+	}
+	data, _ := json.Marshal(s)
+	st.SetBool("show", true)
+	st.SetString("screen", string(data))
 	return ctx
 }
 
-func GetContextOverlayMessage(ctx *gst.Context) (message string, level gst.DebugLevel, show bool) {
-	if ctx == nil || !ctx.HasContextType(ContextOverlayMessage) {
-		return "", 0, false
+func GetContextOverlayScreen(ctx *gst.Context) *Screen {
+	if ctx == nil || !ctx.HasContextType(ContextOverlayScreen) {
+		return nil
 	}
-	s := ctx.GetStructure()
-	msg, err := s.GetString("message")
+	st := ctx.GetStructure()
+	show, err := st.GetBool("show")
+	if err != nil || !show {
+		return nil
+	}
+	data, err := st.GetString("screen")
 	if err != nil {
-		return "", 0, false
+		return nil
 	}
-	l, err := s.GetInt("level")
-	if err != nil {
-		return "", 0, false
+	var s Screen
+	if err := json.Unmarshal([]byte(data), &s); err != nil {
+		return nil
 	}
-	ok, err := s.GetBool("show")
-	if err != nil {
-		return "", 0, false
-	}
-	return msg, gst.DebugLevel(l), ok
+	return &s
 }
 
 func (e *LivekitCompositor) SetContext(instance *gst.Element, ctx *gst.Context) {
 	self := gst.ToGstBin(instance)
 
 	switch ctx.GetType() {
-	case ContextOverlayMessage:
-		message, level, show := GetContextOverlayMessage(ctx)
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Setting overlay message context\nmessage=%s\nlevel=%d\nshow=%t", message, level, show))
-		e.mu.Lock()
-		e.overlayMessage = overlayMessage{
-			Message: message,
-			Level:   level,
-			Show:    show,
+	case ContextOverlayScreen:
+		s := GetContextOverlayScreen(ctx)
+		title := ""
+		if s != nil {
+			title = s.Title
 		}
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Setting overlay screen context\nshow=%t\ntitle=%q", s != nil, title))
+		e.mu.Lock()
+		e.overlayScreen = s
 		e.refreshOverlayCache()
 		e.mu.Unlock()
 	}
