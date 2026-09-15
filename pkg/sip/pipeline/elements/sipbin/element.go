@@ -408,6 +408,7 @@ func (e *SipBin) ChangeState(instance *gst.Element, transition gst.StateChange) 
 	}
 
 	if transition == gst.StateChangeReadyToNull {
+		e.stopTrackRoutines()
 		e.transaction.Close()
 		done := make(chan struct{})
 		go func() {
@@ -425,7 +426,21 @@ func (e *SipBin) ChangeState(instance *gst.Element, transition gst.StateChange) 
 	return ret
 }
 
+// stopTrackRoutines ends the per-track keyframe and link feedback goroutines,
+// which otherwise keep calling into the bin after it is freed.
+func (e *SipBin) stopTrackRoutines() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, track := range e.Tracks {
+		if track != nil {
+			track.stopPeriodicKeyframe()
+			track.stopLinkFeedback()
+		}
+	}
+}
+
 func (e *SipBin) Finalize(instance *glib.Object) {
+	e.stopTrackRoutines()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, track := range e.Tracks {
