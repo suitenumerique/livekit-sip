@@ -28,6 +28,12 @@ var RoomJoin embed.FS
 //go:embed lang/*/wrong_pin.flac
 var WrongPin embed.FS
 
+//go:embed lang
+var Lang embed.FS
+
+//go:embed fonts/*.ttf
+var Fonts embed.FS
+
 const SampleRate = 48000
 
 func ReadOggAudioFile(data []byte) []msdk.PCM16Sample {

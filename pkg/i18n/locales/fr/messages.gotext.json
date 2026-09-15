@@ -2,39 +2,112 @@
     "language": "fr",
     "messages": [
         {
-            "id": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
-            "message": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
-            "translation": "Veuillez saisir votre code PIN suivi de # (utilisez * pour effacer)\nSaisi : {Repeat_lenpin}",
+            "id": "Join a meeting",
+            "message": "Join a meeting",
+            "translation": "Rejoindre une réunion"
+        },
+        {
+            "id": "Enter the meeting code, then #",
+            "message": "Enter the meeting code, then #",
+            "translation": "Tapez le code de la réunion, puis #"
+        },
+        {
+            "id": "Confirm",
+            "message": "Confirm",
+            "translation": "Valider"
+        },
+        {
+            "id": "Delete",
+            "message": "Delete",
+            "translation": "Effacer"
+        },
+        {
+            "id": "The code is in the invitation",
+            "message": "The code is in the invitation",
+            "translation": "Le code figure dans l'invitation"
+        },
+        {
+            "id": "Code not recognised",
+            "message": "Code not recognised",
+            "translation": "Code non reconnu"
+        },
+        {
+            "id": "No meeting matches this code",
+            "message": "No meeting matches this code",
+            "translation": "Aucune réunion ne correspond à ce code"
+        },
+        {
+            "id": "Attempt {Attempt} of {Attempts}. Check the code in the invitation, then try again.",
+            "message": "Attempt {Attempt} of {Attempts}. Check the code in the invitation, then try again.",
+            "translation": "Essai {Attempt} sur {Attempts}. Vérifiez le code dans l'invitation, puis recommencez.",
             "placeholders": [
                 {
-                    "id": "Repeat_lenpin",
-                    "string": "%[1]s",
-                    "type": "string",
-                    "underlyingType": "string",
+                    "id": "Attempt",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
                     "argNum": 1,
-                    "expr": "strings.Repeat(\"*\", len(pin))"
+                    "expr": "attempt"
+                },
+                {
+                    "id": "Attempts",
+                    "string": "%[2]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 2,
+                    "expr": "attempts"
                 }
             ]
         },
         {
-            "id": "Invalid PIN",
-            "message": "Invalid PIN",
-            "translation": "Code PIN invalide"
+            "id": "Clear and start over",
+            "message": "Clear and start over",
+            "translation": "Effacer et recommencer"
         },
         {
-            "id": "PIN accepted, joining the call...",
-            "message": "PIN accepted, joining the call...",
-            "translation": "Code PIN accepté, connexion en cours..."
+            "id": "Code accepted",
+            "message": "Code accepted",
+            "translation": "Code accepté"
         },
         {
-            "id": "You are the only participant...",
-            "message": "You are the only participant...",
-            "translation": "Vous êtes le seul participant..."
+            "id": "Connecting to the meeting…",
+            "message": "Connecting to the meeting…",
+            "translation": "Connexion à la réunion…"
         },
         {
-            "id": "No video track",
-            "message": "No video track",
-            "translation": "Aucune piste vidéo"
+            "id": "Time is up",
+            "message": "Time is up",
+            "translation": "Délai dépassé"
+        },
+        {
+            "id": "No key pressed for {Seconds} seconds",
+            "message": "No key pressed for {Seconds} seconds",
+            "translation": "Aucune touche depuis {Seconds} secondes",
+            "placeholders": [
+                {
+                    "id": "Seconds",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 1,
+                    "expr": "seconds"
+                }
+            ]
+        },
+        {
+            "id": "The call will end. Call again to retry.",
+            "message": "The call will end. Call again to retry.",
+            "translation": "L'appel va se terminer. Rappelez pour réessayer."
+        },
+        {
+            "id": "Nobody else is here yet",
+            "message": "Nobody else is here yet",
+            "translation": "Personne d'autre n'est encore là"
+        },
+        {
+            "id": "Participants will appear here as they arrive.",
+            "message": "Participants will appear here as they arrive.",
+            "translation": "Les participants apparaîtront ici dès leur arrivée."
         }
     ]
 }

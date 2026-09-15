@@ -47,7 +47,7 @@ type LivekitCompositor struct {
 
 	currentLayout []string
 
-	overlayMessage overlayMessage
+	overlayScreen *Screen
 }
 
 func (e *LivekitCompositor) New() glib.GoObjectSubclass {

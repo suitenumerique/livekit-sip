@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/frostbyte73/core"
-	"github.com/go-gst/go-gst/gst"
 	"github.com/icholy/digest"
 	"github.com/pkg/errors"
 
@@ -44,7 +43,6 @@ import (
 	"github.com/livekit/sipgo/transport"
 
 	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/i18n"
 	"github.com/livekit/sip/pkg/stats"
 )
 
@@ -1272,21 +1270,24 @@ func (c *inboundCall) waitSubscribe(ctx context.Context, timeout time.Duration) 
 	}
 }
 
+// pinRetryDelay keeps the rejection screen up before a new entry starts.
+const pinRetryDelay = 3 * time.Second
+
 func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallDispatch, _ bool, _ error) {
 	ctx, span := Tracer.Start(ctx, "sip.inbound.pinPrompt")
 	defer span.End()
 	c.log().Infow("Requesting Pin for SIP call")
 	const pinLimit = 16
-	p := i18n.Printer(c.s.conf.Lang)
+	scr := newPromptScreens(c.s.conf.Lang, c.s.conf.PinLength, c.s.conf.PinAttempts)
 
-	defer c.medias.HideMessage()
+	defer c.medias.HideScreen()
 	go c.playAudio(ctx, c.s.res.enterPinFd)
 	pin := ""
-	noPin := false
+	attempt := 1
 	deadline := time.NewTimer(c.s.conf.PinTimeout)
 	defer deadline.Stop()
+	c.medias.ShowScreen(scr.codeEntry(pin))
 	for {
-		c.medias.ShowMessage(p.Sprintf("Please enter your PIN followed by # (use * to delete)\nEntered: %s", strings.Repeat("*", len(pin))), gst.LevelInfo)
 		select {
 		case <-c.cc.Cancelled():
 			c.closeWithCancelled(ctx)
@@ -1299,6 +1300,8 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 			return disp, false, psrpc.NewErrorf(psrpc.Canceled, "media closed during pin entry")
 		case <-deadline.C:
 			c.log().Infow("PIN entry timed out", "timeout", c.s.conf.PinTimeout)
+			c.medias.ShowScreen(scr.timedOut(int(c.s.conf.PinTimeout.Seconds())))
+			c.playAudio(ctx, c.s.res.timeoutFd)
 			c.close(ctx, callDropped, stats.ClientError("pin-timeout"))
 			return disp, false, psrpc.NewErrorf(psrpc.DeadlineExceeded, "pin entry timed out")
 		case b, ok := <-c.dtmf:
@@ -1311,60 +1314,111 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				continue // unrecognized
 			}
 			if b.Digit == '*' {
-				// Backspace — delete the last entered digit.
 				if len(pin) > 0 {
 					pin = pin[:len(pin)-1]
 				}
+				c.medias.ShowScreen(scr.codeEntry(pin))
 				continue
 			}
-			if b.Digit == '#' {
-				// End of the pin
-				noPin = pin == ""
-
-				c.log().Infow("Checking Pin for SIP call", "pin", pin, "noPin", noPin)
-				c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
-				disp = c.s.handler.DispatchCall(ctx, &CallInfo{
-					TrunkID: trunkID,
-					Call:    c.call,
-					Pin:     pin,
-					NoPin:   noPin,
-				})
-				if disp.ProjectID != "" {
-					c.appendLogValues("projectID", disp.ProjectID)
-					c.projectID = disp.ProjectID
-				}
-				if disp.TrunkID != "" {
-					c.appendLogValues("sipTrunk", disp.TrunkID)
-				}
-				if disp.DispatchRuleID != "" {
-					c.appendLogValues("sipRule", disp.DispatchRuleID)
-				}
-				if disp.Result == DispatchServiceUnavailable {
-					c.log().Warnw("Rejecting call, dispatch evaluation failed", nil, "pin", pin, "noPin", noPin)
-					c.close(ctx, callDropped, stats.ServerError("dispatch-error"))
-					return disp, false, psrpc.NewErrorf(psrpc.Unavailable, "dispatch rule evaluation unavailable")
-				}
-				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
-					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin,
-						"dispatchResult", disp.Result.String(),
-						"ruleID", disp.DispatchRuleID,
-						"roomName", disp.Room.RoomName)
-					c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
-					c.playAudio(ctx, c.s.res.wrongPinFd)
-					c.close(ctx, callDropped, stats.ClientError("wrong-pin"))
+			if b.Digit != '#' {
+				pin += string(b.Digit)
+				if len(pin) > pinLimit {
+					c.rejectPin(ctx, scr, pin, c.s.conf.PinAttempts)
 					return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
 				}
-				c.medias.ShowMessage(p.Sprintf("PIN accepted, joining the call..."), gst.LevelInfo)
+				c.medias.ShowScreen(scr.codeEntry(pin))
+				continue
+			}
+
+			noPin := pin == ""
+			c.log().Infow("Checking Pin for SIP call", "pin", pin, "noPin", noPin, "attempt", attempt)
+			c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
+			disp = c.s.handler.DispatchCall(ctx, &CallInfo{
+				TrunkID: trunkID,
+				Call:    c.call,
+				Pin:     pin,
+				NoPin:   noPin,
+			})
+			if disp.ProjectID != "" {
+				c.appendLogValues("projectID", disp.ProjectID)
+				c.projectID = disp.ProjectID
+			}
+			if disp.TrunkID != "" {
+				c.appendLogValues("sipTrunk", disp.TrunkID)
+			}
+			if disp.DispatchRuleID != "" {
+				c.appendLogValues("sipRule", disp.DispatchRuleID)
+			}
+			if disp.Result == DispatchServiceUnavailable {
+				c.log().Warnw("Rejecting call, dispatch evaluation failed", nil, "pin", pin, "noPin", noPin)
+				c.close(ctx, callDropped, stats.ServerError("dispatch-error"))
+				return disp, false, psrpc.NewErrorf(psrpc.Unavailable, "dispatch rule evaluation unavailable")
+			}
+			if disp.Result == DispatchAccept && disp.Room.RoomName != "" {
+				c.medias.ShowScreen(scr.connecting())
 				c.playAudio(ctx, c.s.res.roomJoinFd)
 				return disp, true, nil
 			}
-			// Gather pin numbers
-			pin += string(b.Digit)
-			if len(pin) > pinLimit {
-				c.medias.ShowMessage(p.Sprintf("Invalid PIN"), gst.LevelError)
-				c.playAudio(ctx, c.s.res.wrongPinFd)
-				c.close(ctx, callDropped, stats.ClientError("wrong-pin"))
+
+			c.log().Infow("Rejecting code", "pin", pin, "noPin", noPin, "attempt", attempt,
+				"dispatchResult", disp.Result.String(),
+				"ruleID", disp.DispatchRuleID,
+				"roomName", disp.Room.RoomName)
+			if attempt >= c.s.conf.PinAttempts {
+				c.rejectPin(ctx, scr, pin, attempt)
 				return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
+			}
+			c.medias.ShowScreen(scr.codeRejected(pin, attempt))
+			c.playAudio(ctx, c.s.res.wrongPinFd)
+			next, ok, err := c.waitRetry(ctx, pinRetryDelay)
+			if !ok {
+				return disp, false, err
+			}
+			attempt++
+			pin = next
+			deadline.Reset(c.s.conf.PinTimeout)
+			c.medias.ShowScreen(scr.codeEntry(pin))
+		}
+	}
+}
+
+// rejectPin shows the final rejection, plays the prompt and drops the call.
+func (c *inboundCall) rejectPin(ctx context.Context, scr promptScreens, pin string, attempt int) {
+	c.medias.ShowScreen(scr.codeRejected(pin, attempt))
+	c.playAudio(ctx, c.s.res.wrongPinFd)
+	c.close(ctx, callDropped, stats.ClientError("wrong-pin"))
+}
+
+// waitRetry holds the rejection screen for d or until a key is pressed; a digit
+// seeds the next entry. ok is false when the call ended meanwhile.
+func (c *inboundCall) waitRetry(ctx context.Context, d time.Duration) (next string, ok bool, err error) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		select {
+		case <-c.cc.Cancelled():
+			c.closeWithCancelled(ctx)
+			return "", false, nil
+		case <-ctx.Done():
+			c.closeWithHangup(ctx)
+			return "", false, nil
+		case <-c.medias.Closed():
+			c.close(ctx, callDropped, stats.ServerError("media-closed"))
+			return "", false, psrpc.NewErrorf(psrpc.Canceled, "media closed during pin entry")
+		case <-timer.C:
+			return "", true, nil
+		case b, chOk := <-c.dtmf:
+			if !chOk {
+				c.Close()
+				return "", false, psrpc.NewErrorf(psrpc.Canceled, "failed reading DTMF event")
+			}
+			switch {
+			case b.Digit == 0:
+				continue
+			case b.Digit >= '0' && b.Digit <= '9':
+				return string(b.Digit), true, nil
+			default:
+				return "", true, nil
 			}
 		}
 	}

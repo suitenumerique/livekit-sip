@@ -423,14 +423,14 @@ func (o *MediaOrchestrator) DtmfHandler(h func(ev dtmf.Event)) {
 	o.dtmfHandler = h
 }
 
-func (o *MediaOrchestrator) ShowMessage(message string, level gst.DebugLevel) {
+func (o *MediaOrchestrator) ShowScreen(s livekitcompositor.Screen) {
 	if o.pipeline != nil {
-		o.pipeline.SetContext(livekitcompositor.NewContextOverlayMessage(message, level, true))
+		o.pipeline.SetContext(livekitcompositor.NewContextOverlayScreen(&s))
 	}
 }
 
-func (o *MediaOrchestrator) HideMessage() {
+func (o *MediaOrchestrator) HideScreen() {
 	if o.pipeline != nil {
-		o.pipeline.SetContext(livekitcompositor.NewContextOverlayMessage("", 0, false))
+		o.pipeline.SetContext(livekitcompositor.NewContextOverlayScreen(nil))
 	}
 }
