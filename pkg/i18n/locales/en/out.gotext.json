@@ -2,47 +2,142 @@
     "language": "en",
     "messages": [
         {
-            "id": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
-            "message": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
-            "translation": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "id": "Join a meeting",
+            "message": "Join a meeting",
+            "translation": "Join a meeting",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Enter the meeting code, then #",
+            "message": "Enter the meeting code, then #",
+            "translation": "Enter the meeting code, then #",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Confirm",
+            "message": "Confirm",
+            "translation": "Confirm",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Delete",
+            "message": "Delete",
+            "translation": "Delete",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "The code is in the invitation",
+            "message": "The code is in the invitation",
+            "translation": "The code is in the invitation",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Code not recognised",
+            "message": "Code not recognised",
+            "translation": "Code not recognised",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "No meeting matches this code",
+            "message": "No meeting matches this code",
+            "translation": "No meeting matches this code",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Attempt {Attempt} of {Attempts}. Check the code in the invitation, then try again.",
+            "message": "Attempt {Attempt} of {Attempts}. Check the code in the invitation, then try again.",
+            "translation": "Attempt {Attempt} of {Attempts}. Check the code in the invitation, then try again.",
             "translatorComment": "Copied from source.",
             "placeholders": [
                 {
-                    "id": "Repeat_lenpin",
-                    "string": "%[1]s",
-                    "type": "string",
-                    "underlyingType": "string",
+                    "id": "Attempt",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
                     "argNum": 1,
-                    "expr": "strings.Repeat(\"*\", len(pin))"
+                    "expr": "attempt"
+                },
+                {
+                    "id": "Attempts",
+                    "string": "%[2]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 2,
+                    "expr": "attempts"
                 }
             ],
             "fuzzy": true
         },
         {
-            "id": "Invalid PIN",
-            "message": "Invalid PIN",
-            "translation": "Invalid PIN",
+            "id": "Clear and start over",
+            "message": "Clear and start over",
+            "translation": "Clear and start over",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         },
         {
-            "id": "PIN accepted, joining the call...",
-            "message": "PIN accepted, joining the call...",
-            "translation": "PIN accepted, joining the call...",
+            "id": "Code accepted",
+            "message": "Code accepted",
+            "translation": "Code accepted",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         },
         {
-            "id": "You are the only participant...",
-            "message": "You are the only participant...",
-            "translation": "You are the only participant...",
+            "id": "Connecting to the meeting…",
+            "message": "Connecting to the meeting…",
+            "translation": "Connecting to the meeting…",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         },
         {
-            "id": "No video track",
-            "message": "No video track",
-            "translation": "No video track",
+            "id": "Time is up",
+            "message": "Time is up",
+            "translation": "Time is up",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "No key pressed for {Seconds} seconds",
+            "message": "No key pressed for {Seconds} seconds",
+            "translation": "No key pressed for {Seconds} seconds",
+            "translatorComment": "Copied from source.",
+            "placeholders": [
+                {
+                    "id": "Seconds",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 1,
+                    "expr": "seconds"
+                }
+            ],
+            "fuzzy": true
+        },
+        {
+            "id": "The call will end. Call again to retry.",
+            "message": "The call will end. Call again to retry.",
+            "translation": "The call will end. Call again to retry.",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Nobody else is here yet",
+            "message": "Nobody else is here yet",
+            "translation": "Nobody else is here yet",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Participants will appear here as they arrive.",
+            "message": "Participants will appear here as they arrive.",
+            "translation": "Participants will appear here as they arrive.",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         }

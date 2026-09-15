@@ -39,30 +39,57 @@ func init() {
 }
 
 var messageKeyToIndex = map[string]int{
-	"Invalid PIN":                       1,
-	"PIN accepted, joining the call...": 2,
-	"Please enter your PIN followed by # (use * to delete)\nEntered: %s": 0,
-	"You are the only participant...":                                    3,
+	"Attempt %d of %d. Check the code in the invitation, then try again.": 7,
+	"Clear and start over":                          8,
+	"Code accepted":                                 9,
+	"Code not recognised":                           5,
+	"Confirm":                                       2,
+	"Connecting to the meeting…":                    10,
+	"Delete":                                        3,
+	"Enter the meeting code, then #":                1,
+	"Join a meeting":                                0,
+	"No key pressed for %d seconds":                 12,
+	"No meeting matches this code":                  6,
+	"Nobody else is here yet":                       14,
+	"Participants will appear here as they arrive.": 15,
+	"The call will end. Call again to retry.":       13,
+	"The code is in the invitation":                 4,
+	"Time is up":                                    11,
 }
 
-var enIndex = []uint32{ // 5 elements
-	0x00000000, 0x00000045, 0x00000051, 0x00000073,
-	0x00000093,
-} // Size: 44 bytes
+var enIndex = []uint32{ // 17 elements
+	0x00000000, 0x0000000f, 0x0000002e, 0x00000036,
+	0x0000003d, 0x0000005b, 0x0000006f, 0x0000008c,
+	0x000000d6, 0x000000eb, 0x000000f9, 0x00000116,
+	0x00000121, 0x00000142, 0x0000016a, 0x00000182,
+	0x000001b0,
+} // Size: 92 bytes
 
-const enData string = "" + // Size: 147 bytes
-	"\x02Please enter your PIN followed by # (use * to delete)\x0aEntered: %[" +
-	"1]s\x02Invalid PIN\x02PIN accepted, joining the call...\x02You are the o" +
-	"nly participant..."
+const enData string = "" + // Size: 432 bytes
+	"\x02Join a meeting\x02Enter the meeting code, then #\x02Confirm\x02Delet" +
+	"e\x02The code is in the invitation\x02Code not recognised\x02No meeting " +
+	"matches this code\x02Attempt %[1]d of %[2]d. Check the code in the invit" +
+	"ation, then try again.\x02Clear and start over\x02Code accepted\x02Conne" +
+	"cting to the meeting…\x02Time is up\x02No key pressed for %[1]d seconds" +
+	"\x02The call will end. Call again to retry.\x02Nobody else is here yet" +
+	"\x02Participants will appear here as they arrive."
 
-var frIndex = []uint32{ // 5 elements
-	0x00000000, 0x00000052, 0x00000064, 0x0000008d,
-	0x000000af,
-} // Size: 44 bytes
+var frIndex = []uint32{ // 17 elements
+	0x00000000, 0x00000017, 0x0000003c, 0x00000044,
+	0x0000004c, 0x0000006d, 0x0000007e, 0x000000a7,
+	0x000000f5, 0x0000010c, 0x0000011a, 0x00000136,
+	0x00000147, 0x0000016b, 0x0000019d, 0x000001bf,
+	0x000001f6,
+} // Size: 92 bytes
 
-const frData string = "" + // Size: 175 bytes
-	"\x02Veuillez saisir votre code PIN suivi de # (utilisez * pour effacer)" +
-	"\x0aSaisi : %[1]s\x02Code PIN invalide\x02Code PIN accepté, connexion en" +
-	" cours...\x02Vous êtes le seul participant..."
+const frData string = "" + // Size: 502 bytes
+	"\x02Rejoindre une réunion\x02Tapez le code de la réunion, puis #\x02Vali" +
+	"der\x02Effacer\x02Le code figure dans l'invitation\x02Code non reconnu" +
+	"\x02Aucune réunion ne correspond à ce code\x02Essai %[1]d sur %[2]d. Vér" +
+	"ifiez le code dans l'invitation, puis recommencez.\x02Effacer et recomme" +
+	"ncer\x02Code accepté\x02Connexion à la réunion…\x02Délai dépassé\x02Aucu" +
+	"ne touche depuis %[1]d secondes\x02L'appel va se terminer. Rappelez pour" +
+	" réessayer.\x02Personne d'autre n'est encore là\x02Les participants appa" +
+	"raîtront ici dès leur arrivée."
 
-	// Total table size 410 bytes (0KiB); checksum: 88E2B8BB
+	// Total table size 1118 bytes (1KiB); checksum: 1963429F
