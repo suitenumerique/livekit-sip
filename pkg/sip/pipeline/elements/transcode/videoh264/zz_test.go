@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/h264rtppaybin"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/rtpcapscodecfilter"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/testutils"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/videoh264"
 )
@@ -15,6 +16,7 @@ import (
 func TestMain(m *testing.M) {
 	gst.Init(nil)
 	h264rtppaybin.Register()
+	rtpcapscodecfilter.Register()
 	videoh264.Register()
 	os.Exit(m.Run())
 }
@@ -24,15 +26,26 @@ func TestMain(m *testing.M) {
 // Latency/CPU measurements live in pkg/.../transcode/benchmarks/.
 func TestVideoH264_Smoke(t *testing.T) {
 	defer testutils.AssertNoLeaks(t)
+	encode(t, 1280, 720, 1280, 720)
+}
 
+// TestVideoH264_OddSourceSize feeds sources with odd dimensions, as a
+// screenshare sent at its native size can have.
+func TestVideoH264_OddSourceSize(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+	for _, size := range [][2]int{{1715, 1072}, {919, 540}, {591, 445}} {
+		encode(t, size[0], size[1], 1920, 1080)
+	}
+}
+
+func encode(t *testing.T, width, height, targetWidth, targetHeight int) {
+	t.Helper()
 	const (
-		width      = 1280
-		height     = 720
 		fps        = 30
-		numBuffers = 150
+		numBuffers = 60
 	)
 
-	pipeline, err := gst.NewPipeline("videoh264-smoke")
+	pipeline, err := gst.NewPipeline("videoh264-test")
 	if err != nil {
 		t.Fatal("pipeline:", err)
 	}
@@ -42,7 +55,7 @@ func TestVideoH264_Smoke(t *testing.T) {
 	if err != nil {
 		t.Fatal("BuildSource:", err)
 	}
-	eut, err := b.BuildElement(pipeline, width, height)
+	eut, err := b.BuildElement(pipeline, targetWidth, targetHeight)
 	if err != nil {
 		t.Fatal("BuildElement:", err)
 	}
@@ -70,6 +83,7 @@ func TestVideoH264_Smoke(t *testing.T) {
 	bus := pipeline.GetPipelineBus()
 	timeout := gst.ClockTime(time.Second)
 	deadline := time.Now().Add(30 * time.Second)
+	var failure string
 	for time.Now().Before(deadline) {
 		msg := bus.TimedPop(timeout)
 		if msg == nil {
@@ -79,17 +93,20 @@ func TestVideoH264_Smoke(t *testing.T) {
 		case gst.MessageEOS:
 			goto done
 		case gst.MessageError:
-			gerr := msg.ParseError()
-			t.Fatal("pipeline error:", gerr.Error())
+			failure = msg.ParseError().Error()
+			goto done
 		}
 	}
-	t.Fatal("timed out waiting for EOS")
+	failure = "timed out waiting for EOS"
 
 done:
 	if err := pipeline.SetState(gst.StateNull); err != nil {
 		t.Fatal("SetState NULL:", err)
 	}
+	if failure != "" {
+		t.Fatalf("%dx%d into %dx%d: %s", width, height, targetWidth, targetHeight, failure)
+	}
 	if got := bufferCount.Load(); got <= 0 {
-		t.Fatalf("no buffers received through video-h264; expected > 0, got %d", got)
+		t.Fatalf("%dx%d into %dx%d: no buffers received through video-h264", width, height, targetWidth, targetHeight)
 	}
 }

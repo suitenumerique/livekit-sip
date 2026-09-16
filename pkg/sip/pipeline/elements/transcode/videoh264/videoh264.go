@@ -152,7 +152,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 	// fills the range exactly and picks even dimensions.
 	// format=I420: x264enc takes 4:2:0 only.
 	e.ScaleFilter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
-		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],format=I420", e.videoWidth, e.videoHeight)),
+		"caps": scaleCaps(e.videoWidth, e.videoHeight),
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create scale capsfilter\nerr=%v", err))
@@ -640,11 +640,18 @@ func (e *VideoH264) applyScale(self *gst.Bin) {
 	if w < 160 || h < 90 {
 		w, h = 160, 90
 	}
-	if err := e.ScaleFilter.SetProperty("caps", gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[1,%d],height=[1,%d],format=I420", w, h))); err != nil {
+	if err := e.ScaleFilter.SetProperty("caps", scaleCaps(w, h)); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set scale filter caps\nerr=%v", err))
 		return
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated encoder scale\nlevel=%d\nwidth=%d\nheight=%d", e.scaleLevel, w, h))
+}
+
+// scaleCaps bounds the encoder input to maxWidth x maxHeight with even
+// dimensions only: x264enc refuses odd ones, which a screenshare sent at its
+// native size can have.
+func scaleCaps(maxWidth, maxHeight uint) *gst.Caps {
+	return gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=[2,%d,2],height=[2,%d,2],format=I420", max(2, maxWidth&^1), max(2, maxHeight&^1)))
 }
 
 func structIntField(st *gst.Structure, key string) int {
