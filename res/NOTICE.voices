@@ -1,6 +1,7 @@
-The voice prompts in lang/fr/ were synthesised with Kyutai TTS 1.6B
+The voice prompts under lang/ were synthesised with Kyutai TTS 1.6B
 (https://huggingface.co/kyutai/tts-1.6b-en_fr, weights CC BY 4.0, (c) Kyutai)
-using the voice embedding cml-tts/fr/5476_3103_000072-0001_enhanced.wav
-from https://huggingface.co/kyutai/tts-voices (CML-TTS dataset (https://openslr.org/146/), CC BY 4.0).
-These audio files are distributed under CC BY 4.0
-(https://creativecommons.org/licenses/by/4.0/).
+with voice embeddings from https://huggingface.co/kyutai/tts-voices.
+These audio files are distributed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+
+lang/en/: voice vctk/p239_023.wav (VCTK corpus, https://datashare.ed.ac.uk/handle/10283/3443, CC BY 4.0)
+lang/fr/: voice cml-tts/fr/5476_3103_000072-0001_enhanced.wav (CML-TTS dataset, https://openslr.org/146/, CC BY 4.0)
