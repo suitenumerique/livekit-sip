@@ -70,10 +70,8 @@ type MediaOrchestrator struct {
 
 	pipeline *pipeline.Pipeline
 
-	stats            atomic.Pointer[pipeline.CallStats]
-	totalRxBytes     int64
-	totalTxBytesTime time.Time
-	lastSr           time.Time
+	stats    atomic.Pointer[pipeline.CallStats]
+	activity rtpActivity
 
 	state MediaState
 	wg    sync.WaitGroup
@@ -150,10 +148,7 @@ func (o *MediaOrchestrator) isRtpStalled() bool {
 	if o.stats.Load().OnHold {
 		return false
 	}
-	if (o.totalTxBytesTime.IsZero() || time.Since(o.totalTxBytesTime) > RtpMediaTimeout) && (o.lastSr.IsZero() || time.Since(o.lastSr) > RtpMediaTimeout) {
-		return true
-	}
-	return false
+	return o.activity.stalled(time.Now(), RtpMediaTimeout)
 }
 
 func (o *MediaOrchestrator) rtpTimeout() {
@@ -183,13 +178,7 @@ func (o *MediaOrchestrator) UpdateStats() {
 		if stats == nil {
 			return
 		}
-		if stats.TotalRxBytes > o.totalRxBytes {
-			o.totalRxBytes = stats.TotalRxBytes
-			o.totalTxBytesTime = time.Now()
-		}
-		if stats.LastSR.After(o.lastSr) {
-			o.lastSr = stats.LastSR
-		}
+		o.activity.observe(stats, time.Now())
 		o.stats.Store(stats)
 	}
 }
