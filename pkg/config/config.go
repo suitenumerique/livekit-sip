@@ -97,9 +97,15 @@ type PublishCodecConfig struct {
 }
 
 type MeetConfig struct {
-	JoinURL   string        `yaml:"join_url"` // empty disables the pre-join call
-	AuthToken string        `yaml:"auth_token"`
-	Timeout   time.Duration `yaml:"timeout"`
+	JoinURL           string        `yaml:"join_url"`          // empty disables the Meet calls
+	RequestEntryURL   string        `yaml:"request_entry_url"` // defaults to join_url with its last segment replaced
+	CancelEntryURL    string        `yaml:"cancel_entry_url"`  // defaults to join_url with its last segment replaced
+	AuthToken         string        `yaml:"auth_token"`
+	Timeout           time.Duration `yaml:"timeout"`
+	LobbyEnabled      bool          `yaml:"lobby_enabled"`       // wait for the organiser when Meet answers lobby: required
+	LobbyPollInterval time.Duration `yaml:"lobby_poll_interval"` // delay between two request-entry calls
+	LobbyTimeout      time.Duration `yaml:"lobby_timeout"`       // wait before the no-answer screen
+	LobbyRetryWindow  time.Duration `yaml:"lobby_retry_window"`  // time to press 1 on the no-answer screen
 }
 
 type Config struct {
@@ -286,6 +292,15 @@ func (c *Config) Init() error {
 
 	if c.Meet.Timeout <= 0 {
 		c.Meet.Timeout = 5 * time.Second
+	}
+	if c.Meet.LobbyPollInterval <= 0 {
+		c.Meet.LobbyPollInterval = 2 * time.Second
+	}
+	if c.Meet.LobbyTimeout <= 0 {
+		c.Meet.LobbyTimeout = 5 * time.Minute
+	}
+	if c.Meet.LobbyRetryWindow <= 0 {
+		c.Meet.LobbyRetryWindow = 30 * time.Second
 	}
 
 	if err := c.InitLogger(); err != nil {
