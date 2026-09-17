@@ -18,6 +18,7 @@ import (
 	"golang.org/x/text/message"
 
 	"github.com/livekit/sip/pkg/i18n"
+	"github.com/livekit/sip/pkg/sip/lobby"
 	lkc "github.com/livekit/sip/pkg/sip/pipeline/elements/livekitcompositor"
 )
 
@@ -71,5 +72,52 @@ func (s promptScreens) timedOut(seconds int) lkc.Screen {
 		Eyebrow:  s.p.Sprintf("Time is up"),
 		Title:    s.p.Sprintf("No key pressed for %d seconds", seconds),
 		Body:     s.p.Sprintf("The call will end. Call again to retry."),
+	}
+}
+
+func (s promptScreens) lobby(v lobby.View) lkc.Screen {
+	hangUp := []lkc.ScreenHint{{Label: s.p.Sprintf("Hang up to cancel the request")}}
+	switch v {
+	case lobby.ViewNoAdmin:
+		return lkc.Screen{
+			Icon:     lkc.IconPerson,
+			IconTone: lkc.ToneMuted,
+			Eyebrow:  s.p.Sprintf("Restricted meeting"),
+			Title:    s.p.Sprintf("The organiser has not arrived yet"),
+			Body:     s.p.Sprintf("Your request will be shown to them as soon as they arrive."),
+			Footer:   hangUp,
+		}
+	case lobby.ViewAccepted:
+		return lkc.Screen{
+			Icon:     lkc.IconCheck,
+			IconTone: lkc.ToneSuccess,
+			Eyebrow:  s.p.Sprintf("Request accepted"),
+			Title:    s.p.Sprintf("Entering the meeting…"),
+		}
+	case lobby.ViewDenied:
+		return lkc.Screen{
+			Icon:        lkc.IconCross,
+			IconTone:    lkc.ToneError,
+			Eyebrow:     s.p.Sprintf("Request declined"),
+			EyebrowTone: lkc.ToneError,
+			Title:       s.p.Sprintf("You cannot join this call"),
+			Body:        s.p.Sprintf("Your request to join was declined. The call will end."),
+		}
+	case lobby.ViewNoAnswer:
+		return lkc.Screen{
+			Icon:     lkc.IconHourglass,
+			IconTone: lkc.ToneMuted,
+			Eyebrow:  s.p.Sprintf("Restricted meeting"),
+			Title:    s.p.Sprintf("Nobody answered"),
+			Body:     s.p.Sprintf("You can send the request again, or hang up."),
+			Footer:   []lkc.ScreenHint{{Key: "1", Label: s.p.Sprintf("Send the request again")}},
+		}
+	}
+	return lkc.Screen{
+		Icon:    lkc.IconHourglass,
+		Eyebrow: s.p.Sprintf("Restricted meeting"),
+		Title:   s.p.Sprintf("Request sent to the organiser"),
+		Body:    s.p.Sprintf("You will enter the meeting as soon as someone present accepts your request."),
+		Footer:  hangUp,
 	}
 }
