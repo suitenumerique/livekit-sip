@@ -883,7 +883,13 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	if h := req.GetHeader("X-PIN"); h != nil {
 		pin = strings.TrimSpace(h.Value())
 	}
-	c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
+	lobbyRequired, err := c.meetJoin(ctx, pin)
+	if err != nil {
+		tdisp()
+		c.cc.RespondAndDrop(sip.StatusServiceUnavailable, "Try again later")
+		c.close(ctx, callDropped, stats.ServerError("lobby-unavailable"))
+		return psrpc.NewErrorf(psrpc.Unavailable, "meet lobby unavailable")
+	}
 	disp := c.s.handler.DispatchCall(ctx, &CallInfo{
 		TrunkID: trunkID,
 		Call:    c.call,
@@ -1052,7 +1058,9 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 
 	ok := false
 	var answerData []byte
-	if pinPrompt {
+	// A pin sent in X-PIN skips the prompt but may still have to wait in the lobby.
+	answerFirst := pinPrompt || (disp.Result == DispatchAccept && lobbyRequired)
+	if answerFirst {
 		var err error
 		// Accept the call first on the SIP side, so that we can send audio prompts.
 		// This also means we have to pick encryption setting early, before room is selected.
@@ -1064,7 +1072,15 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		if ok, err = acceptCall(answerData); !ok {
 			return err // could be success if the caller hung up
 		}
-		disp, ok, err = c.pinPrompt(ctx, trunkID)
+		if pinPrompt {
+			disp, ok, err = c.pinPrompt(ctx, trunkID)
+		} else {
+			medias := c.medias
+			ok, err = c.lobbyWait(ctx, newPromptScreens(c.s.conf.Lang, c.s.conf.PinLength, c.s.conf.PinAttempts), pin, &disp)
+			if medias != nil {
+				medias.HideScreen()
+			}
+		}
 		if !ok {
 			return err // already sent a response. Could be success if user hung up
 		}
@@ -1097,13 +1113,13 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	ctx, cancel := context.WithTimeout(ctx, disp.MaxCallDuration)
 	defer cancel()
 	status := CallRinging
-	if pinPrompt {
+	if answerFirst {
 		status = CallActive
 	}
 	if err := c.joinRoom(ctx, disp.Room, status); err != nil {
 		return errors.Wrap(err, "failed joining room")
 	}
-	if !pinPrompt {
+	if !answerFirst {
 		c.log().Infow("Waiting for track subscription(s)")
 		// For dispatches without pin, we first wait for LK participant to become available,
 		// and also for at least one track subscription. In the meantime we keep ringing.
@@ -1332,7 +1348,11 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 
 			noPin := pin == ""
 			c.log().Infow("Checking Pin for SIP call", "pin", pin, "noPin", noPin, "attempt", attempt)
-			c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
+			lobbyRequired, err := c.meetJoin(ctx, pin)
+			if err != nil {
+				c.close(ctx, callDropped, stats.ServerError("lobby-unavailable"))
+				return disp, false, psrpc.NewErrorf(psrpc.Unavailable, "meet lobby unavailable")
+			}
 			disp = c.s.handler.DispatchCall(ctx, &CallInfo{
 				TrunkID: trunkID,
 				Call:    c.call,
@@ -1355,6 +1375,10 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				return disp, false, psrpc.NewErrorf(psrpc.Unavailable, "dispatch rule evaluation unavailable")
 			}
 			if disp.Result == DispatchAccept && disp.Room.RoomName != "" {
+				if lobbyRequired {
+					ok, err := c.lobbyWait(ctx, scr, pin, &disp)
+					return disp, ok, err
+				}
 				c.medias.ShowScreen(scr.connecting())
 				c.playAudio(ctx, c.s.res.roomJoinFd)
 				return disp, true, nil

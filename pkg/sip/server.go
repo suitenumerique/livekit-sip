@@ -41,6 +41,7 @@ import (
 	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
+	meetapi "github.com/livekit/sip/pkg/meet"
 	"github.com/livekit/sip/pkg/sip/pipeline"
 	"github.com/livekit/sip/pkg/stats"
 )
@@ -185,7 +186,7 @@ type Server struct {
 	handler Handler
 	conf    *config.Config
 	sconf   *ServiceConfig
-	meet    *meetClient // optional, pre-creates dispatch rules from pin codes
+	meet    *meetapi.Client // optional, resolves pin codes and lobby entries with Meet
 
 	cli *Client // optional, for outbound reinvite handling
 
@@ -233,7 +234,7 @@ func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats
 		mon:                mon,
 		getIOClient:        getIOClient,
 		getRoom:            DefaultGetRoomFunc,
-		meet:               newMeetClient(conf.Meet),
+		meet:               meetapi.NewClient(conf.Meet),
 		byLocalTag:         make(map[LocalTag]*inboundCall),
 		provisionalInvites: expirable.NewLRU[[2]string, LocalTag](maxCallCache, nil, callCacheTTL),
 	}

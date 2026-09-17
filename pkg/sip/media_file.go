@@ -21,6 +21,7 @@ import (
 	msdk "github.com/livekit/media-sdk"
 
 	"github.com/livekit/sip/pkg/config"
+	"github.com/livekit/sip/pkg/sip/lobby"
 	"github.com/livekit/sip/res"
 )
 
@@ -33,6 +34,12 @@ type mediaRes struct {
 	roomJoinFd int
 	wrongPinFd int
 	timeoutFd  int
+
+	waitingFd  int
+	noAdminFd  int
+	acceptedFd int
+	deniedFd   int
+	noAnswerFd int
 }
 
 func (s *Server) initMediaRes(conf *config.Config) {
@@ -51,6 +58,11 @@ func (s *Server) initMediaRes(conf *config.Config) {
 		{"room_join", res.RoomJoin, &s.res.roomJoinFd},
 		{"wrong_pin", res.WrongPin, &s.res.wrongPinFd},
 		{"timeout", res.Lang, &s.res.timeoutFd},
+		{"waiting", res.Lang, &s.res.waitingFd},
+		{"noadmin", res.Lang, &s.res.noAdminFd},
+		{"accepted", res.Lang, &s.res.acceptedFd},
+		{"denied", res.Lang, &s.res.deniedFd},
+		{"no_answer", res.Lang, &s.res.noAnswerFd},
 	}
 	for _, m := range medias {
 		data, err := m.fs.ReadFile(fmt.Sprintf("lang/%s/%s.flac", lang, m.name))
@@ -71,4 +83,19 @@ func (s *Server) initMediaRes(conf *config.Config) {
 			panic(fmt.Errorf("failed to memfd %s audio file: %w", m.name, err))
 		}
 	}
+}
+
+// lobbyFd returns the audio file of a lobby prompt.
+func (r *mediaRes) lobbyFd(p lobby.Prompt) int {
+	switch p {
+	case lobby.PromptNoAdmin:
+		return r.noAdminFd
+	case lobby.PromptAccepted:
+		return r.acceptedFd
+	case lobby.PromptDenied:
+		return r.deniedFd
+	case lobby.PromptNoAnswer:
+		return r.noAnswerFd
+	}
+	return r.waitingFd
 }
