@@ -108,6 +108,76 @@
             "id": "Participants will appear here as they arrive.",
             "message": "Participants will appear here as they arrive.",
             "translation": "Les participants apparaîtront ici dès leur arrivée."
+        },
+        {
+            "id": "Hang up to cancel the request",
+            "message": "Hang up to cancel the request",
+            "translation": "Raccrochez pour annuler la demande"
+        },
+        {
+            "id": "Restricted meeting",
+            "message": "Restricted meeting",
+            "translation": "Réunion à accès restreint"
+        },
+        {
+            "id": "The organiser has not arrived yet",
+            "message": "The organiser has not arrived yet",
+            "translation": "L'organisateur n'est pas encore arrivé"
+        },
+        {
+            "id": "Your request will be shown to them as soon as they arrive.",
+            "message": "Your request will be shown to them as soon as they arrive.",
+            "translation": "Votre demande lui sera présentée dès son arrivée."
+        },
+        {
+            "id": "Request accepted",
+            "message": "Request accepted",
+            "translation": "Demande acceptée"
+        },
+        {
+            "id": "Entering the meeting…",
+            "message": "Entering the meeting…",
+            "translation": "Entrée dans la réunion…"
+        },
+        {
+            "id": "Request declined",
+            "message": "Request declined",
+            "translation": "Demande refusée"
+        },
+        {
+            "id": "You cannot join this call",
+            "message": "You cannot join this call",
+            "translation": "Vous ne pouvez pas participer à cet appel"
+        },
+        {
+            "id": "Your request to join was declined. The call will end.",
+            "message": "Your request to join was declined. The call will end.",
+            "translation": "Votre demande de participation a été refusée. L'appel va se terminer."
+        },
+        {
+            "id": "Nobody answered",
+            "message": "Nobody answered",
+            "translation": "Personne n'a répondu"
+        },
+        {
+            "id": "You can send the request again, or hang up.",
+            "message": "You can send the request again, or hang up.",
+            "translation": "Vous pouvez renvoyer la demande, ou raccrocher."
+        },
+        {
+            "id": "Send the request again",
+            "message": "Send the request again",
+            "translation": "Renvoyer la demande"
+        },
+        {
+            "id": "Request sent to the organiser",
+            "message": "Request sent to the organiser",
+            "translation": "Demande envoyée à l'organisateur"
+        },
+        {
+            "id": "You will enter the meeting as soon as someone present accepts your request.",
+            "message": "You will enter the meeting as soon as someone present accepts your request.",
+            "translation": "Vous entrerez dans la réunion dès qu'une personne présente aura accepté votre demande."
         }
     ]
 }

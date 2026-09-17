@@ -112,6 +112,30 @@ func TestScreen_IconAndBody(t *testing.T) {
 	}
 }
 
+func TestScreen_EveryIconAndToneDraws(t *testing.T) {
+	e := testCompositor()
+	icons := []ScreenIcon{IconHourglass, IconPerson, IconCheck, IconCross, IconClock, IconPeople}
+	tones := []ScreenTone{ToneAccent, ToneError, ToneSuccess, ToneMuted}
+	for _, icon := range icons {
+		for _, tone := range tones {
+			s := &Screen{Icon: icon, IconTone: tone, Eyebrow: "Réunion à accès restreint", EyebrowTone: tone, Title: "Personne n'a répondu",
+				Footer: []ScreenHint{{Key: "1", Label: "Renvoyer la demande"}}}
+			surf := e.renderScreen(s, 1280, 720)
+			inked := 0
+			for y := 84; y < 360; y += 2 {
+				for x := 540; x < 740; x += 2 {
+					if r, g, b := pixel(surf, x, y); !isBackground(r, g, b) {
+						inked++
+					}
+				}
+			}
+			if inked < 50 {
+				t.Errorf("icon %q tone %d: only %d inked samples where the icon is expected", icon, tone, inked)
+			}
+		}
+	}
+}
+
 func TestScreen_DrawUsesCachedRaster(t *testing.T) {
 	e := testCompositor()
 	e.LivekitCompositorCamera = &LivekitCompositorCamera{}
