@@ -316,12 +316,8 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 
 	var err error
 	e.RtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
-		"rtp-profile": int(3), // GST_RTP_PROFILE_AVPF
-		// Receive branches are removed by onRtpBinSenderTimeout once the
-		// device stopped sending, never by rtpbin on its own: an automatic
-		// removal on RTCP BYE or timeout can hit an SSRC that is still
-		// sending and corrupt rtpssrcdemux.
-		"autoremove":               false,
+		"rtp-profile":              int(3), // GST_RTP_PROFILE_AVPF
+		"autoremove":               true,
 		"max-ts-offset":            int(200000000),
 		"timeout-inactive-sources": true,
 		"drop-on-latency":          false,
