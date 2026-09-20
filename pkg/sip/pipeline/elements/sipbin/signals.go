@@ -57,8 +57,10 @@ func (e *SipBin) emitAvailableMedia(self *gst.Bin) {
 }
 
 func (e *SipBin) onRtpBinRequestPtMap(self *gst.Bin, session int, pt uint8) *gst.Caps {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	// Called from rtpbin streaming threads, possibly while another thread
+	// holds e.mu and waits for this very thread: only ptMu here.
+	e.ptMu.RLock()
+	defer e.ptMu.RUnlock()
 
 	kind := livekit.TrackSource(session)
 
@@ -89,11 +91,44 @@ func (e *SipBin) onRtpBinSenderTimeout(self *gst.Bin, session, ssrc uint) {
 		return
 	}
 
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sender timeout\nsource=%d\nssrc=%d", kind, ssrc))
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sender timeout\nsource=%d\nssrc=%d", kind, ssrc))
+
+	src := e.rtpSource(kind, uint32(ssrc))
+	if src == nil || src.Internal {
+		// Our own sending SSRC or an unknown one: there is no receive branch to clear.
+		return
+	}
+	if src.IsSender {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Sender timed out but is receiving again, keeping its pads\nsource=%d\nssrc=%d", kind, ssrc))
+		return
+	}
 
 	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit clear-ssrc signal on rtpbin\nsession=%d\nssrc=%d\nerr=%v", session, ssrc, err))
 	}
+}
+
+// rtpSource returns the rtpbin's view of one SSRC of a session, or nil.
+//
+// Clearing a live SSRC from rtpssrcdemux races with the packets still
+// arriving for it: the demux drops its record, the next packet recreates pads
+// whose names are still taken, and the receive branch ends up pushing on
+// orphan pads until the pipeline errors out. Callers check IsSender first.
+func (e *SipBin) rtpSource(kind livekit.TrackSource, ssrc uint32) *RTPSourceStats {
+	st, err := e.getStats(kind)
+	if err != nil || st == nil {
+		return nil
+	}
+	for i := range st.Sources {
+		if st.Sources[i].SSRC == ssrc {
+			return &st.Sources[i]
+		}
+	}
+	return nil
+}
+
+func (e *SipBin) onRtpBinSourceEvent(self *gst.Bin, event string, session, ssrc uint) {
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("RTP source event\nevent=%s\nsource=%d\nssrc=%d", event, session, ssrc))
 }
 
 func (e *SipBin) onRtpBinSsrcCollision(self *gst.Bin, session, ssrc uint) {
@@ -107,6 +142,11 @@ func (e *SipBin) onRtpBinSsrcCollision(self *gst.Bin, session, ssrc uint) {
 	}
 
 	self.Log(CAT, gst.LevelWarning, fmt.Sprintf("SSRC collision detected\nsource=%d\nssrc=%d", kind, ssrc))
+
+	if src := e.rtpSource(kind, uint32(ssrc)); src != nil && !src.Internal && src.IsSender {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Colliding SSRC is still receiving, keeping its pads\nsource=%d\nssrc=%d", kind, ssrc))
+		return
+	}
 
 	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit clear-ssrc signal on rtpbin\nsession=%d\nssrc=%d\nerr=%v", session, ssrc, err))
@@ -206,10 +246,10 @@ func (e *SipBin) onRtpBinPadAddedRecvRtpSrc(self *gst.Bin, pad *gst.Pad) {
 		return
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if _, exist := e.PtMap[kind][uint8(pt)]; !exist {
+	e.ptMu.RLock()
+	_, exist := e.PtMap[kind][uint8(pt)]
+	e.ptMu.RUnlock()
+	if !exist {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received new pad for payload type which was not in the original offer for track source\npad=%s\npt=%d\nsource=%d", pad.GetName(), pt, kind))
 		return
 	}
@@ -232,7 +272,7 @@ func (e *SipBin) onRtpBinPadAddedRecvRtpSrc(self *gst.Bin, pad *gst.Pad) {
 
 	switch kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
-		if ti := e.Tracks[kind]; ti != nil {
+		if ti, _ := e.trackAndRtpBin(kind); ti != nil {
 			keyframeSSRC := uint32(ssrc)
 			gpad.Pad.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 				if ev := info.GetEvent(); ev != nil && ev.HasName("GstForceKeyUnit") {
@@ -308,7 +348,7 @@ func (e *SipBin) onRtpBinPadRemovedSendRtpSrc(self *gst.Bin, pad *gst.Pad) {
 		return
 	}
 
-	ti := e.Tracks[kind]
+	ti, _ := e.trackAndRtpBin(kind)
 	if ti == nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Pad removed from rtpbin for track source, but no track info found\npad=%s\nsource=%d", pad.GetName(), kind))
 		return

@@ -831,6 +831,7 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 		}
 	}
 	if track.initialized {
+		e.padMu.Lock()
 		sendRtpSink := e.RtpBin.GetStaticPad(fmt.Sprintf("recv_rtp_sink_%d", track.Kind))
 		if sendRtpSink != nil {
 			e.RtpBin.ReleaseRequestPad(sendRtpSink)
@@ -847,6 +848,7 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 		if recvRtcpSink != nil {
 			e.RtpBin.ReleaseRequestPad(recvRtcpSink)
 		}
+		e.padMu.Unlock()
 	}
 	if track.rtpConn != nil {
 		if err := track.rtpConn.Close(); err != nil {
@@ -859,8 +861,12 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 		}
 	}
 
+	e.trackMu.Lock()
 	e.Tracks[track.Kind] = nil
+	e.trackMu.Unlock()
+	e.ptMu.Lock()
 	e.PtMap[track.Kind] = make(map[uint8]*gst.Caps)
+	e.ptMu.Unlock()
 	track.initialized = false
 
 	if len(errs) > 0 {

@@ -32,6 +32,14 @@ type SipBin struct {
 	config
 	mu sync.Mutex
 
+	// These three are never held across a GStreamer call, so GStreamer threads
+	// can take them from their callbacks while e.mu is busy: trackMu guards
+	// Tracks and RtpBin for readers off e.mu, ptMu guards PtMap, and padMu
+	// serializes the send pad graph changes.
+	trackMu sync.RWMutex
+	ptMu    sync.RWMutex
+	padMu   sync.Mutex
+
 	RtpBin *gst.Element
 
 	encodingCase [NbTracks]map[uint8]EncodingCase // indexed by livekit.TrackSource
@@ -179,9 +187,11 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 	e.audioJitter = 80
 	e.videoJitter = 200
 
+	e.ptMu.Lock()
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
 	}
+	e.ptMu.Unlock()
 
 	for i := range e.encodingCase {
 		e.encodingCase[i] = make(map[uint8]EncodingCase)
@@ -306,8 +316,12 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 
 	var err error
 	e.RtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
-		"rtp-profile":              int(3), // GST_RTP_PROFILE_AVPF
-		"autoremove":               true,
+		"rtp-profile": int(3), // GST_RTP_PROFILE_AVPF
+		// Receive branches are removed by onRtpBinSenderTimeout once the
+		// device stopped sending, never by rtpbin on its own: an automatic
+		// removal on RTCP BYE or timeout can hit an SSRC that is still
+		// sending and corrupt rtpssrcdemux.
+		"autoremove":               false,
 		"max-ts-offset":            int(200000000),
 		"timeout-inactive-sources": true,
 		"drop-on-latency":          false,
@@ -378,6 +392,20 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("failed to connect on-ssrc-collision signal\nerr=%v", err))
 		self.Error("failed to connect on-ssrc-collision signal", err)
 		return
+	}
+	// Trace the rtpbin decisions that remove or recreate a receive branch, so a
+	// corrupted receive path can be tied to its trigger from the logs.
+	for _, event := range []string{"on-new-ssrc", "on-bye-ssrc", "on-bye-timeout", "on-timeout"} {
+		if _, err := e.RtpBin.Connect(event, func(_ *gst.Element, session, ssrc uint) {
+			e := eweak.Value()
+			self := gst.ToGstBin(wself.Get())
+			if e == nil || self == nil || self.Instance() == nil {
+				return
+			}
+			e.onRtpBinSourceEvent(self, event, session, ssrc)
+		}); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("failed to connect %s signal\nerr=%v", event, err))
+		}
 	}
 	if _, err := e.RtpBin.Connect("new-jitterbuffer", func(_ *gst.Element, jitterbuffer *gst.Element, session, ssrc uint) {
 		e := eweak.Value()
@@ -454,16 +482,29 @@ func (e *SipBin) Finalize(instance *glib.Object) {
 		}
 	}
 	e.Bfcp = nil
+	e.trackMu.Lock()
 	e.Tracks = [NbTracks]*SipTrack{}
+	e.RtpBin = nil
+	e.trackMu.Unlock()
+	e.ptMu.Lock()
 	e.PtMap = [NbTracks]map[uint8]*gst.Caps{}
 	for i := range e.PtMap {
 		e.PtMap[i] = make(map[uint8]*gst.Caps)
 	}
+	e.ptMu.Unlock()
 	for i := range e.encodingCase {
 		e.encodingCase[i] = make(map[uint8]EncodingCase)
 	}
-	e.RtpBin = nil
 	e.Medias = nil
+}
+
+// trackAndRtpBin reads the track of a kind and the rtpbin without e.mu, for
+// the pad request and release paths and the rtpbin callbacks: e.mu may be
+// held by a negotiation that is itself waiting for a GStreamer thread.
+func (e *SipBin) trackAndRtpBin(kind livekit.TrackSource) (*SipTrack, *gst.Element) {
+	e.trackMu.RLock()
+	defer e.trackMu.RUnlock()
+	return e.Tracks[kind], e.RtpBin
 }
 
 func (e *SipBin) RequestNewPad(instance *gst.Element, templ *gst.PadTemplate, name string, caps *gst.Caps) *gst.Pad {
@@ -498,22 +539,24 @@ func (e *SipBin) requestNewPadSendRtpSink(self *gst.Bin, templ *gst.PadTemplate,
 		return nil
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	ti := e.Tracks[kind]
-	if ti == nil || ti.RtpFilter == nil {
+	ti, rtpBin := e.trackAndRtpBin(kind)
+	if ti == nil || ti.RtpFilter == nil || rtpBin == nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: no track info found for track source\npad=%s\ntemplate=%s\nsource=%d", name, templ.GetName(), kind))
 		return nil
 	}
 
+	// The rtpbin calls below wait for its streaming threads, which may be
+	// inside one of our callbacks: no e.mu from here on.
+	e.padMu.Lock()
+	defer e.padMu.Unlock()
+
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requesting new pad from template for track source\npad=%s\ntemplate=%s\nsource=%d", name, templ.GetName(), kind))
-	recvRtpSrc := e.RtpBin.GetRequestPad(fmt.Sprintf("send_rtp_sink_%d", ti.Kind))
-	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requested new pad from template for track source: got pad\npad=%s\ntemplate=%s\nsource=%d\ngot_pad=%s", name, templ.GetName(), kind, recvRtpSrc.GetName()))
+	recvRtpSrc := rtpBin.GetRequestPad(fmt.Sprintf("send_rtp_sink_%d", ti.Kind))
 	if recvRtpSrc == nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to request new pad from template: failed to get request pad for RTP source\npad=%s\ntemplate=%s", name, templ.GetName()))
 		return nil
 	}
+	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requested new pad from template for track source: got pad\npad=%s\ntemplate=%s\nsource=%d\ngot_pad=%s", name, templ.GetName(), kind, recvRtpSrc.GetName()))
 
 	if ret := ti.RtpFilter.GetStaticPad("src").Link(recvRtpSrc); ret != gst.PadLinkOK {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link RTP filter to RTP source\nret=%v", ret))
@@ -585,19 +628,22 @@ func (e *SipBin) releasePadSendRtpSink(self *gst.Bin, pad *gst.Pad) {
 		return
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	ti := e.Tracks[kind]
+	ti, rtpBin := e.trackAndRtpBin(kind)
 	if ti == nil || ti.RtpFilter == nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to release pad: no track info found for track source\npad=%s\nsource=%d", name, kind))
 		return
 	}
 
+	// Releasing the rtpbin pad waits for the thread pushing into it, which
+	// may be inside a callback of ours waiting for a lock: e.mu must not be
+	// held here, or the main loop deadlocks with that thread.
+	e.padMu.Lock()
+	defer e.padMu.Unlock()
+
 	sink := ti.RtpFilter.GetStaticPad("src").GetPeer()
-	if sink != nil && e.RtpBin != nil {
+	if sink != nil && rtpBin != nil {
 		ti.RtpFilter.GetStaticPad("src").Unlink(sink)
-		e.RtpBin.ReleaseRequestPad(sink)
+		rtpBin.ReleaseRequestPad(sink)
 	}
 
 	if !self.RemovePad(pad) {

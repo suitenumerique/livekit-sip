@@ -97,7 +97,12 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 				return true
 			}
 			pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received dtmf-event message\nnumber=%d", nb))
-			p.dtmfCh <- nb
+			// This runs on the GLib main loop: never block it on the reader.
+			select {
+			case p.dtmfCh <- nb:
+			default:
+				pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("DTMF queue full, dropping digit\nnumber=%d", nb))
+			}
 			return true
 		default:
 			pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received element message\nname=%s\nstructure=%s", name, structure.String()))

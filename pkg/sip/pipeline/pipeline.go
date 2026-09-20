@@ -225,7 +225,18 @@ func (p *Pipeline) Close() error {
 	pipeline := p.pipeline
 	pipeline.Log(CAT, gst.LevelDebug, "Closing pipeline")
 
-	p.getStats()
+	// The final stats go through the rtpbin; a stuck rtpbin must not keep the
+	// call from closing.
+	statsDone := make(chan struct{})
+	go func() {
+		defer close(statsDone)
+		p.getStats()
+	}()
+	select {
+	case <-statsDone:
+	case <-time.After(2 * time.Second):
+		pipeline.Log(CAT, gst.LevelWarning, "Timeout collecting the final call stats, closing without them")
+	}
 
 	p.cancel()
 

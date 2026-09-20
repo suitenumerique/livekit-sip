@@ -174,6 +174,7 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 	}
 
 	// Map each offered payload type to its caps for the receive path.
+	e.ptMu.Lock()
 	for _, caps := range offerCaps {
 		for i := range caps.GetSize() {
 			pt, err := caps.GetStructureAt(i).GetInt("payload")
@@ -183,6 +184,7 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 			e.PtMap[kind][uint8(pt)] = caps.Copy()
 		}
 	}
+	e.ptMu.Unlock()
 
 	for i := range offerCaps {
 		offerCaps[i] = mediaCapsOpusFmtp(self, e.normalizeEncodingName(self, kind, offerCaps[i]))
@@ -248,7 +250,9 @@ func (e *SipBin) makeOfferMedia(self *gst.Bin, kind livekit.TrackSource, idx int
 	if err != nil {
 		return nil, fmt.Errorf("failed to create track for media %d: %w", idx, err)
 	}
+	e.trackMu.Lock()
 	e.Tracks[kind] = track
+	e.trackMu.Unlock()
 
 	port := uint(track.rtpConn.LocalAddr().(*net.UDPAddr).Port)
 	if ret := media.SetPortInfo(port, 1); ret != gstsdp.SDPResultOk {
@@ -471,10 +475,12 @@ func (e *SipBin) selectCapsForMedia(self *gst.Bin, media *gstsdp.Media, kind liv
 			}
 		}
 
+		e.ptMu.Lock()
 		if existing, exist := e.PtMap[kind][uint8(pt)]; exist && existing != nil && !existing.IsEqual(caps) {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received duplicate caps for payload type\npt=%d\nexisting=%s\nnew=%s", pt, existing.String(), caps.String()))
 		}
 		e.PtMap[kind][uint8(pt)] = caps
+		e.ptMu.Unlock()
 
 		mediaCaps = append(mediaCaps, caps)
 	}

@@ -97,7 +97,9 @@ func (e *SipBin) handleOfferSdp(self *gst.Bin, offerData []byte) ([]byte, error)
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to create track for media\nmedia=%d\nerr=%v", i, err))
 				continue
 			}
+			e.trackMu.Lock()
 			e.Tracks[kind] = track
+			e.trackMu.Unlock()
 			track.parseDirection(media)
 			if ret := media.SetProto(track.Proto); ret != gstsdp.SDPResultOk {
 				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set proto on media\nmedia=%d\nerr=%v", i, ret))
