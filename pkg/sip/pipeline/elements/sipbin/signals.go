@@ -82,38 +82,10 @@ func (e *SipBin) onRtpBinRequestPtMap(self *gst.Bin, session int, pt uint8) *gst
 }
 
 func (e *SipBin) onRtpBinSenderTimeout(self *gst.Bin, session, ssrc uint) {
-	kind := livekit.TrackSource(session)
-	switch kind {
-	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE,
-		livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
-	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received sender timeout for unsupported track source\nsource=%d", kind))
-		return
-	}
-
-	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sender timeout\nsource=%d\nssrc=%d", kind, ssrc))
-
-	src := e.rtpSource(kind, uint32(ssrc))
-	if src == nil || src.Internal {
-		// Our own sending SSRC or an unknown one: there is no receive branch to clear.
-		return
-	}
-	if src.IsSender {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Sender timed out but is receiving again, keeping its pads\nsource=%d\nssrc=%d", kind, ssrc))
-		return
-	}
-
-	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit clear-ssrc signal on rtpbin\nsession=%d\nssrc=%d\nerr=%v", session, ssrc, err))
-	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sender timeout\nsource=%d\nssrc=%d", session, ssrc))
 }
 
 // rtpSource returns the rtpbin's view of one SSRC of a session, or nil.
-//
-// Clearing a live SSRC from rtpssrcdemux races with the packets still
-// arriving for it: the demux drops its record, the next packet recreates pads
-// whose names are still taken, and the receive branch ends up pushing on
-// orphan pads until the pipeline errors out. Callers check IsSender first.
 func (e *SipBin) rtpSource(kind livekit.TrackSource, ssrc uint32) *RTPSourceStats {
 	st, err := e.getStats(kind)
 	if err != nil || st == nil {
