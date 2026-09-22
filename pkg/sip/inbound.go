@@ -1674,7 +1674,11 @@ func (c *inboundCall) AcceptAck(req *sip.Request, tx sip.ServerTransaction) {
 	if c.medias != nil {
 		c.log().Debugw("Forwarding ACK SDP to media orchestrator")
 		if err := c.medias.AckSDP(req, tx); err != nil {
-			c.log().Errorw("failed to forward ACK SDP", err)
+			if errors.Is(err, ErrMediaClosed) {
+				c.log().Infow("ACK received after media close, ignored")
+			} else {
+				c.log().Errorw("failed to forward ACK SDP", err)
+			}
 		}
 	}
 	c.cc.AcceptAck(req, tx)

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +11,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var ErrPipelineClosed = errors.New("pipeline closed")
+
+// sipBin returns the SIP bin of a pipeline that has not started closing.
+func (p *Pipeline) sipBin() (*gst.Element, error) {
+	if p == nil || p.Closed() || p.SipIo == nil || p.SipIo.SipBin == nil {
+		return nil, ErrPipelineClosed
+	}
+	return p.SipIo.SipBin, nil
+}
+
 func (p *Pipeline) EmitOfferSDP(offer string) (string, error) {
-	res, err := p.SipBin.Emit("offer-sdp", offer)
+	sipBin, err := p.sipBin()
+	if err != nil {
+		return "", err
+	}
+	res, err := sipBin.Emit("offer-sdp", offer)
 	if err != nil {
 		return "", fmt.Errorf("failed to emit offer-sdp: %w", err)
 	}
@@ -23,14 +38,22 @@ func (p *Pipeline) EmitOfferSDP(offer string) (string, error) {
 }
 
 func (p *Pipeline) EmitAnswerSDP(answer string) error {
-	if _, err := p.SipBin.Emit("answer-sdp", answer); err != nil {
+	sipBin, err := p.sipBin()
+	if err != nil {
+		return err
+	}
+	if _, err := sipBin.Emit("answer-sdp", answer); err != nil {
 		return fmt.Errorf("failed to emit answer-sdp: %w", err)
 	}
 	return nil
 }
 
 func (p *Pipeline) EmitAckSDP(sdp string) error {
-	if _, err := p.SipBin.Emit("ack-sdp", sdp); err != nil {
+	sipBin, err := p.sipBin()
+	if err != nil {
+		return err
+	}
+	if _, err := sipBin.Emit("ack-sdp", sdp); err != nil {
 		return fmt.Errorf("failed to emit ack-sdp: %w", err)
 	}
 	return nil
@@ -39,14 +62,22 @@ func (p *Pipeline) EmitAckSDP(sdp string) error {
 // EmitOfferAborted releases the negotiation state held by an outgoing offer
 // whose re-INVITE failed.
 func (p *Pipeline) EmitOfferAborted() error {
-	if _, err := p.SipBin.Emit("abort-offer"); err != nil {
+	sipBin, err := p.sipBin()
+	if err != nil {
+		return err
+	}
+	if _, err := sipBin.Emit("abort-offer"); err != nil {
 		return fmt.Errorf("failed to emit abort-offer: %w", err)
 	}
 	return nil
 }
 
 func (p *Pipeline) EmitCreateOfferSDP() (string, error) {
-	res, err := p.SipBin.Emit("create-offer-sdp")
+	sipBin, err := p.sipBin()
+	if err != nil {
+		return "", err
+	}
+	res, err := sipBin.Emit("create-offer-sdp")
 	if err != nil {
 		return "", fmt.Errorf("failed to emit create-offer-sdp: %w", err)
 	}

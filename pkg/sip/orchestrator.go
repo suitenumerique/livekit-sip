@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	ErrWrongState = errors.New("media orchestrator in wrong state")
+	ErrWrongState  = errors.New("media orchestrator in wrong state")
+	ErrMediaClosed = errors.New("media orchestrator closed")
 )
 
 const (
@@ -193,6 +194,9 @@ func (o *MediaOrchestrator) Stats() *pipeline.CallStats {
 }
 
 func (o *MediaOrchestrator) okStates(allowed ...MediaState) error {
+	if o.closed.Load() {
+		return ErrMediaClosed
+	}
 	if slices.Contains(allowed, o.state) {
 		return nil
 	}
@@ -208,6 +212,7 @@ func (o *MediaOrchestrator) close() {
 }
 
 func (o *MediaOrchestrator) Close() error {
+	o.closed.Store(true)
 	o.cancel()
 
 	done := make(chan struct{})
@@ -231,6 +236,9 @@ func (o *MediaOrchestrator) NewOffer() ([]byte, error) {
 	// if err := o.okStates(MediaStateOK, MediaStateReady); err != nil {
 	// 	return nil, err
 	// }
+	if o.closed.Load() {
+		return nil, ErrMediaClosed
+	}
 	offer, err := o.pipeline.EmitCreateOfferSDP()
 	if err != nil {
 		return nil, fmt.Errorf("failed to emit create-offer-sdp: %w", err)
@@ -292,6 +300,10 @@ func (o *MediaOrchestrator) ackSDP(req *sip.Request, _ sip.ServerTransaction) er
 	}
 
 	if err := o.pipeline.EmitAckSDP(string(sdp)); err != nil {
+		if errors.Is(err, pipeline.ErrPipelineClosed) {
+			o.log.Infow("ACK SDP ignored, pipeline already closed")
+			return ErrMediaClosed
+		}
 		o.log.Errorw("failed to emit ack-sdp", err)
 		return err
 	}
@@ -340,6 +352,9 @@ func (o *MediaOrchestrator) loopEvents() {
 // abortOffer releases the pipeline negotiation state held by a failed
 // outgoing offer.
 func (o *MediaOrchestrator) abortOffer() {
+	if o.closed.Load() {
+		return
+	}
 	if err := o.pipeline.EmitOfferAborted(); err != nil {
 		o.log.Errorw("failed to abort pending offer", err)
 	}
