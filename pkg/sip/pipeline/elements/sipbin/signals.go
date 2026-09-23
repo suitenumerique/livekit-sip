@@ -85,44 +85,12 @@ func (e *SipBin) onRtpBinSenderTimeout(self *gst.Bin, session, ssrc uint) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sender timeout\nsource=%d\nssrc=%d", session, ssrc))
 }
 
-// rtpSource returns the rtpbin's view of one SSRC of a session, or nil.
-func (e *SipBin) rtpSource(kind livekit.TrackSource, ssrc uint32) *RTPSourceStats {
-	st, err := e.getStats(kind)
-	if err != nil || st == nil {
-		return nil
-	}
-	for i := range st.Sources {
-		if st.Sources[i].SSRC == ssrc {
-			return &st.Sources[i]
-		}
-	}
-	return nil
-}
-
 func (e *SipBin) onRtpBinSourceEvent(self *gst.Bin, event string, session, ssrc uint) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("RTP source event\nevent=%s\nsource=%d\nssrc=%d", event, session, ssrc))
 }
 
 func (e *SipBin) onRtpBinSsrcCollision(self *gst.Bin, session, ssrc uint) {
-	kind := livekit.TrackSource(session)
-	switch kind {
-	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE,
-		livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
-	default:
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received SSRC collision for unsupported track source\nsource=%d", kind))
-		return
-	}
-
-	self.Log(CAT, gst.LevelWarning, fmt.Sprintf("SSRC collision detected\nsource=%d\nssrc=%d", kind, ssrc))
-
-	if src := e.rtpSource(kind, uint32(ssrc)); src != nil && !src.Internal && src.IsSender {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Colliding SSRC is still receiving, keeping its pads\nsource=%d\nssrc=%d", kind, ssrc))
-		return
-	}
-
-	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to emit clear-ssrc signal on rtpbin\nsession=%d\nssrc=%d\nerr=%v", session, ssrc, err))
-	}
+	self.Log(CAT, gst.LevelWarning, fmt.Sprintf("SSRC collision detected\nsource=%d\nssrc=%d", session, ssrc))
 }
 
 func (e *SipBin) onRtpBinNewJitterbuffer(self *gst.Bin, jitterbuffer *gst.Element, session, ssrc uint) {
