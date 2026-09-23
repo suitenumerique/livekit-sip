@@ -18,7 +18,6 @@ type PcmaAudio struct {
 	ALawDec       *gst.Element
 	AudioConvert  *gst.Element
 	AudioResample *gst.Element
-	AudioRate     *gst.Element
 }
 
 func (e *PcmaAudio) New() glib.GoObjectSubclass {
@@ -81,19 +80,9 @@ func (e *PcmaAudio) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.AudioRate, err = gst.NewElementWithProperties("audiorate", map[string]interface{}{
-		"tolerance": uint64(0),
-	})
-	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element\nerr=%v", err))
-		self.Error("Failed to create audiorate element", err)
-		return
-	}
-
 	if err := self.AddMany(
 		e.RtpPcmaDepay,
 		e.ALawDec,
-		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
 	); err != nil {
@@ -105,7 +94,6 @@ func (e *PcmaAudio) InstanceInit(instance *glib.Object) {
 	if err := gst.ElementLinkMany(
 		e.RtpPcmaDepay,
 		e.ALawDec,
-		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
 	); err != nil {
@@ -131,5 +119,4 @@ func (e *PcmaAudio) Finalize(instance *glib.Object) {
 	e.ALawDec = nil
 	e.AudioConvert = nil
 	e.AudioResample = nil
-	e.AudioRate = nil
 }

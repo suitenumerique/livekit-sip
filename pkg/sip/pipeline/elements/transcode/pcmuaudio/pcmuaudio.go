@@ -18,7 +18,6 @@ type PcmuAudio struct {
 	MuLawDec      *gst.Element
 	AudioConvert  *gst.Element
 	AudioResample *gst.Element
-	AudioRate     *gst.Element
 }
 
 func (e *PcmuAudio) New() glib.GoObjectSubclass {
@@ -81,19 +80,9 @@ func (e *PcmuAudio) InstanceInit(instance *glib.Object) {
 		return
 	}
 
-	e.AudioRate, err = gst.NewElementWithProperties("audiorate", map[string]interface{}{
-		"tolerance": uint64(0),
-	})
-	if err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create audiorate element\nerr=%v", err))
-		self.Error("Failed to create audiorate element", err)
-		return
-	}
-
 	if err := self.AddMany(
 		e.RtpPcmuDepay,
 		e.MuLawDec,
-		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
 	); err != nil {
@@ -105,7 +94,6 @@ func (e *PcmuAudio) InstanceInit(instance *glib.Object) {
 	if err := gst.ElementLinkMany(
 		e.RtpPcmuDepay,
 		e.MuLawDec,
-		e.AudioRate,
 		e.AudioConvert,
 		e.AudioResample,
 	); err != nil {
@@ -131,5 +119,4 @@ func (e *PcmuAudio) Finalize(instance *glib.Object) {
 	e.MuLawDec = nil
 	e.AudioConvert = nil
 	e.AudioResample = nil
-	e.AudioRate = nil
 }
