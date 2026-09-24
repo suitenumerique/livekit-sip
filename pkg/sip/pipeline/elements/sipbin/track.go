@@ -520,7 +520,12 @@ func (t *SipTrack) watchTmmbr(e *SipBin, bin *gst.Bin) {
 	}
 	wself := glib.WeakRefInit(bin)
 	eweak := weak.Make(e)
+	tweak := weak.Make(t)
 	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		t := tweak.Value()
+		if t == nil {
+			return gst.PadProbeOK
+		}
 		buf := info.GetBuffer()
 		if buf == nil {
 			return gst.PadProbeOK
