@@ -30,12 +30,13 @@ const (
 // screenshareState carries the counters that deferred timers observe. It holds
 // no GStreamer wrapper so a pending timer never keeps the pipeline alive.
 type screenshareState struct {
-	frames     atomic.Int64  // buffers that left the screenshare chain
+	frames     atomic.Int64  // presenter buffers that left the fallbackswitch
 	generation atomic.Uint64 // bumped on every sink pad request/release
 }
 
 type LivekitCompositorScreenshare struct {
 	FallbackSwitch *gst.Element
+	Freeze         *gst.Element
 	Filter         *gst.Element
 	priority       atomic.Int64
 	gpad           *gst.GhostPad
@@ -69,6 +70,17 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to connect to notify::active-pad signal of fallbackswitch\nerr=%v", err))
 	}
 
+	// Live frame repeater: outputs the latest presenter frame at the output
+	// framerate, whatever the presenter frame rate.
+	e.LivekitCompositorScreenshare.Freeze, err = gst.NewElementWithProperties("imagefreeze", map[string]interface{}{
+		"is-live":       true,
+		"allow-replace": true,
+	})
+	if err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("imagefreeze unavailable, screenshare output follows the presenter frame rate\nerr=%v", err))
+		e.LivekitCompositorScreenshare.Freeze = nil
+	}
+
 	e.LivekitCompositorScreenshare.Filter, err = gst.NewElementWithProperties("capsfilter", map[string]interface{}{
 		"caps": gst.NewCapsFromString(fmt.Sprintf("video/x-raw, width=(int)[1,%d], height=(int)[1,%d], framerate=%d/1", e.screenshareWidth, e.screenshareHeight, e.screenshareFramerate)),
 	})
@@ -76,12 +88,13 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		return err
 	}
 
-	if err := self.AddMany(e.LivekitCompositorScreenshare.FallbackSwitch, e.LivekitCompositorScreenshare.Filter); err != nil {
+	chain := e.LivekitCompositorScreenshare.elements()
+	if err := self.AddMany(chain...); err != nil {
 		return fmt.Errorf("failed to add elements to bin: %w", err)
 	}
 
-	if err := e.LivekitCompositorScreenshare.FallbackSwitch.Link(e.LivekitCompositorScreenshare.Filter); err != nil {
-		return fmt.Errorf("failed to link fallbackswitch and capsfilter: %w", err)
+	if err := gst.ElementLinkMany(chain...); err != nil {
+		return fmt.Errorf("failed to link screenshare chain: %w", err)
 	}
 
 	class := gst.ToElementClass(self.Class())
@@ -91,7 +104,7 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 	}
 	e.LivekitCompositorScreenshare.gpad = gpad
 	st := e.LivekitCompositorScreenshare.state
-	gpad.Pad.AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeBufferList, func(_ *gst.Pad, _ *gst.PadProbeInfo) gst.PadProbeReturn {
+	e.LivekitCompositorScreenshare.FallbackSwitch.GetStaticPad("src").AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeBufferList, func(_ *gst.Pad, _ *gst.PadProbeInfo) gst.PadProbeReturn {
 		st.frames.Add(1)
 		return gst.PadProbeOK
 	})
@@ -102,14 +115,22 @@ func (e *LivekitCompositor) initScreenshare(self *gst.Bin) error {
 		return fmt.Errorf("failed to add ghost pad for screenshare source to bin")
 	}
 
-	if !e.LivekitCompositorScreenshare.FallbackSwitch.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync state of fallbackswitch with parent")
-	}
-	if !e.LivekitCompositorScreenshare.Filter.SyncStateWithParent() {
-		self.Log(CAT, gst.LevelWarning, "Failed to sync state of capsfilter with parent")
+	for _, element := range chain {
+		if !element.SyncStateWithParent() {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to sync state of screenshare element with parent\nname=%s", element.GetName()))
+		}
 	}
 
 	return nil
+}
+
+// elements lists the screenshare chain from the fallbackswitch to the output capsfilter.
+func (ss *LivekitCompositorScreenshare) elements() []*gst.Element {
+	chain := []*gst.Element{ss.FallbackSwitch}
+	if ss.Freeze != nil {
+		chain = append(chain, ss.Freeze)
+	}
+	return append(chain, ss.Filter)
 }
 
 func (e *LivekitCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.PadTemplate, name string) *gst.Pad {
@@ -279,14 +300,14 @@ func (e *LivekitCompositor) cleanupScreenshare(self *gst.Bin) {
 	}
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Tearing down screenshare compositor\nframes=%d", e.LivekitCompositorScreenshare.state.frames.Load()))
 
-	if err := e.LivekitCompositorScreenshare.FallbackSwitch.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set fallbackswitch to null state after releasing last screenshare sink pad\nerr=%v", err))
+	chain := e.LivekitCompositorScreenshare.elements()
+	for _, element := range chain {
+		if err := element.SetState(gst.StateNull); err != nil {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set screenshare element to null state after releasing last screenshare sink pad\nname=%s\nerr=%v", element.GetName(), err))
+		}
 	}
-	if err := e.LivekitCompositorScreenshare.Filter.SetState(gst.StateNull); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to null state after releasing last screenshare sink pad\nerr=%v", err))
-	}
-	if err := self.RemoveMany(e.LivekitCompositorScreenshare.FallbackSwitch, e.LivekitCompositorScreenshare.Filter); err != nil {
-		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove fallbackswitch from bin after releasing last screenshare sink pad\nerr=%v", err))
+	if err := self.RemoveMany(chain...); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove screenshare chain from bin after releasing last screenshare sink pad\nerr=%v", err))
 	}
 	if !self.RemovePad(e.LivekitCompositorScreenshare.gpad.Pad) {
 		self.Log(CAT, gst.LevelWarning, "Failed to remove ghost pad for screenshare source from bin after releasing last screenshare sink pad")

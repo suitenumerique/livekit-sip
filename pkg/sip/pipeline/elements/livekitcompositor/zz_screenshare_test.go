@@ -17,6 +17,12 @@ import (
 // linked to a `sink_3_<ssrc>_<pt>` ghost pad of the compositor.
 func attachScreensharePresenter(t *testing.T, pipeline *gst.Pipeline, compositor *gst.Element, sid string, ssrc uint, colorIdx int) *cameraParticipant {
 	t.Helper()
+	return attachScreensharePresenterAt(t, pipeline, compositor, sid, ssrc, colorIdx, 15)
+}
+
+// attachScreensharePresenterAt is attachScreensharePresenter with the presenter frame rate as a parameter.
+func attachScreensharePresenterAt(t *testing.T, pipeline *gst.Pipeline, compositor *gst.Element, sid string, ssrc uint, colorIdx int, fps int) *cameraParticipant {
+	t.Helper()
 	const pt uint = 97
 	colors := videotestsrcColors[colorIdx%len(videotestsrcColors)]
 
@@ -34,13 +40,24 @@ func attachScreensharePresenter(t *testing.T, pipeline *gst.Pipeline, compositor
 		t.Fatalf("failed to create capsfilter: %v", err)
 	}
 	caps.SetProperty("caps", gst.NewCapsFromString("video/x-raw,format=I420,width=320,height=240,framerate=15/1"))
-	if err := pipeline.AddMany(src, caps); err != nil {
+	if fps > 0 && fps < 15 {
+		// Announced at 15 fps, delivered at fps, like the decoder bins on a static screen.
+		keep, seen := 15/fps, 0
+		src.GetStaticPad("src").AddProbe(gst.PadProbeTypeBuffer, func(_ *gst.Pad, _ *gst.PadProbeInfo) gst.PadProbeReturn {
+			seen++
+			if seen%keep != 1 {
+				return gst.PadProbeDrop
+			}
+			return gst.PadProbeOK
+		})
+	}
+	chain := []*gst.Element{src, caps}
+	if err := pipeline.AddMany(chain...); err != nil {
 		t.Fatalf("failed to add screenshare source elements: %v", err)
 	}
-	if err := src.Link(caps); err != nil {
+	if err := gst.ElementLinkMany(chain...); err != nil {
 		t.Fatalf("failed to link screenshare source chain: %v", err)
 	}
-
 	sinkName := fmt.Sprintf("sink_%d_%d_%d", livekit.TrackSource_SCREEN_SHARE, ssrc, pt)
 	sinkPad := compositor.GetRequestPad(sinkName)
 	if sinkPad == nil {
@@ -52,7 +69,7 @@ func attachScreensharePresenter(t *testing.T, pipeline *gst.Pipeline, compositor
 	}
 	// Presenters are attached while the pipeline plays: a live source that
 	// starts before it is linked stops with not-linked and never delivers.
-	for _, e := range []*gst.Element{src, caps} {
+	for _, e := range chain {
 		if !e.SyncStateWithParent() {
 			t.Logf("warning: failed to sync %s with parent", e.GetName())
 		}
@@ -173,6 +190,39 @@ func TestScreenshare_GapBetweenPresentersKeepsSrcPad(t *testing.T) {
 	}
 	alice.cleanup()
 	bob.cleanup()
+	sink.cleanup()
+	compositor = nil
+	pipeline = nil
+	_, _ = compositor, pipeline
+}
+
+// A presenter sending one frame per second (a static shared screen) must still
+// produce a steady output at the screenshare framerate.
+func TestScreenshare_SparsePresenterIsRepeated(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+
+	pipeline, compositor := newPipeline(t, "test-screenshare-sparse")
+	alice := attachScreensharePresenterAt(t, pipeline, compositor, "alice", 3021, 0, 1)
+	sink := newFakeSink(t, pipeline)
+	linkCompositorScreenshareOut(t, compositor, sink.Convert)
+
+	if err := pipeline.SetState(gst.StatePlaying); err != nil {
+		t.Fatalf("failed to set PLAYING: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	before := sink.Count.Load()
+	time.Sleep(2 * time.Second)
+	produced := sink.Count.Load() - before
+	t.Logf("%d frames in 2 s from a 1 fps presenter", produced)
+	if produced < 20 {
+		t.Fatalf("expected a steady output around 15 fps, got %d frames in 2 s", produced)
+	}
+
+	alice.release(compositor)
+	if err := pipeline.SetState(gst.StateNull); err != nil {
+		t.Fatalf("failed to set NULL: %v", err)
+	}
+	alice.cleanup()
 	sink.cleanup()
 	compositor = nil
 	pipeline = nil
