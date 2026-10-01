@@ -155,11 +155,12 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 		return nil, fmt.Errorf("failed to add track elements to bin: %w", err)
 	}
 
-	// Lock the udpsinks so the pipeline's state changes skip them until Init()
-	// sets the remote host/port and unlocks them.
-	for _, sink := range [](*gst.Element){rtpSink, rtcpSink} {
-		if err := sink.SetLockedState(true); err != nil {
-			return nil, fmt.Errorf("failed to lock sink element state: %w", err)
+	// Lock the udpsrcs and udpsinks so the pipeline's state changes skip them
+	// until Init() links the sources, sets the remote host/port and unlocks
+	// them.
+	for _, elem := range [](*gst.Element){rtpSrc, rtcpSrc, rtpSink, rtcpSink} {
+		if err := elem.SetLockedState(true); err != nil {
+			return nil, fmt.Errorf("failed to lock element %s state: %w", elem.GetName(), err)
 		}
 	}
 
@@ -288,11 +289,11 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 		return fmt.Errorf("failed to link RTCP source to RTCP sink: %v", ret)
 	}
 
-	// Unlock the udpsinks locked in NewTrack so SyncStateWithParent below
-	// brings them up to the pipeline's state.
-	for _, sink := range [](*gst.Element){t.RtpSink, t.RtcpSink} {
-		if err := sink.SetLockedState(false); err != nil {
-			return fmt.Errorf("failed to unlock sink element %s: %w", sink.GetName(), err)
+	// Unlock the udpsrcs and udpsinks locked in NewTrack so SyncStateWithParent
+	// below brings them up to the pipeline's state.
+	for _, elem := range [](*gst.Element){t.RtpSrc, t.RtcpSrc, t.RtpSink, t.RtcpSink} {
+		if err := elem.SetLockedState(false); err != nil {
+			return fmt.Errorf("failed to unlock element %s: %w", elem.GetName(), err)
 		}
 	}
 
