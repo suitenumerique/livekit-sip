@@ -258,6 +258,9 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	if sendRtpSink == nil {
 		return fmt.Errorf("failed to get request pad for RTP sink")
 	}
+	if err := favorNewSourceAddress(e.RtpBin, uint(t.Kind)); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to let the RTP session follow a new source address\nkind=%d\nerr=%v", t.Kind, err))
+	}
 	if ret := t.RtpSrc.GetStaticPad("src").Link(sendRtpSink); ret != gst.PadLinkOK {
 		return fmt.Errorf("failed to link RTP source to RTP sink: %v", ret)
 	}
@@ -911,6 +914,21 @@ func (e *SipBin) trackToggleEvent(self *gst.Bin, kind livekit.TrackSource, on bo
 	}
 
 	return nil
+}
+
+// favorNewSourceAddress sets favor-new on the internal RTP session of an
+// rtpbin session: packets of a known remote SSRC arriving from a new address
+// replace the recorded address instead of being dropped as a collision.
+func favorNewSourceAddress(rtpBin *gst.Element, session uint) error {
+	val, err := rtpBin.Emit("get-internal-session", session)
+	if err != nil {
+		return fmt.Errorf("failed to get internal session %d: %w", session, err)
+	}
+	rtpSession, ok := val.(*glib.Object)
+	if !ok || rtpSession == nil {
+		return fmt.Errorf("invalid internal session %d", session)
+	}
+	return rtpSession.SetProperty("favor-new", true)
 }
 
 func (e *SipBin) clearTrack(self *gst.Bin, kind livekit.TrackSource) {
