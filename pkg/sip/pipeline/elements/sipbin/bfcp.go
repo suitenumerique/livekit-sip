@@ -62,19 +62,20 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 		if userID != int(1) {
 			return
 		}
-		e.mu.Lock()
-		defer e.mu.Unlock()
-
 		self := gst.ToGstBin(wself.Get())
 		e := eweak.Value()
 		if self == nil || self.Instance() == nil || e == nil {
 			return
 		}
 
-		if err := e.trackToggleEvent(self, livekit.TrackSource_SCREEN_SHARE, false); err != nil {
+		e.mu.Lock()
+		err := e.trackToggleEvent(self, livekit.TrackSource_SCREEN_SHARE, false)
+		e.mu.Unlock()
+		if err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to toggle off screenshare track on floor release\nerr=%v", err))
 			self.Error("Failed to toggle off screenshare track on floor release", err)
 		}
+		e.clearTrack(self, livekit.TrackSource_SCREEN_SHARE)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to connect on-floor-released signal: %w", err)
 	}
