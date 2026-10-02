@@ -42,27 +42,28 @@ var messageKeyToIndex = map[string]int{
 	"Invalid PIN":                       1,
 	"PIN accepted, joining the call...": 2,
 	"Please enter your PIN followed by # (use * to delete)\nEntered: %s": 0,
-	"You are the only participant...":                                    3,
+	"Screen sharing has ended":        4,
+	"You are the only participant...": 3,
 }
 
-var enIndex = []uint32{ // 5 elements
+var enIndex = []uint32{ // 6 elements
 	0x00000000, 0x00000045, 0x00000051, 0x00000073,
-	0x00000093,
-} // Size: 44 bytes
+	0x00000093, 0x000000ac,
+} // Size: 48 bytes
 
-const enData string = "" + // Size: 147 bytes
+const enData string = "" + // Size: 172 bytes
 	"\x02Please enter your PIN followed by # (use * to delete)\x0aEntered: %[" +
 	"1]s\x02Invalid PIN\x02PIN accepted, joining the call...\x02You are the o" +
-	"nly participant..."
+	"nly participant...\x02Screen sharing has ended"
 
-var frIndex = []uint32{ // 5 elements
+var frIndex = []uint32{ // 6 elements
 	0x00000000, 0x00000052, 0x00000064, 0x0000008d,
-	0x000000af,
-} // Size: 44 bytes
+	0x000000af, 0x000000c7,
+} // Size: 48 bytes
 
-const frData string = "" + // Size: 175 bytes
+const frData string = "" + // Size: 199 bytes
 	"\x02Veuillez saisir votre code PIN suivi de # (utilisez * pour effacer)" +
 	"\x0aSaisi : %[1]s\x02Code PIN invalide\x02Code PIN accepté, connexion en" +
-	" cours...\x02Vous êtes le seul participant..."
+	" cours...\x02Vous êtes le seul participant...\x02Fin du partage d'écran"
 
-	// Total table size 410 bytes (0KiB); checksum: 88E2B8BB
+	// Total table size 467 bytes (0KiB); checksum: 670064F7

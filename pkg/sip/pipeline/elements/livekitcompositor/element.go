@@ -11,6 +11,7 @@ import (
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin/livekittracks"
 	"github.com/samber/lo"
+	"github.com/vopenia-io/go-pangocairo/cairo"
 )
 
 var CAT = gst.NewDebugCategory(
@@ -48,6 +49,8 @@ type LivekitCompositor struct {
 	currentLayout []string
 
 	overlayMessage overlayMessage
+
+	screenshareMessageText *cairo.Surface
 }
 
 func (e *LivekitCompositor) New() glib.GoObjectSubclass {

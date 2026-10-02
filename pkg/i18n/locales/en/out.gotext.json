@@ -40,9 +40,9 @@
             "fuzzy": true
         },
         {
-            "id": "No video track",
-            "message": "No video track",
-            "translation": "No video track",
+            "id": "Screen sharing has ended",
+            "message": "Screen sharing has ended",
+            "translation": "Screen sharing has ended",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         }

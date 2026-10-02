@@ -32,9 +32,9 @@
             "translation": "Vous êtes le seul participant..."
         },
         {
-            "id": "No video track",
-            "message": "No video track",
-            "translation": "Aucune piste vidéo"
+            "id": "Screen sharing has ended",
+            "message": "Screen sharing has ended",
+            "translation": "Fin du partage d'écran"
         }
     ]
 }
