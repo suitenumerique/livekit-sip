@@ -183,7 +183,8 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 	if e.usage == UsageScreenshare {
 		// Slides: veryfast with the stillimage tune, two slices, no lookahead
 		// and no mb-tree, UMH motion search over 64 px, an IDR at least every
-		// 15 s, a VBV holding 2.5 s of bitrate and QP capped at 40.
+		// 15 s, a VBV holding 1 s of bitrate, QP capped at 40 and forced
+		// keyframes at most every 2 s after the last keyframe.
 		x264Props["speed-preset"] = int(3) // veryfast
 		x264Props["tune"] = uint(1)        // stillimage
 		x264Props["sliced-threads"] = true
@@ -194,8 +195,9 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		x264Props["subme"] = uint(4)
 		x264Props["option-string"] = "merange=64"
 		x264Props["key-int-max"] = uint(15 * e.videoFramerate)
-		x264Props["vbv-buf-capacity"] = uint(2500)
+		x264Props["vbv-buf-capacity"] = uint(1000)
 		x264Props["qp-max"] = uint(40)
+		x264Props["min-force-key-unit-interval"] = uint64(2 * time.Second)
 	}
 	e.X264Enc, err = gst.NewElementWithProperties("x264enc", x264Props)
 	if err != nil {
