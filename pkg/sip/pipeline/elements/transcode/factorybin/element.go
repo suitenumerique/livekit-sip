@@ -49,7 +49,8 @@ type FactoryCaps struct {
 }
 
 type FactoryBin struct {
-	mu sync.Mutex
+	mu    sync.Mutex // guards the fields below
+	cfgMu sync.Mutex // serializes reconfigure
 
 	Factories   []*gst.ElementFactory
 	FactoryCaps []FactoryCaps
@@ -93,22 +94,25 @@ func (e *FactoryBin) ClassInit(klass *glib.ObjectClass) {
 
 func (e *FactoryBin) computeCaps(instance *gst.Object, pad *gst.Pad, direction gst.PadDirection, filter *gst.Caps) *gst.Caps {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	var otherPad *gst.Pad
-	if direction == gst.PadDirectionSink {
+	if direction == gst.PadDirectionSink && e.SrcPad != nil {
 		otherPad = e.SrcPad.Pad
-	} else {
+	} else if direction != gst.PadDirectionSink && e.SinkPad != nil {
 		otherPad = e.SinkPad.Pad
 	}
+	factoryCaps := e.FactoryCaps
+	e.mu.Unlock()
 
+	if otherPad == nil {
+		return nil
+	}
 	otherCaps := otherPad.PeerQueryCaps(nil)
 	if otherCaps == nil {
 		otherCaps = gst.NewAnyCaps()
 	}
 
 	result := gst.NewEmptyCaps()
-	for _, fc := range e.FactoryCaps {
+	for _, fc := range factoryCaps {
 		var tmplCaps, othertmplCaps *gst.Caps
 		if direction == gst.PadDirectionSink {
 			tmplCaps = fc.SinkCaps
@@ -131,13 +135,13 @@ func (e *FactoryBin) computeCaps(instance *gst.Object, pad *gst.Pad, direction g
 	return result
 }
 
-func (e *FactoryBin) selectFactory(incomingCaps *gst.Caps) *FactoryCaps {
-	downstreamCaps := e.SrcPad.Pad.PeerQueryCaps(nil)
+func (e *FactoryBin) selectFactory(srcPad *gst.Pad, factoryCaps []FactoryCaps, incomingCaps *gst.Caps) *FactoryCaps {
+	downstreamCaps := srcPad.PeerQueryCaps(nil)
 	if downstreamCaps == nil {
 		downstreamCaps = gst.NewAnyCaps()
 	}
-	for i := range e.FactoryCaps {
-		fc := &e.FactoryCaps[i]
+	for i := range factoryCaps {
+		fc := &factoryCaps[i]
 		if !fc.SinkCaps.CanIntersect(incomingCaps) {
 			continue
 		}
@@ -149,16 +153,22 @@ func (e *FactoryBin) selectFactory(incomingCaps *gst.Caps) *FactoryCaps {
 	return nil
 }
 
-func (e *FactoryBin) currentFactoryLinksDownstream() bool {
-	if e.Elem == nil {
+func (e *FactoryBin) currentFactoryLinksDownstream(srcPad *gst.Pad, elem *gst.Element) bool {
+	if elem == nil {
 		return true
 	}
-	downstreamCaps := e.SrcPad.Pad.PeerQueryCaps(nil)
+	downstreamCaps := srcPad.PeerQueryCaps(nil)
 	if downstreamCaps == nil {
 		return true
 	}
-	caps := e.Elem.GetStaticPad("src").QueryCaps(nil)
+	caps := elem.GetStaticPad("src").QueryCaps(nil)
 	return caps != nil && caps.CanIntersect(downstreamCaps)
+}
+
+func (e *FactoryBin) child() *gst.Element {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.Elem
 }
 
 func (e *FactoryBin) createChild(self *gst.Bin, fc *FactoryCaps) *gst.Element {
@@ -185,20 +195,28 @@ func (e *FactoryBin) createChild(self *gst.Bin, fc *FactoryCaps) *gst.Element {
 }
 
 func (e *FactoryBin) reconfigure(self *gst.Bin, caps *gst.Caps) bool {
-	e.mu.Lock()
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
 
-	if e.Elem != nil {
-		if e.Elem.GetStaticPad("sink").QueryAcceptCaps(caps) && e.currentFactoryLinksDownstream() {
-			e.mu.Unlock()
-			return true
-		}
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Current element no longer fits caps, trying to select a new factory\nelement=%s\ncaps=%q", e.Elem.GetName(), caps.String()))
+	e.mu.Lock()
+	oldElem := e.Elem
+	sinkPad, srcPad := e.SinkPad, e.SrcPad
+	factoryCaps := e.FactoryCaps
+	e.mu.Unlock()
+	if sinkPad == nil || srcPad == nil {
+		return false
 	}
 
-	fc := e.selectFactory(caps)
+	if oldElem != nil {
+		if oldElem.GetStaticPad("sink").QueryAcceptCaps(caps) && e.currentFactoryLinksDownstream(srcPad.Pad, oldElem) {
+			return true
+		}
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Current element no longer fits caps, trying to select a new factory\nelement=%s\ncaps=%q", oldElem.GetName(), caps.String()))
+	}
+
+	fc := e.selectFactory(srcPad.Pad, factoryCaps, caps)
 	if fc == nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No factory found for caps\ncaps=%q", caps.String()))
-		e.mu.Unlock()
 		return false
 	}
 
@@ -206,13 +224,11 @@ func (e *FactoryBin) reconfigure(self *gst.Bin, caps *gst.Caps) bool {
 
 	elem := e.createChild(self, fc)
 	if elem == nil {
-		e.mu.Unlock()
 		return false
 	}
 
-	oldElem := e.Elem
+	e.mu.Lock()
 	e.Elem = elem
-	sinkPad, srcPad := e.SinkPad, e.SrcPad
 	e.mu.Unlock()
 
 	var parkProbeID uint64
@@ -293,8 +309,8 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 			if resultCaps == nil {
 				return false
 			}
-			if e.Elem != nil {
-				resultCaps = e.Elem.GetStaticPad("sink").QueryCaps(filter).Merge(resultCaps)
+			if elem := e.child(); elem != nil {
+				resultCaps = elem.GetStaticPad("sink").QueryCaps(filter).Merge(resultCaps)
 			}
 			query.SetCapsResult(resultCaps)
 			return true
@@ -304,7 +320,7 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 				return false
 			}
 			acceptCaps := query.ParseAcceptCaps()
-			if e.Elem != nil && e.Elem.GetStaticPad("sink").QueryAcceptCaps(acceptCaps) {
+			if elem := e.child(); elem != nil && elem.GetStaticPad("sink").QueryAcceptCaps(acceptCaps) {
 				query.SetAcceptCapsResult(true)
 				return true
 			}
@@ -343,8 +359,8 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 			if resultCaps == nil {
 				return false
 			}
-			if e.Elem != nil {
-				resultCaps = e.Elem.GetStaticPad("src").QueryCaps(filter).Merge(resultCaps)
+			if elem := e.child(); elem != nil {
+				resultCaps = elem.GetStaticPad("src").QueryCaps(filter).Merge(resultCaps)
 			}
 			query.SetCapsResult(resultCaps)
 			return true
@@ -354,7 +370,7 @@ func (e *FactoryBin) InstanceInit(instance *glib.Object) {
 				return false
 			}
 			acceptCaps := query.ParseAcceptCaps()
-			if e.Elem != nil && e.Elem.GetStaticPad("src").QueryAcceptCaps(acceptCaps) {
+			if elem := e.child(); elem != nil && elem.GetStaticPad("src").QueryAcceptCaps(acceptCaps) {
 				query.SetAcceptCapsResult(true)
 				return true
 			}
