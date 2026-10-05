@@ -896,6 +896,7 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 	return nil
 }
 
+// trackToggleEvent pushes a stream on/off event downstream of a track. Takes e.mu.
 func (e *SipBin) trackToggleEvent(self *gst.Bin, kind livekit.TrackSource, on bool) error {
 	switch kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_MICROPHONE, livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO:
@@ -903,8 +904,13 @@ func (e *SipBin) trackToggleEvent(self *gst.Bin, kind livekit.TrackSource, on bo
 		return fmt.Errorf("invalid track source kind: %s", kind)
 	}
 
-	track := e.Tracks[kind]
-	if track == nil || !track.initialized {
+	e.mu.Lock()
+	var rtpSrc *gst.Element
+	if track := e.Tracks[kind]; track != nil && track.initialized {
+		rtpSrc = track.RtpSrc
+	}
+	e.mu.Unlock()
+	if rtpSrc == nil {
 		return nil
 	}
 
@@ -915,7 +921,7 @@ func (e *SipBin) trackToggleEvent(self *gst.Bin, kind livekit.TrackSource, on bo
 		st = gst.NewStructure(EventOOBStreamOff)
 	}
 
-	trackPad := track.RtpSrc.GetStaticPad("src")
+	trackPad := rtpSrc.GetStaticPad("src")
 	if trackPad == nil {
 		return fmt.Errorf("failed to get RTP source pad for track source %s", kind)
 	}

@@ -166,6 +166,10 @@ func TestFloorRequest_FromOwnerReplacesPreviousRequest(t *testing.T) {
 	}
 
 	c.floorRelease(first)
+	if got := c.expectStatus(300*time.Millisecond, bfcp.RequestStatusReleased); got != first {
+		t.Fatalf("released request %d, want %d", got, first)
+	}
+	c.floorRelease(first)
 	c.expectError(300*time.Millisecond, bfcp.ErrorFloorRequestIDDoesNotExist)
 
 	third := c.requestGranted()

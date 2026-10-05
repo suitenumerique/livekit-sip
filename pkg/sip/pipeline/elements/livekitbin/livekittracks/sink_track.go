@@ -66,6 +66,9 @@ type SinkTrack struct {
 	lp          *lksdk.LocalParticipant
 	opts        *lksdk.TrackPublicationOptions
 	useBackup   atomic.Bool
+	publishing  atomic.Bool
+	off         atomic.Bool
+	stopped     atomic.Bool
 
 	rtp rtp.Packet
 }
@@ -130,6 +133,7 @@ func (s *SinkTrack) Start(self *base.GstBaseSink) bool {
 		return false
 	}
 
+	s.stopped.Store(false)
 	s.publish(self)
 
 	return true
@@ -137,6 +141,7 @@ func (s *SinkTrack) Start(self *base.GstBaseSink) bool {
 
 func (s *SinkTrack) Stop(self *base.GstBaseSink) bool {
 	self.Log(CAT, gst.LevelDebug, "Stopping")
+	s.stopped.Store(true)
 	s.unPublish(self)
 	return true
 }
@@ -183,32 +188,56 @@ func (s *SinkTrack) unPublish(self *base.GstBaseSink) {
 		return
 	}
 
-	tp := s.lp.GetTrackPublication(pub.Source())
-	if tp == nil {
-		return
-	}
-
-	if err := s.lp.UnpublishTrack(tp.SID()); err != nil {
+	if err := s.lp.UnpublishTrack(pub.SID()); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unpublish track\nerr=%v", err))
 	}
 }
 
+// publishAsync publishes the track from a goroutine.
+func (s *SinkTrack) publishAsync(self *base.GstBaseSink) {
+	wself := glib.WeakRefInit(self)
+	go func() {
+		obj := wself.Get()
+		if obj == nil {
+			return
+		}
+		s.publish(base.ToGstBaseSink(obj))
+	}()
+}
+
+// publish publishes the track unless a publish is in flight, and unpublishes
+// it again when the track was stopped or turned off meanwhile.
 func (s *SinkTrack) publish(self *base.GstBaseSink) {
 	if s.pub.Load() != nil {
 		self.Log(CAT, gst.LevelWarning, "Track is already published, skipping publish")
 		return
 	}
+	if !s.publishing.CompareAndSwap(false, true) {
+		self.Log(CAT, gst.LevelDebug, "Track publish already in flight, skipping publish")
+		return
+	}
+	defer s.publishing.Store(false)
+
 	var pubOpts []lksdk.LocalTrackPublishOption
 	if s.backupTrack != nil {
 		pubOpts = append(pubOpts, lksdk.WithBackupCodec(s.backupTrack))
 	}
 	pub, err := s.lp.PublishTrack(s.track, s.opts, pubOpts...)
 	if err != nil {
+		if s.stopped.Load() || s.off.Load() {
+			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to publish track no longer wanted\nerr=%v", err))
+			return
+		}
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to publish track\nerr=%v", err))
 		self.Error("Failed to publish track", err)
 		return
 	}
 	s.pub.Store(pub)
+	if s.stopped.Load() || s.off.Load() {
+		self.Log(CAT, gst.LevelInfo, "Unpublishing track turned off while publishing")
+		s.unPublish(self)
+		return
+	}
 
 	// Warn when neither the primary nor the backup track binds within 10s.
 	track := s.track
@@ -235,11 +264,13 @@ func (s *SinkTrack) Event(self *base.GstBaseSink, event *gst.Event) bool {
 		switch structure.Name() {
 		case sipbin.EventOOBStreamOff:
 			self.Log(CAT, gst.LevelDebug, "Received OOB Stream Off event, stopping track")
+			s.off.Store(true)
 			s.unPublish(self)
 			return true
 		case sipbin.EventOOBStreamOn:
 			self.Log(CAT, gst.LevelDebug, "Received OOB Stream On event, starting track")
-			s.publish(self)
+			s.off.Store(false)
+			s.publishAsync(self)
 			return true
 		}
 	}
