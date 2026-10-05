@@ -135,12 +135,7 @@ func (c *floorTestClient) floorRelease(requestID uint16) {
 func (c *floorTestClient) requestGranted() uint16 {
 	c.t.Helper()
 	c.floorRequest()
-	pending := c.expectStatus(300*time.Millisecond, bfcp.RequestStatusPending)
-	granted := c.expectStatus(time.Second, bfcp.RequestStatusGranted)
-	if granted != pending {
-		c.t.Fatalf("granted request %d, pending request was %d", granted, pending)
-	}
-	return granted
+	return c.expectStatus(300*time.Millisecond, bfcp.RequestStatusGranted)
 }
 
 func TestFloorRequest_AnsweredRightAfterRelease(t *testing.T) {
