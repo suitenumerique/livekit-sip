@@ -14,4 +14,4 @@
 
 package version
 
-const Version = "1.0.4-sip-video"
+const Version = "1.0.5-sip-video"
