@@ -3,6 +3,7 @@ package iolivekit
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"weak"
 
 	"github.com/go-gst/go-glib/glib"
@@ -58,6 +59,12 @@ type AudioOutTranscode struct {
 	Queue    *gst.Element
 	AudioRtp *gst.Element
 	pad      *gst.Pad
+	stats    *audioOutStats
+}
+
+type audioOutStats struct {
+	overruns    atomic.Int64
+	lastLogNano atomic.Int64
 }
 
 type CameraInTranscode struct {

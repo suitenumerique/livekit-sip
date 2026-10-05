@@ -639,6 +639,8 @@ func (e *IoManagerLivekit) padAddedAudioOut(self *gst.Bin, pad *gst.Pad, name st
 		self.Error("Failed to create queue element for audio output pad", err)
 		return
 	}
+	audioOut.stats = &audioOutStats{}
+	watchAudioOutOverruns(self, audioOut.Queue, audioOut.stats)
 
 	properties := gst.NewStructure("properties")
 	if err := properties.SetString("audio-opus.usage", "sip"); err != nil {
@@ -942,6 +944,10 @@ func (e *IoManagerLivekit) padRemovedAudioOut(self *gst.Bin, pad *gst.Pad, name 
 		return
 	}
 
+	if e.AudioOut.stats != nil {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Audio output queue overruns\ntotal=%d", e.AudioOut.stats.overruns.Load()))
+	}
+
 	if err := e.AudioOut.Queue.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set queue element to NULL state for pad\npad=%s\nerr=%v", name, err))
 	}
@@ -1115,4 +1121,24 @@ func (e *IoManagerLivekit) playAudioFd(self *gst.Bin, fd int) bool {
 
 	self.Log(CAT, gst.LevelInfo, "Successfully played FLAC fd")
 	return true
+}
+
+func watchAudioOutOverruns(self *gst.Bin, queue *gst.Element, stats *audioOutStats) {
+	wself := glib.WeakRefInit(self)
+	if _, err := queue.Connect("overrun", func(queue *gst.Element) {
+		total := stats.overruns.Add(1)
+		now := time.Now().UnixNano()
+		last := stats.lastLogNano.Load()
+		if now-last < int64(10*time.Second) || !stats.lastLogNano.CompareAndSwap(last, now) {
+			return
+		}
+		self := gst.ToGstBin(wself.Get())
+		if self == nil || self.Instance() == nil {
+			return
+		}
+		level, _ := queue.GetProperty("current-level-time")
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Audio output queue overrun\ntotal=%d\nlevel_ns=%v", total, level))
+	}); err != nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to connect overrun signal of audio output queue\nerr=%v", err))
+	}
 }
