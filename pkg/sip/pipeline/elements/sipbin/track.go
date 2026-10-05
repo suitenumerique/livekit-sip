@@ -40,6 +40,7 @@ type SipTrack struct {
 	RtpSink     *gst.Element
 	RtcpSink    *gst.Element
 	RtpFilter   *gst.Element
+	continuity  *rtpContinuity
 
 	deviceRtcpAddr  *net.UDPAddr
 	keyframeMu      sync.Mutex
@@ -176,6 +177,7 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 		RtpSink:     rtpSink,
 		RtcpSink:    rtcpSink,
 		RtpFilter:   rtpFilter,
+		continuity:  &rtpContinuity{},
 	}, nil
 }
 
@@ -254,6 +256,7 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	); err != nil {
 		return fmt.Errorf("failed to set properties on track elements: %w", err)
 	}
+	t.watchContinuity(self)
 
 	sendRtpSink := e.RtpBin.GetRequestPad(fmt.Sprintf("recv_rtp_sink_%d", t.Kind))
 	if sendRtpSink == nil {
@@ -468,8 +471,8 @@ func (t *SipTrack) pushLinkFeedback(e *SipBin, self *gst.Bin) {
 	if fractionLost > 0 || t.linkFeedbackTicks%5 == 1 {
 		level = gst.LevelInfo
 	}
-	packetsLost, jitter := e.deviceReportDetails(t.Kind)
-	self.Log(CAT, level, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\npackets_lost=%d\njitter=%d\nrtt_ms=%d\ntmmbr_kbps=%d\nbudget_kbps=%d", t.Kind, fractionLost, packetsLost, jitter, rttMs, tmmbrKbps, budgetKbps))
+	packetsLost, jitter, extHighestSeq := e.deviceReportDetails(t.Kind)
+	self.Log(CAT, level, fmt.Sprintf("Device link feedback\nkind=%d\nfraction_lost=%d\npackets_lost=%d\njitter=%d\next_highest_seq=%d\nrtt_ms=%d\ntmmbr_kbps=%d\nbudget_kbps=%d", t.Kind, fractionLost, packetsLost, jitter, extHighestSeq, rttMs, tmmbrKbps, budgetKbps))
 
 	st := gst.NewStructure("vopenia-link-feedback")
 	if err := st.SetValue("fraction-lost", int(fractionLost)); err != nil {
@@ -779,20 +782,22 @@ func (t *SipTrack) sendTmmbr(self *gst.Bin, mediaSSRC uint32, bps uint64) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Sent RTCP TMMBR to device\nssrc=%d\nbps=%d", mediaSSRC, bps))
 }
 
-// deviceReportDetails returns the cumulative packets lost and the jitter of
-// the latest receiver report from the device for our sending source.
-func (e *SipBin) deviceReportDetails(kind livekit.TrackSource) (packetsLost int32, jitter uint32) {
+// deviceReportDetails returns the cumulative packets lost, the jitter and the
+// extended highest sequence number of the latest receiver report from the
+// device for our sending source.
+func (e *SipBin) deviceReportDetails(kind livekit.TrackSource) (packetsLost int32, jitter uint32, extHighestSeq uint32) {
 	st, err := e.getStats(kind)
 	if err != nil || st == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	for _, src := range st.Sources {
 		for _, rr := range src.ReceivedRR {
 			packetsLost = rr.PacketsLost
 			jitter = rr.Jitter
+			extHighestSeq = rr.ExtHighestSeq
 		}
 	}
-	return packetsLost, jitter
+	return packetsLost, jitter, extHighestSeq
 }
 
 func (e *SipBin) linkFeedback(kind livekit.TrackSource) (rttMs int, fractionLost uint8) {
@@ -815,8 +820,14 @@ func (e *SipBin) linkFeedback(kind livekit.TrackSource) (rttMs int, fractionLost
 }
 
 func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
+	filterCaps := caps
+	if c := t.continuity; c != nil {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		filterCaps = c.filterCaps(caps)
+	}
 	t.Caps = caps
-	if err := t.RtpFilter.SetProperty("caps", caps); err != nil {
+	if err := t.RtpFilter.SetProperty("caps", filterCaps); err != nil {
 		return fmt.Errorf("failed to update caps on RTP filter: %w", err)
 	}
 	return nil

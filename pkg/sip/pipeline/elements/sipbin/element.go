@@ -546,6 +546,8 @@ func (e *SipBin) requestNewPadSendRtpSink(self *gst.Bin, templ *gst.PadTemplate,
 	e.padMu.Lock()
 	defer e.padMu.Unlock()
 
+	ti.resumeContinuity(self)
+
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Requesting new pad from template for track source\npad=%s\ntemplate=%s\nsource=%d", name, templ.GetName(), kind))
 	recvRtpSrc := rtpBin.GetRequestPad(fmt.Sprintf("send_rtp_sink_%d", ti.Kind))
 	if recvRtpSrc == nil {
