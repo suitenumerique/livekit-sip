@@ -348,10 +348,10 @@ func (e *LivekitBin) OnTrackMuted(publication lksdk.TrackPublication, participan
 		defer e.wg.Done()
 		time.Sleep(100 * time.Millisecond)
 
-		e.mu.Lock()
-		defer e.mu.Unlock()
-
-		if !publication.IsMuted() {
+		if e.Is(RoomStateClosed) || !publication.IsMuted() {
+			return
+		}
+		if _, wired := e.lookupTrack(pub.SID()); !wired {
 			return
 		}
 

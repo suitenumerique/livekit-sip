@@ -846,12 +846,12 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 	e.dropTrack(sid)
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	srcTrack, ok := e.lookupTrack(sid)
 	if !ok {
 		self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Track already released\nsid=%s\ntrack=%s", sid, track.ID()))
 		releaseFunnelPads(funnel, uint32(ssrc))
+		e.mu.Unlock()
 		return
 	}
 
@@ -870,6 +870,8 @@ func (e *LivekitBin) UnsubscribeTrack(track *webrtc.TrackRemote, pub *lksdk.Remo
 	}
 
 	e.logJitterbufferStats(self, uint(kind), uint(ssrc), "unsubscribe")
+	e.mu.Unlock()
+
 	if _, err := e.RtpBin.Emit("clear-ssrc", uint(kind), uint(ssrc)); err != nil {
 		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting pad removed signal\ntrack=%s\nerr=%v", track.ID(), err))
 		self.Error(fmt.Sprintf("Error emitting pad removed signal for track ID %s", track.ID()), err)

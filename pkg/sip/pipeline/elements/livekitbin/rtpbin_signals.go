@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"weak"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
@@ -226,9 +227,17 @@ func (e *LivekitBin) OnTimeout(session, ssrc uint) {
 	metrics.TrackPaused(reason)
 	e.logJitterbufferStats(self, session, ssrc, "timeout")
 
-	if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal\nerr=%v", err))
-		self.Error("Error emitting clear-ssrc signal", err)
-		return
-	}
+	wself := glib.WeakRefInit(self)
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		self := gst.ToGstBin(wself.Get())
+		if self == nil || self.Instance() == nil || e.Is(RoomStateClosed) {
+			return
+		}
+		if _, err := e.RtpBin.Emit("clear-ssrc", session, ssrc); err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting clear-ssrc signal\nerr=%v", err))
+			self.Error("Error emitting clear-ssrc signal", err)
+		}
+	}()
 }
