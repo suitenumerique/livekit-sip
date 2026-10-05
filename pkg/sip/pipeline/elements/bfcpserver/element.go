@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -32,15 +31,14 @@ var (
 
 type BFCPServer struct {
 	props
-	bfcpServer       *bfcp.Server
-	bfcpConfig       *bfcp.ServerConfig
-	started          bool
-	constructed      bool
-	requestID        atomic.Int64
-	lastFloorRelease time.Time
-	expectedPeer     atomic.Pointer[string]
-	clientMu         sync.Mutex
-	client           *bfcp.UDPClient
+	bfcpServer   *bfcp.Server
+	bfcpConfig   *bfcp.ServerConfig
+	started      bool
+	constructed  bool
+	requestID    atomic.Int64
+	expectedPeer atomic.Pointer[string]
+	clientMu     sync.Mutex
+	client       *bfcp.UDPClient
 
 	ctx    context.Context
 	cancel context.CancelFunc

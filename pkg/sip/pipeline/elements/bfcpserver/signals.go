@@ -11,7 +11,6 @@ import (
 )
 
 const VirtualClientID = 0x0101
-const FloorRequestDebounceDuration = 3 * time.Second
 
 func (e *BFCPServer) startScreenshare(self *gst.Element, floorID int) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received start-screenshare signal\nfloor_id=%d", floorID))
@@ -130,9 +129,13 @@ func (e *BFCPServer) SetupSignals(self *gst.Element) {
 			return false
 		}
 
-		if e.lastFloorRelease.Add(FloorRequestDebounceDuration).After(time.Now()) {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received floor request too soon after previous request\nfloor_id=%d\nuser_id=%d", floorID, userID))
-			time.Sleep(time.Until(e.lastFloorRelease.Add(FloorRequestDebounceDuration)))
+		if floor.GetOwner() == userID && !floor.IsAvailable() {
+			prevRequestID := floor.GetFloorRequestID()
+			if err := floor.Release(userID); err != nil {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to release the previous floor request of the requester\nfloor_id=%d\nuser_id=%d\nprevious_request_id=%d\nerr=%v", floorID, userID, prevRequestID, err))
+			} else {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Floor already held by the requester, replacing its previous request\nfloor_id=%d\nuser_id=%d\nprevious_request_id=%d\nrequest_id=%d", floorID, userID, prevRequestID, requestID))
+			}
 		}
 
 		if self.SignalHasHandlerPending(signalOnFloorRequested, glib.Quark(0), true) {
@@ -164,8 +167,6 @@ func (e *BFCPServer) SetupSignals(self *gst.Element) {
 
 	e.bfcpServer.OnFloorReleased = func(floorID, userID uint16) {
 		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Floor released\nfloor_id=%d\nuser_id=%d", floorID, userID))
-
-		e.lastFloorRelease = time.Now()
 
 		if _, err := self.Emit("on-floor-released", int(floorID), int(userID)); err != nil {
 			self.Log(CAT, gst.LevelError, fmt.Sprintf("Error emitting on-floor-released signal\nerr=%v", err))
