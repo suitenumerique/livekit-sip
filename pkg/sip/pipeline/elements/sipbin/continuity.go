@@ -159,16 +159,18 @@ func (t *SipTrack) watchContinuity(self *gst.Bin) {
 	wself := glib.WeakRefInit(self)
 	wtrack := weak.Make(t)
 	pad.AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeBufferList|gst.PadProbeTypeEventDownstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-		if ev := info.GetEvent(); ev != nil {
-			if ev.Type() == gst.EventTypeCaps {
+		if info.Type()&gst.PadProbeTypeEventDownstream != 0 {
+			if ev := info.GetEvent(); ev != nil && ev.Type() == gst.EventTypeCaps {
 				c.observeCaps(ev.ParseCaps())
 			}
 			return gst.PadProbeOK
 		}
 
-		first := info.GetBuffer()
-		last := first
-		if first == nil {
+		var first, last *gst.Buffer
+		if info.Type()&gst.PadProbeTypeBuffer != 0 {
+			first = info.GetBuffer()
+			last = first
+		} else {
 			list := info.GetBufferList()
 			if list == nil || list.Length() == 0 {
 				return gst.PadProbeOK

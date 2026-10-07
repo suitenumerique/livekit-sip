@@ -43,7 +43,11 @@ func watchScreenshareOutput(t *testing.T, compositor *gst.Element) *screenshareO
 	}
 	i420 := false
 	pad.AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeEventDownstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-		if ev := info.GetEvent(); ev != nil {
+		if info.Type()&gst.PadProbeTypeEventDownstream != 0 {
+			ev := info.GetEvent()
+			if ev == nil {
+				return gst.PadProbeOK
+			}
 			if ev.Type() != gst.EventTypeCaps {
 				return gst.PadProbeOK
 			}

@@ -432,14 +432,14 @@ func presenterActive(fallbackSwitch *gst.Element) bool {
 func dropBlankFrames(pad *gst.Pad, st *screenshareState) {
 	blank := false
 	pad.AddProbe(gst.PadProbeTypeBuffer|gst.PadProbeTypeBufferList|gst.PadProbeTypeEventDownstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-		ev := info.GetEvent()
-		if ev == nil {
+		if info.Type()&gst.PadProbeTypeEventDownstream == 0 {
 			if blank {
 				return gst.PadProbeDrop
 			}
 			return gst.PadProbeOK
 		}
-		if ev.Type() != gst.EventTypeCaps {
+		ev := info.GetEvent()
+		if ev == nil || ev.Type() != gst.EventTypeCaps {
 			return gst.PadProbeOK
 		}
 		width, height, ok := capsSize(ev.ParseCaps())
