@@ -940,6 +940,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		c.close(ctx, callDropped, stats.ServerError("unexpected-result"))
 		return psrpc.NewError(psrpc.Unimplemented, err)
 	case DispatchNoRuleDrop:
+		if isPrivateSource(c.call.SourceIp) {
+			c.log().Infow("Rejecting inbound call, no dispatch rule for the dialed number")
+			c.cc.RespondAndDrop(sip.StatusNotFound, "No route for the dialed number")
+			c.close(ctx, callDropped, stats.ClientError("no-dispatch"))
+			return psrpc.NewErrorf(psrpc.NotFound, "no dispatch rule for the dialed number")
+		}
 		c.log().Debugw("Rejecting inbound flood")
 		c.cc.Drop()
 		c.close(ctx, callFlood, stats.ClientError("flood"))
@@ -1624,6 +1630,14 @@ func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status Cal
 		return errors.Wrap(err, "cannot create LiveKit participant")
 	}
 	return nil
+}
+
+func isPrivateSource(ip string) bool {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	return addr.IsPrivate() || addr.IsLoopback()
 }
 
 func pinKeyKind(digit byte) string {

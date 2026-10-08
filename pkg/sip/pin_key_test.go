@@ -28,3 +28,12 @@ func TestPinKeyKind(t *testing.T) {
 		require.Equal(t, "digit", pinKeyKind(d))
 	}
 }
+
+func TestIsPrivateSource(t *testing.T) {
+	for _, ip := range []string{"10.0.0.128", "172.16.4.2", "192.168.1.10", "127.0.0.1", "::1", "fd00::1"} {
+		require.True(t, isPrivateSource(ip), ip)
+	}
+	for _, ip := range []string{"192.44.77.50", "146.183.10.223", "2001:db8::1", "", "not-an-ip"} {
+		require.False(t, isPrivateSource(ip), ip)
+	}
+}
