@@ -92,7 +92,7 @@ func watchSelectorSink(self *gst.Bin, e *SipCompositor, sink *gst.Pad, label str
 		if self := gst.ToGstBin(wself.Get()); self != nil {
 			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Switched %s input-selector to active branch\npad=%s", label, name))
 		}
-		keyframe.ForceKeyUnit(pad)
+		keyframe.PushForceKeyUnit(pad)
 		return gst.PadProbeOK
 	})
 }

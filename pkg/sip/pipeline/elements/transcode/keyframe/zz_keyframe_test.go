@@ -77,3 +77,25 @@ func TestRequestOnBadBuffer_LossRequestsOncePerInterval(t *testing.T) {
 	require.EqualValues(t, 1, requests.Load())
 	require.True(t, pad.SetActive(false))
 }
+
+func TestPushForceKeyUnit_FromSinkPadReachesUpstream(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+	src := gst.NewPad("src", gst.PadDirectionSource)
+	sink := gst.NewPad("sink", gst.PadDirectionSink)
+	require.Equal(t, gst.PadLinkOK, src.Link(sink))
+	require.True(t, src.SetActive(true))
+	require.True(t, sink.SetActive(true))
+	requests := &atomic.Int32{}
+	src.AddProbe(gst.PadProbeTypeEventUpstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		if ev := info.GetEvent(); ev != nil && ev.HasName("GstForceKeyUnit") {
+			requests.Add(1)
+		}
+		return gst.PadProbeOK
+	})
+
+	PushForceKeyUnit(sink)
+	require.EqualValues(t, 1, requests.Load())
+	require.True(t, sink.SetActive(false))
+	require.True(t, src.SetActive(false))
+	src.Unlink(sink)
+}

@@ -254,7 +254,7 @@ func (e *LivekitCompositor) watchScreenshareSwitch(self *gst.Bin, padName string
 			return
 		}
 		if pad := self.GetStaticPad(padName); pad != nil {
-			keyframe.ForceKeyUnit(pad)
+			keyframe.PushForceKeyUnit(pad)
 		}
 	}
 
