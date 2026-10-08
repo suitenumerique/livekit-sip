@@ -272,13 +272,14 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		if bitrate > 0 {
 			e.bitrateMu.Lock()
 			e.maxBitrate = uint(bitrate)
-			e.curBitrate = uint(bitrate)
+			e.curBitrate = capsBitrate(uint(bitrate), e.curBitrate, !e.lastBitrateAdjust.IsZero())
+			target := e.curBitrate
 			e.bitrateMu.Unlock()
-			if err := e.X264Enc.SetProperty("bitrate", uint(bitrate)); err != nil {
+			if err := e.X264Enc.SetProperty("bitrate", target); err != nil {
 				self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set x264enc bitrate\nerr=%v", err))
 				self.Error("Failed to set x264enc bitrate", err)
 			} else {
-				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate\nbitrate=%d", bitrate))
+				self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Updated x264enc bitrate\nbitrate=%d\nsdp_kbps=%d", target, bitrate))
 			}
 		}
 		e.requestEncoderKeyframe(self)
@@ -584,6 +585,13 @@ func (e *VideoH264) onLinkFeedback(self *gst.Bin, st *gst.Structure) {
 	if budgetRestored {
 		e.requestEncoderKeyframe(self)
 	}
+}
+
+func capsBitrate(sdpKbps, curKbps uint, adapted bool) uint {
+	if adapted && curKbps > 0 && curKbps < sdpKbps {
+		return curKbps
+	}
+	return sdpKbps
 }
 
 const (
