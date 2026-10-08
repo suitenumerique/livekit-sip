@@ -176,7 +176,7 @@ func (e *VideoH264) Constructed(instance *glib.Object) {
 		"sliced-threads":              true,
 		"key-int-max":                 uint(200),
 		"bframes":                     uint(0),
-		"vbv-buf-capacity":            uint(2000),
+		"vbv-buf-capacity":            uint(1000),
 		"bitrate":                     uint(defaultBitrate),
 		"min-force-key-unit-interval": uint64(time.Second),
 	}
