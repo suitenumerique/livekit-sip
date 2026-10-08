@@ -23,23 +23,13 @@ func LogFirstDecodedFrame(cat *gst.DebugCategory, self *gst.Bin, pad *gst.Pad) {
 
 func RequestOnBadBuffer(pad *gst.Pad) {
 	var lastRequest time.Time
-	lastPts := gst.ClockTimeNone
 
 	pad.AddProbe(gst.PadProbeTypeBuffer, func(p *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		buf := info.GetBuffer()
 		if buf == nil {
 			return gst.PadProbeOK
 		}
-
-		bad := buf.HasFlags(gst.BufferFlagDiscont) || buf.HasFlags(gst.BufferFlagCorrupted)
-		pts := buf.PresentationTimestamp()
-		if pts != gst.ClockTimeNone && lastPts != gst.ClockTimeNone && pts <= lastPts {
-			bad = true
-		}
-		if pts != gst.ClockTimeNone {
-			lastPts = pts
-		}
-		if !bad {
+		if !buf.HasFlags(gst.BufferFlagDiscont) && !buf.HasFlags(gst.BufferFlagCorrupted) {
 			return gst.PadProbeOK
 		}
 
