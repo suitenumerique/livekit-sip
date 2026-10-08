@@ -87,6 +87,10 @@ func (e *SipBin) onRtpBinSenderTimeout(self *gst.Bin, session, ssrc uint) {
 
 func (e *SipBin) onRtpBinSourceEvent(self *gst.Bin, event string, session, ssrc uint) {
 	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("RTP source event\nevent=%s\nsource=%d\nssrc=%d", event, session, ssrc))
+	switch event {
+	case "on-timeout", "on-bye-timeout":
+		e.clearSSRCLater(self, session, uint32(ssrc))
+	}
 }
 
 func (e *SipBin) onRtpBinSsrcCollision(self *gst.Bin, session, ssrc uint) {

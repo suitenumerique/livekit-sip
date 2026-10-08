@@ -58,6 +58,8 @@ type SipBin struct {
 	sessionBudgetKbps  atomic.Int64 // session-level b= from the device offer
 	screenshareSending atomic.Bool
 
+	ssrcGuard *ssrcGuard
+
 	wg sync.WaitGroup
 }
 
@@ -74,7 +76,7 @@ var (
 )
 
 func (e *SipBin) New() glib.GoObjectSubclass {
-	return &SipBin{}
+	return &SipBin{ssrcGuard: &ssrcGuard{}}
 }
 
 func (e *SipBin) ClassInit(klass *glib.ObjectClass) {
@@ -317,7 +319,7 @@ func (e *SipBin) InstanceInit(instance *glib.Object) {
 	var err error
 	e.RtpBin, err = gst.NewElementWithProperties("rtpbin", map[string]interface{}{
 		"rtp-profile":              int(3), // GST_RTP_PROFILE_AVPF
-		"autoremove":               true,
+		"autoremove":               false,
 		"max-ts-offset":            int(200000000),
 		"timeout-inactive-sources": true,
 		"drop-on-latency":          false,

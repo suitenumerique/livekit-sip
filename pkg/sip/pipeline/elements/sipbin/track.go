@@ -276,6 +276,8 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	if ret := t.RtcpSrc.GetStaticPad("src").Link(sendRtcpSink); ret != gst.PadLinkOK {
 		return fmt.Errorf("failed to link RTCP source to RTCP sink: %v", ret)
 	}
+	e.ssrcGuard.watch(t.RtpSrc.GetStaticPad("src"), uint(t.Kind))
+	e.ssrcGuard.watch(t.RtcpSrc.GetStaticPad("src"), uint(t.Kind))
 
 	switch t.Kind {
 	case livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE:
@@ -1080,45 +1082,55 @@ func (e *SipBin) clearTrack(self *gst.Bin, kind livekit.TrackSource) {
 func (e *SipBin) clearSSRCs(self *gst.Bin, kind livekit.TrackSource, rtpSession *glib.Object, ssrcs []uint32, nptk []uint64) {
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Clearing SSRCs from RTP session for track source\ncount=%d\nsource=%s\nssrcs=%v", len(ssrcs), kind, ssrcs))
 	for i, ssrc := range ssrcs {
-		rtpSourceVal, err := rtpSession.Emit("get-source-by-ssrc", uint(ssrc))
-		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get source by SSRC from RTP session\nssrc=%d\nerr=%v", ssrc, err))
-			self.Error(fmt.Sprintf("Failed to get source by SSRC %d from RTP session", ssrc), err)
+		prev := nptk[i]
+		receiving := func() bool {
+			received, ok := e.sourcePacketsReceived(self, rtpSession, ssrc)
+			if !ok {
+				return true
+			}
+			if received > prev {
+				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Source is still receiving packets, skipping clear\nssrc=%d\npackets_received=%d\nprev_packets_received=%d", ssrc, received, prev))
+				return true
+			}
+			return false
+		}
+		if receiving() {
 			continue
 		}
-		rtpSource, ok := rtpSourceVal.(*glib.Object)
-		if !ok || rtpSource == nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No source found for SSRC in RTP session\nssrc=%d", ssrc))
-			continue
-		}
-
-		statsVal, err := rtpSource.GetProperty("stats")
-		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get stats property from RTP source for SSRC\nssrc=%d\nerr=%v", ssrc, err))
-			self.Error(fmt.Sprintf("Failed to get stats property from RTP source for SSRC %d", ssrc), err)
-			continue
-		}
-		stats, ok := statsVal.(*gst.Structure)
-		if !ok {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to convert stats property to structure for RTP source for SSRC\nssrc=%d", ssrc))
-			self.Error(fmt.Sprintf("Failed to convert stats property to structure for RTP source for SSRC %d", ssrc), fmt.Errorf("invalid stats property"))
-			continue
-		}
-		packetsReceived, err := stats.GetUint64("packets-received")
-		if err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get packets-received field from stats for RTP source for SSRC\nssrc=%d\nerr=%v", ssrc, err))
-			self.Error(fmt.Sprintf("Failed to get packets-received field from stats for RTP source for SSRC %d", ssrc), err)
-			continue
-		}
-
-		if packetsReceived > nptk[i] {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Source is still receiving packets, skipping clear\nssrc=%d\npackets_received=%d\nprev_packets_received=%d", ssrc, packetsReceived, nptk[i]))
-			continue
-		}
-
-		if _, err := e.RtpBin.Emit("clear-ssrc", uint(kind), ssrc); err != nil {
-			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to clear ssrc from rtpbin for track source\nssrc=%d\nsource=%s\nerr=%v", ssrc, kind, err))
-			self.Error(fmt.Sprintf("Failed to clear ssrc %d from rtpbin for track source %s", ssrc, kind), err)
-		}
+		e.clearSSRC(self, uint(kind), ssrc, receiving)
 	}
+}
+
+func (e *SipBin) sourcePacketsReceived(self *gst.Bin, rtpSession *glib.Object, ssrc uint32) (uint64, bool) {
+	rtpSourceVal, err := rtpSession.Emit("get-source-by-ssrc", uint(ssrc))
+	if err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get source by SSRC from RTP session\nssrc=%d\nerr=%v", ssrc, err))
+		self.Error(fmt.Sprintf("Failed to get source by SSRC %d from RTP session", ssrc), err)
+		return 0, false
+	}
+	rtpSource, ok := rtpSourceVal.(*glib.Object)
+	if !ok || rtpSource == nil {
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("No source found for SSRC in RTP session\nssrc=%d", ssrc))
+		return 0, false
+	}
+
+	statsVal, err := rtpSource.GetProperty("stats")
+	if err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get stats property from RTP source for SSRC\nssrc=%d\nerr=%v", ssrc, err))
+		self.Error(fmt.Sprintf("Failed to get stats property from RTP source for SSRC %d", ssrc), err)
+		return 0, false
+	}
+	stats, ok := statsVal.(*gst.Structure)
+	if !ok {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to convert stats property to structure for RTP source for SSRC\nssrc=%d", ssrc))
+		self.Error(fmt.Sprintf("Failed to convert stats property to structure for RTP source for SSRC %d", ssrc), fmt.Errorf("invalid stats property"))
+		return 0, false
+	}
+	packetsReceived, err := stats.GetUint64("packets-received")
+	if err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get packets-received field from stats for RTP source for SSRC\nssrc=%d\nerr=%v", ssrc, err))
+		self.Error(fmt.Sprintf("Failed to get packets-received field from stats for RTP source for SSRC %d", ssrc), err)
+		return 0, false
+	}
+	return packetsReceived, true
 }
