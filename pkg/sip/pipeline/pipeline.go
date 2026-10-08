@@ -47,6 +47,7 @@ type Pipeline struct {
 	cleanup   func() error
 	bus       *gst.Bus
 	dtmfCh    chan int
+	dtmfSeq   atomic.Uint64
 
 	dumpCH   chan bool
 	debugSrv *debug.Server

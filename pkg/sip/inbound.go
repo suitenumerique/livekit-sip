@@ -1283,6 +1283,7 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 	go c.playAudio(ctx, c.s.res.enterPinFd)
 	pin := ""
 	noPin := false
+	var lastKey time.Time
 	deadline := time.NewTimer(c.s.conf.PinTimeout)
 	defer deadline.Stop()
 	for {
@@ -1307,6 +1308,13 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				return disp, false, psrpc.NewErrorf(psrpc.Canceled, "failed reading DTMF event")
 			}
 			deadline.Reset(c.s.conf.PinTimeout)
+			now := time.Now()
+			var sinceLast time.Duration
+			if !lastKey.IsZero() {
+				sinceLast = now.Sub(lastKey)
+			}
+			lastKey = now
+			c.log().Infow("PIN entry key", "key", pinKeyKind(b.Digit), "entered", len(pin), "sinceLastMs", sinceLast.Milliseconds())
 			if b.Digit == 0 {
 				continue // unrecognized
 			}
@@ -1321,7 +1329,7 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				// End of the pin
 				noPin = pin == ""
 
-				c.log().Infow("Checking Pin for SIP call", "pin", pin, "noPin", noPin)
+				c.log().Infow("Checking Pin for SIP call", "pinLength", len(pin), "noPin", noPin)
 				c.s.meet.preCreateDispatchRule(ctx, c.log(), pin)
 				disp = c.s.handler.DispatchCall(ctx, &CallInfo{
 					TrunkID: trunkID,
@@ -1340,12 +1348,12 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 					c.appendLogValues("sipRule", disp.DispatchRuleID)
 				}
 				if disp.Result == DispatchServiceUnavailable {
-					c.log().Warnw("Rejecting call, dispatch evaluation failed", nil, "pin", pin, "noPin", noPin)
+					c.log().Warnw("Rejecting call, dispatch evaluation failed", nil, "pinLength", len(pin), "noPin", noPin)
 					c.close(ctx, callDropped, stats.ServerError("dispatch-error"))
 					return disp, false, psrpc.NewErrorf(psrpc.Unavailable, "dispatch rule evaluation unavailable")
 				}
 				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
-					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin,
+					c.log().Infow("Rejecting call", "pinLength", len(pin), "noPin", noPin,
 						"dispatchResult", disp.Result.String(),
 						"ruleID", disp.DispatchRuleID,
 						"roomName", disp.Room.RoomName)
@@ -1616,6 +1624,19 @@ func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status Cal
 		return errors.Wrap(err, "cannot create LiveKit participant")
 	}
 	return nil
+}
+
+func pinKeyKind(digit byte) string {
+	switch {
+	case digit == 0:
+		return "unknown"
+	case digit == '*':
+		return "delete"
+	case digit == '#':
+		return "end"
+	default:
+		return "digit"
+	}
 }
 
 func (c *inboundCall) playAudio(ctx context.Context, fd int) {

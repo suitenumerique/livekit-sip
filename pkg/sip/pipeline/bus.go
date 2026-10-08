@@ -96,12 +96,14 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 				pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Received dtmf-event message with invalid number field\nnbValType=%T\nnbVal=%v", nbVal, nbVal))
 				return true
 			}
-			pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("Received dtmf-event message\nnumber=%d", nb))
+			seq := p.dtmfSeq.Add(1)
+			method, _ := structure.GetValue("method")
+			pipeline.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received DTMF event\nseq=%d\nmethod=%v", seq, method))
 			// This runs on the GLib main loop: never block it on the reader.
 			select {
 			case p.dtmfCh <- nb:
 			default:
-				pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("DTMF queue full, dropping digit\nnumber=%d", nb))
+				pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("DTMF queue full, dropping digit\nseq=%d", seq))
 			}
 			return true
 		default:

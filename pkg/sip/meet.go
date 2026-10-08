@@ -68,12 +68,12 @@ func (m *meetClient) preCreateDispatchRule(ctx context.Context, log logger.Logge
 		PinCode string `json:"pin_code"`
 	}{PinCode: pin})
 	if err != nil {
-		log.Warnw("meet join failed, continuing to dispatch", err, "pin", pin)
+		log.Warnw("meet join failed, continuing to dispatch", err, "pinLength", len(pin))
 		return
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.url, bytes.NewReader(body))
 	if err != nil {
-		log.Warnw("meet join failed, continuing to dispatch", err, "pin", pin)
+		log.Warnw("meet join failed, continuing to dispatch", err, "pinLength", len(pin))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -81,21 +81,21 @@ func (m *meetClient) preCreateDispatchRule(ctx context.Context, log logger.Logge
 		req.Header.Set("Authorization", "Bearer "+m.token)
 	}
 
-	log.Debugw("meet join request", "url", m.url, "pin", pin)
+	log.Debugw("meet join request", "url", m.url, "pinLength", len(pin))
 	start := time.Now()
 	resp, err := m.client.Do(req)
 	if err != nil {
-		log.Warnw("meet join failed, continuing to dispatch", err, "pin", pin, "url", m.url, "duration", time.Since(start))
+		log.Warnw("meet join failed, continuing to dispatch", err, "pinLength", len(pin), "url", m.url, "duration", time.Since(start))
 		return
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, meetJoinLogBodyLimit))
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Warnw("meet join failed, continuing to dispatch", nil, "pin", pin, "url", m.url,
+		log.Warnw("meet join failed, continuing to dispatch", nil, "pinLength", len(pin), "url", m.url,
 			"status", resp.StatusCode, "response", string(respBody), "duration", time.Since(start))
 		return
 	}
-	log.Infow("meet join succeeded", "pin", pin, "status", resp.StatusCode, "duration", time.Since(start))
-	log.Debugw("meet join response", "pin", pin, "response", string(respBody))
+	log.Infow("meet join succeeded", "pinLength", len(pin), "status", resp.StatusCode, "duration", time.Since(start))
+	log.Debugw("meet join response", "pinLength", len(pin), "response", string(respBody))
 }
