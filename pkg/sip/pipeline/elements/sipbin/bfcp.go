@@ -68,9 +68,7 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 			return
 		}
 
-		if err := e.trackToggleEvent(self, livekit.TrackSource_SCREEN_SHARE, false); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to toggle off screenshare track on floor release\nerr=%v", err))
-		}
+		e.setTrackToggle(self, livekit.TrackSource_SCREEN_SHARE, false)
 		e.clearTrack(self, livekit.TrackSource_SCREEN_SHARE)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to connect on-floor-released signal: %w", err)
@@ -92,9 +90,7 @@ func (e *SipBin) NewBfcpTrack(self *gst.Bin, idx int, proto string) (*BfcpTrack,
 			return
 		}
 
-		if err := e.trackToggleEvent(self, livekit.TrackSource_SCREEN_SHARE, true); err != nil {
-			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to toggle on screenshare track on floor grant\nerr=%v", err))
-		}
+		e.setTrackToggle(self, livekit.TrackSource_SCREEN_SHARE, true)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to connect on-floor-granted signal: %w", err)
 	}

@@ -59,6 +59,7 @@ type SipBin struct {
 	screenshareSending atomic.Bool
 
 	ssrcGuard *ssrcGuard
+	toggles   trackToggles
 
 	wg sync.WaitGroup
 }
