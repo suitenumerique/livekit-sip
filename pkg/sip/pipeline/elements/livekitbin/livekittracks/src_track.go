@@ -337,12 +337,25 @@ func (s *SrcTrack) pushRtcp(self *gst.Bin, rtcpPad *gst.Pad, pkt rtcp.Packet) {
 }
 
 func (s *SrcTrack) onRtcp(self *gst.Bin, rtcpPad *gst.Pad) func(p rtcp.Packet) {
+	if s.Track == nil || s.Pub == nil || s.Rp == nil {
+		return func(rtcp.Packet) {}
+	}
+	ssrc := uint32(s.Track.SSRC())
+	source := s.Pub.Source()
+	identity := s.Rp.Identity()
+	wself := glib.WeakRefInit(self)
+
 	return func(p rtcp.Packet) {
+		self := gst.ToGstBin(wself.Get())
+		if self == nil || self.Instance() == nil {
+			return
+		}
+
 		switch p.(type) {
 		case *rtcp.Goodbye:
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP BYE\nsource=%s\nssrc=%d\nparticipant=%s", s.Pub.Source(), s.Track.SSRC(), s.Rp.Identity()))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP BYE\nsource=%s\nssrc=%d\nparticipant=%s", source, ssrc, identity))
 		case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP PLI/FIR\nsource=%s\nssrc=%d\nparticipant=%s", s.Pub.Source(), s.Track.SSRC(), s.Rp.Identity()))
+			self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Sending RTCP PLI/FIR\nsource=%s\nssrc=%d\nparticipant=%s", source, ssrc, identity))
 		default:
 			self.Log(CAT, gst.LevelTrace, fmt.Sprintf("Pushing RTCP packet\ntype=%T\nvalue=%+v", p, p))
 		}
@@ -351,7 +364,7 @@ func (s *SrcTrack) onRtcp(self *gst.Bin, rtcpPad *gst.Pad) func(p rtcp.Packet) {
 			return
 		}
 
-		filtered := filterSSRC(p, uint32(s.Track.SSRC()))
+		filtered := filterSSRC(p, ssrc)
 		if filtered == nil {
 			return
 		}
