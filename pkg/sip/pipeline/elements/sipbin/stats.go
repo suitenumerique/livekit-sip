@@ -148,7 +148,7 @@ func (e *SipBin) getStats(kind livekit.TrackSource) (*RTPSessionStats, error) {
 	}
 
 	track := e.Tracks[kind]
-	if track == nil || !track.initialized {
+	if track == nil || !track.initialized.Load() {
 		return nil, nil
 	}
 

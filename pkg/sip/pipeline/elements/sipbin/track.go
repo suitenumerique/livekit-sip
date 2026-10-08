@@ -27,7 +27,7 @@ const keyframePeriod = 2 * time.Second
 const keyframeDemandWindow = 3 * keyframePeriod
 
 type SipTrack struct {
-	initialized bool
+	initialized atomic.Bool
 	Idx         int
 	Kind        livekit.TrackSource
 	recv        bool
@@ -168,18 +168,17 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 	}
 
 	return &SipTrack{
-		initialized: false,
-		Idx:         idx,
-		Kind:        kind,
-		Proto:       proto,
-		rtpConn:     rtpConn,
-		rtcpConn:    rtcpConn,
-		RtpSrc:      rtpSrc,
-		RtcpSrc:     rtcpSrc,
-		RtpSink:     rtpSink,
-		RtcpSink:    rtcpSink,
-		RtpFilter:   rtpFilter,
-		continuity:  &rtpContinuity{},
+		Idx:        idx,
+		Kind:       kind,
+		Proto:      proto,
+		rtpConn:    rtpConn,
+		rtcpConn:   rtcpConn,
+		RtpSrc:     rtpSrc,
+		RtcpSrc:    rtcpSrc,
+		RtpSink:    rtpSink,
+		RtcpSink:   rtcpSink,
+		RtpFilter:  rtpFilter,
+		continuity: &rtpContinuity{},
 	}, nil
 }
 
@@ -207,7 +206,7 @@ func (t *SipTrack) parseDirection(media *gstsdp.Media) {
 }
 
 func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *gstsdp.Message, caps *gst.Caps) error {
-	if t.initialized {
+	if t.initialized.Load() {
 		return nil
 	}
 
@@ -314,7 +313,7 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 		return fmt.Errorf("failed to start track: %v", errs)
 	}
 
-	t.initialized = true
+	t.initialized.Store(true)
 
 	self.Log(CAT, gst.LevelDebug, fmt.Sprintf("Initialized track\ntrack=%d\nkind=%d\naddr=%s\nrtp=%d\nrtcp=%d\nsend=%t\nrecv=%t", t.Idx, t.Kind, host, media.GetPort(), rtcpPort, t.send, t.recv))
 
@@ -890,7 +889,7 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 			errs = append(errs, fmt.Errorf("failed to remove element %s from bin: %w", elem.GetName(), err))
 		}
 	}
-	if track.initialized {
+	if track.initialized.Load() {
 		e.padMu.Lock()
 		sendRtpSink := e.RtpBin.GetStaticPad(fmt.Sprintf("recv_rtp_sink_%d", track.Kind))
 		if sendRtpSink != nil {
@@ -927,7 +926,7 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 	e.ptMu.Lock()
 	e.PtMap[track.Kind] = make(map[uint8]*gst.Caps)
 	e.ptMu.Unlock()
-	track.initialized = false
+	track.initialized.Store(false)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to cleanup track: %v", errs)
@@ -946,7 +945,7 @@ func (e *SipBin) trackToggleEvent(self *gst.Bin, kind livekit.TrackSource, on bo
 
 	e.mu.Lock()
 	var rtpSrc *gst.Element
-	if track := e.Tracks[kind]; track != nil && track.initialized {
+	if track := e.Tracks[kind]; track != nil && track.initialized.Load() {
 		rtpSrc = track.RtpSrc
 	}
 	e.mu.Unlock()
