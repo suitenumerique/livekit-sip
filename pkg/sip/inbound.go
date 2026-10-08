@@ -1658,6 +1658,10 @@ func (c *inboundCall) playAudio(ctx context.Context, fd int) {
 		return
 	}
 	if err := c.medias.PlayAudio(ctx, fd); err != nil {
+		if errors.Is(err, context.Canceled) {
+			c.log().Infow("Cannot play audio", "error", err)
+			return
+		}
 		c.log().Errorw("Cannot play audio", err)
 	}
 }
