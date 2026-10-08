@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"weak"
 
@@ -17,7 +18,7 @@ import (
 	"github.com/pion/rtcp"
 )
 
-const keyframeRequestSSRC uint32 = 0xCAFE
+const fallbackRTCPSenderSSRC uint32 = 0xCAFE
 
 const keyframePeriod = 2 * time.Second
 
@@ -48,6 +49,7 @@ type SipTrack struct {
 	lastDemand      time.Time
 	firSeq          uint8
 	videoSSRC       uint32
+	rtcpSSRC        atomic.Uint32
 	keyframeStop    chan struct{}
 	keyframeStarted bool
 
@@ -335,13 +337,14 @@ func (t *SipTrack) RequestKeyframe(self *gst.Bin, ssrc uint32) {
 	firSeq := t.firSeq
 	t.keyframeMu.Unlock()
 
+	sender := t.rtcpSenderSSRC()
 	raw, err := rtcp.Marshal([]rtcp.Packet{
 		&rtcp.FullIntraRequest{
-			SenderSSRC: keyframeRequestSSRC,
+			SenderSSRC: sender,
 			MediaSSRC:  ssrc,
 			FIR:        []rtcp.FIREntry{{SSRC: ssrc, SequenceNumber: firSeq}},
 		},
-		&rtcp.PictureLossIndication{SenderSSRC: keyframeRequestSSRC, MediaSSRC: ssrc},
+		&rtcp.PictureLossIndication{SenderSSRC: sender, MediaSSRC: ssrc},
 	})
 	if err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to marshal RTCP keyframe request\nerr=%v", err))
@@ -425,11 +428,13 @@ func (t *SipTrack) StartLinkFeedback(e *SipBin, self *gst.Bin) {
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		t.refreshRTCPSenderSSRC(e)
 		for {
 			select {
 			case <-stop:
 				return
 			case <-ticker.C:
+				t.refreshRTCPSenderSSRC(e)
 				t.pushLinkFeedback(e, self)
 				t.maybeRequestDeviceReduction(e, self)
 			}
@@ -595,6 +600,39 @@ func keyframeRequestInfo(data []byte) keyframeRequest {
 		data = data[length:]
 	}
 	return req
+}
+
+func (t *SipTrack) rtcpSenderSSRC() uint32 {
+	if ssrc := t.rtcpSSRC.Load(); ssrc != 0 {
+		return ssrc
+	}
+	return fallbackRTCPSenderSSRC
+}
+
+func (t *SipTrack) refreshRTCPSenderSSRC(e *SipBin) {
+	st, err := e.getStats(t.Kind)
+	if err != nil || st == nil {
+		return
+	}
+	if ssrc := internalSSRC(st); ssrc != 0 {
+		t.rtcpSSRC.Store(ssrc)
+	}
+}
+
+func internalSSRC(st *RTPSessionStats) uint32 {
+	var internal uint32
+	for _, src := range st.Sources {
+		if !src.Internal {
+			continue
+		}
+		if src.IsSender {
+			return src.SSRC
+		}
+		if internal == 0 {
+			internal = src.SSRC
+		}
+	}
+	return internal
 }
 
 // sendSSRC returns the SSRC of our sending source in the track's RTP session.
@@ -772,7 +810,7 @@ func (t *SipTrack) sendTmmbr(self *gst.Bin, mediaSSRC uint32, bps uint64) {
 	raw[0] = 0x80 | 3 // V=2, FMT=3 (TMMBR)
 	raw[1] = 205      // RTPFB
 	binary.BigEndian.PutUint16(raw[2:4], 4)
-	binary.BigEndian.PutUint32(raw[4:8], keyframeRequestSSRC)
+	binary.BigEndian.PutUint32(raw[4:8], t.rtcpSenderSSRC())
 	binary.BigEndian.PutUint32(raw[8:12], 0)
 	binary.BigEndian.PutUint32(raw[12:16], mediaSSRC)
 	binary.BigEndian.PutUint32(raw[16:20], exp<<26|uint32(mantissa)<<9)
