@@ -41,7 +41,7 @@ func plcRtpPacket(pt uint8, seq int) []byte {
 	return pkt
 }
 
-func decodedSamples(t *testing.T, lost func(int) bool, total int) int64 {
+func decodedSamples(t *testing.T, lost func(int) bool, lostDuration uint64, total int) int64 {
 	t.Helper()
 	pipeline, err := gst.NewPipeline("")
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func decodedSamples(t *testing.T, lost func(int) bool, total int) int64 {
 	for i := range total {
 		pts := time.Duration(i) * 20 * time.Millisecond
 		if lost(i) {
-			st := gst.NewStructureFromString(fmt.Sprintf("GstRTPPacketLost, seqnum=(uint)%d, timestamp=(guint64)%d, duration=(guint64)%d", i, pts, 20*time.Millisecond))
+			st := gst.NewStructureFromString(fmt.Sprintf("GstRTPPacketLost, seqnum=(uint)%d, timestamp=(guint64)%d, duration=(guint64)%d", i, pts, lostDuration))
 			src.PushEvent(gst.NewCustomEvent(gst.EventTypeCustomDownstream, st.Transfer()))
 			continue
 		}
@@ -98,7 +98,18 @@ func TestG722Audio_ConcealsLostPackets(t *testing.T) {
 	defer testutils.AssertNoLeaks(t)
 	const total, perPacket = 50, 16000 / 50
 
-	samples := decodedSamples(t, func(i int) bool { return i >= 20 && i < 25 }, total)
+	samples := decodedSamples(t, func(i int) bool { return i >= 20 && i < 25 }, uint64(20*time.Millisecond), total)
 	require.GreaterOrEqual(t, samples, int64((total-1)*perPacket), "the 5 lost packets leave a hole in the decoded audio")
 	require.LessOrEqual(t, samples, int64((total+1)*perPacket))
+}
+
+func TestG722Audio_DropsShortGaps(t *testing.T) {
+	defer testutils.AssertNoLeaks(t)
+	const total, perPacket = 50, 16000 / 50
+
+	for _, d := range []uint64{0, uint64(time.Millisecond), uint64(3 * time.Millisecond), uint64(gst.ClockTimeNone)} {
+		samples := decodedSamples(t, func(i int) bool { return i >= 20 && i < 25 }, d, total)
+		require.GreaterOrEqual(t, samples, int64((total-6)*perPacket), "duration=%d", d)
+		require.LessOrEqual(t, samples, int64((total-4)*perPacket), "duration=%d", d)
+	}
 }

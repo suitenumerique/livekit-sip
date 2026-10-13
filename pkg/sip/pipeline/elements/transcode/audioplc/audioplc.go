@@ -22,9 +22,12 @@ import (
 	"github.com/go-gst/go-gst/gst"
 )
 
+const minGap = 4 * time.Millisecond
+
 type Stats struct {
 	gaps      atomic.Int64
 	concealed atomic.Int64
+	skipped   atomic.Int64
 }
 
 func New() (*gst.Element, *Stats, error) {
@@ -37,13 +40,18 @@ func New() (*gst.Element, *Stats, error) {
 		return nil, nil, fmt.Errorf("spanplc element has no sink pad")
 	}
 	stats := &Stats{}
-	sink.AddProbe(gst.PadProbeTypeEventDownstream, func(_ *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+	sink.AddProbe(gst.PadProbeTypeEventDownstream, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		ev := info.GetEvent()
 		if ev == nil || ev.Type() != gst.EventTypeGap {
 			return gst.PadProbeOK
 		}
+		_, duration := ev.ParseGap()
+		if duration < minGap || !pad.HasCurrentCaps() {
+			stats.skipped.Add(1)
+			return gst.PadProbeDrop
+		}
 		stats.gaps.Add(1)
-		if _, duration := ev.ParseGap(); duration > 0 && duration < time.Minute {
+		if duration < time.Minute {
 			stats.concealed.Add(int64(duration))
 		}
 		return gst.PadProbeOK
@@ -51,9 +59,9 @@ func New() (*gst.Element, *Stats, error) {
 	return plc, stats, nil
 }
 
-func (s *Stats) Summary() (int64, time.Duration) {
+func (s *Stats) Summary() (int64, time.Duration, int64) {
 	if s == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
-	return s.gaps.Load(), time.Duration(s.concealed.Load())
+	return s.gaps.Load(), time.Duration(s.concealed.Load()), s.skipped.Load()
 }

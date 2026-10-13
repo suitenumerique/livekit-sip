@@ -127,8 +127,8 @@ func (e *G722Audio) InstanceInit(instance *glib.Object) {
 func (e *G722Audio) Finalize(instance *glib.Object) {
 	self := gst.ToGstBin(instance)
 	self.Log(CAT, gst.LevelDebug, "Finalizing G722Audio element")
-	if gaps, concealed := e.plcStats.Summary(); gaps > 0 {
-		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Concealed audio packet losses\ngaps=%d\nconcealed_ms=%d", gaps, concealed.Milliseconds()))
+	if gaps, concealed, skipped := e.plcStats.Summary(); gaps > 0 || skipped > 0 {
+		self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Concealed audio packet losses\ngaps=%d\nconcealed_ms=%d\nskipped_gaps=%d", gaps, concealed.Milliseconds(), skipped))
 	}
 
 	e.RtpG722Depay = nil
