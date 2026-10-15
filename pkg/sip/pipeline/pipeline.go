@@ -243,6 +243,8 @@ func (p *Pipeline) Close() error {
 
 	done := make(chan struct{})
 	var err error
+	var step atomic.Value
+	step.Store("pipeline")
 	go func() {
 		defer close(done)
 
@@ -255,22 +257,27 @@ func (p *Pipeline) Close() error {
 		err = errors.Join(err, p.Pipeline().SetState(gst.StateNull))
 		pipeline.Log(CAT, gst.LevelDebug, "Pipline SetState NULL complete")
 
+		step.Store("sipbin")
 		pipeline.Log(CAT, gst.LevelDebug, "SipBin SetState NULL")
 		err = errors.Join(err, p.SipIo.SipBin.SetState(gst.StateNull))
 		pipeline.Log(CAT, gst.LevelDebug, "SipBin SetState NULL complete")
 
+		step.Store("livekit-controller")
 		pipeline.Log(CAT, gst.LevelDebug, "LivekitController SetState NULL")
 		err = errors.Join(err, p.IOManager.LivekitController.SetState(gst.StateNull))
 		pipeline.Log(CAT, gst.LevelDebug, "LivekitController SetState NULL complete")
 
+		step.Store("livekitbin")
 		pipeline.Log(CAT, gst.LevelDebug, "LivekitBin SetState NULL")
 		err = errors.Join(err, p.WebrtcIo.LivekitBin.SetState(gst.StateNull))
 		pipeline.Log(CAT, gst.LevelDebug, "LivekitBin SetState NULL complete")
 
+		step.Store("sip-controller")
 		pipeline.Log(CAT, gst.LevelDebug, "SipController SetState NULL")
 		err = errors.Join(err, p.IOManager.SipController.SetState(gst.StateNull))
 		pipeline.Log(CAT, gst.LevelDebug, "SipController SetState NULL complete")
 
+		step.Store("unlock")
 		p.SipIo.SipBin.SetLockedState(false)
 		p.WebrtcIo.LivekitBin.SetLockedState(false)
 		p.IOManager.SipController.SetLockedState(false)
@@ -286,6 +293,7 @@ func (p *Pipeline) Close() error {
 	case <-time.After(10 * time.Second):
 	}
 	if !closed {
+		logStuckClose(pipeline, step.Load().(string))
 		pipeline.Log(CAT, gst.LevelWarning, "Timeout waiting for pipeline to set to null state, sending flush event")
 		go func() {
 			p.Pipeline().SendEvent(gst.NewFlushStartEvent())
@@ -320,6 +328,12 @@ func (p *Pipeline) Close() error {
 		}
 	}
 
+	var keep []*gst.Element
+	if !closed {
+		keep = p.captureElements()
+		p.disconnectRoom()
+	}
+
 	if !closed && p.cleanup != nil {
 		pipeline.Log(CAT, gst.LevelWarning, "Failed to set pipeline to null state after breaking clock, trying early cleanup")
 		if err := p.cleanup(); err != nil {
@@ -334,7 +348,8 @@ func (p *Pipeline) Close() error {
 	}
 
 	if !closed {
-		pipeline.Log(CAT, gst.LevelError, "Failed to set pipeline to null state after breaking clock: timeout waiting for null state")
+		total := parkElements(keep)
+		pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set pipeline to null state after breaking clock: timeout waiting for null state\nstep=%s\nparked_elements=%d\nparked_total=%d", step.Load().(string), len(keep), total))
 		return fmt.Errorf("failed to set pipeline to null state")
 	}
 

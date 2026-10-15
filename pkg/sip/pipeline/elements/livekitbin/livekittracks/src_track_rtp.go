@@ -225,6 +225,10 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 		self.Log(CAT, gst.LevelDebug, "Fill called but unblock is set, returning EOS")
 		return gst.FlowFlushing
 	}
+	track, pub := s.Track, s.Pub
+	if track == nil {
+		return gst.FlowFlushing
+	}
 
 	mapInfo := buffer.Map(gst.MapWrite)
 	defer buffer.Unmap()
@@ -232,7 +236,7 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 	ptr := mapInfo.Data()
 	data := unsafe.Slice((*byte)(ptr), length)
 
-	n, _, err := s.Track.Read(data)
+	n, _, err := track.Read(data)
 	if s.unblock.Load() {
 		self.Log(CAT, gst.LevelDebug, "Fill unblocked, returning Flushing")
 		return gst.FlowFlushing
@@ -245,7 +249,7 @@ func (s *SrcTrackRtp) Fill(self *base.GstBaseSrc, offset uint64, length uint, bu
 		self.Error("Failed to read from io.Reader", err)
 		return gst.FlowError
 	}
-	if s.Pub.IsMuted() {
+	if pub != nil && pub.IsMuted() {
 		for i := range data[:n] {
 			data[i] = 0
 		}
