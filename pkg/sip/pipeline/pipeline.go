@@ -46,7 +46,7 @@ type Pipeline struct {
 	closed    core.Fuse
 	cleanup   func() error
 	bus       *gst.Bus
-	dtmfCh    chan int
+	dtmfCh    chan DTMFEvent
 	dtmfSeq   atomic.Uint64
 
 	dumpCH   chan bool
@@ -395,7 +395,7 @@ func New(ctx context.Context, log logger.Logger, sipOpt SipOpt, sipCallID string
 		pipeline:              pipeline,
 		ctx:                   ctx,
 		cancel:                cancel,
-		dtmfCh:                make(chan int, 10),
+		dtmfCh:                make(chan DTMFEvent, 10),
 		dumpCH:                make(chan bool, 1024),
 		qosLast:               make(map[string]time.Time),
 		videoWidth:            sipOpt.VideoWidth,

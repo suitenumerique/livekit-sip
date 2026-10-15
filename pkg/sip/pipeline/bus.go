@@ -97,11 +97,12 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 				return true
 			}
 			seq := p.dtmfSeq.Add(1)
-			method, _ := structure.GetValue("method")
-			pipeline.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received DTMF event\nseq=%d\nmethod=%v", seq, method))
+			methodVal, _ := structure.GetValue("method")
+			method, _ := methodVal.(int)
+			pipeline.Log(CAT, gst.LevelInfo, fmt.Sprintf("Received DTMF event\nseq=%d\nmethod=%d", seq, method))
 			// This runs on the GLib main loop: never block it on the reader.
 			select {
-			case p.dtmfCh <- nb:
+			case p.dtmfCh <- DTMFEvent{Number: nb, Method: method, At: time.Now()}:
 			default:
 				pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("DTMF queue full, dropping digit\nseq=%d", seq))
 			}
@@ -149,6 +150,12 @@ func (p *Pipeline) logQoS(msg *gst.Message) {
 	p.pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("Buffers dropped\nsource=%s\nlive=%t\nrunning_time=%s\nprocessed=%s\ndropped=%s", src, values.Live, values.RunningTime, processed, dropped))
 }
 
-func (p *Pipeline) DTMF() chan int {
+type DTMFEvent struct {
+	Number int
+	Method int
+	At     time.Time
+}
+
+func (p *Pipeline) DTMF() chan DTMFEvent {
 	return p.dtmfCh
 }

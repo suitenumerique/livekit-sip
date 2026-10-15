@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -318,6 +319,7 @@ func (o *MediaOrchestrator) loopEvents() {
 	// Resolve the channels once instead of dereferencing o.pipeline on each select iteration.
 	sendOfferCh := o.pipeline.SendOfferCh()
 	dtmfCh := o.pipeline.DTMF()
+	var lastDTMF pipeline.DTMFEvent
 	for {
 		select {
 		case <-o.ctx.Done():
@@ -327,10 +329,19 @@ func (o *MediaOrchestrator) loopEvents() {
 			if err := o.handleSendOffer(offer); err != nil {
 				o.log.Errorw("failed to handle send-offer-sdp", err)
 			}
-		case nb, ok := <-dtmfCh:
+		case ev, ok := <-dtmfCh:
 			if !ok {
 				continue
 			}
+			if since, dup := duplicateDTMF(lastDTMF, ev); dup {
+				o.log.Infow("Dropped duplicate DTMF event", "method", dtmfMethodName(ev.Method), "previousMethod", dtmfMethodName(lastDTMF.Method), "sinceLastMs", since.Milliseconds())
+				continue
+			}
+			if ev.Method != lastDTMF.Method {
+				o.log.Infow("DTMF method", "method", dtmfMethodName(ev.Method))
+			}
+			lastDTMF = ev
+			nb := ev.Number
 			digit, ok := dtmfMap[nb]
 			if !ok {
 				o.log.Warnw("Received invalid DTMF number", nil, "number", nb)
@@ -417,6 +428,24 @@ func (o *MediaOrchestrator) Start() (err error) {
 		return err
 	}
 	return o.start()
+}
+
+const dtmfDuplicateWindow = 100 * time.Millisecond
+
+func duplicateDTMF(last, ev pipeline.DTMFEvent) (time.Duration, bool) {
+	since := ev.At.Sub(last.At)
+	return since, !last.At.IsZero() && ev.Number == last.Number && since < dtmfDuplicateWindow
+}
+
+func dtmfMethodName(method int) string {
+	switch method {
+	case 1:
+		return "rfc4733"
+	case 2:
+		return "inband"
+	default:
+		return strconv.Itoa(method)
+	}
 }
 
 var dtmfMap = map[int]byte{
