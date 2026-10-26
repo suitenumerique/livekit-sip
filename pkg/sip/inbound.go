@@ -382,6 +382,11 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	s.cmu.RUnlock()
 	if existing != nil && existing.cc.InviteCSeq() < cc.InviteCSeq() {
 		existing.log().Infow("reinvite", "content-type", req.ContentType(), "content-length", req.ContentLength(), "cseq", cc.InviteCSeq())
+		if existing.cc.reinviteInFlight.Load() {
+			existing.log().Infow("re-INVITE received while our re-INVITE is pending (glare), answering 491", "cseq", cc.InviteCSeq())
+			cc.respond(statusRequestPending, "Request Pending")
+			return nil
+		}
 		existing.cc.resetRefreshTimer()
 		existing.cc.mu.RLock()
 		cc.sessionExpires = existing.cc.sessionExpires
@@ -1841,7 +1846,11 @@ type sipInbound struct {
 	refreshTimer   *time.Timer
 
 	callTimeout *time.Timer
+
+	reinviteInFlight atomic.Bool
 }
+
+const statusRequestPending sip.StatusCode = 491
 
 func (c *sipInbound) SetCall(call *inboundCall) {
 	c.call = call
@@ -2468,6 +2477,8 @@ func (c *sipInbound) SendReInvite(ctx context.Context, offerSDP []byte) (*sip.Re
 	if !ok {
 		return nil, fmt.Errorf("call not established")
 	}
+	c.reinviteInFlight.Store(true)
+	defer c.reinviteInFlight.Store(false)
 
 	req := sip.NewRequest(sip.INVITE, c.invite.Recipient)
 	req.SipVersion = c.invite.SipVersion
