@@ -13,6 +13,10 @@ import (
 
 const selectorSilence = 2 * time.Second
 
+// SelectorSwitchMessage is the element message posted when an input-selector
+// switches to another branch.
+const SelectorSwitchMessage = "input-selector-switched"
+
 // selectorActivity tracks per-branch buffer activity on an input-selector.
 type selectorActivity struct {
 	mu         sync.Mutex
@@ -39,7 +43,7 @@ func (a *selectorActivity) forget(name string) {
 // buffer arrives on a non-active branch while the active branch has been
 // silent for more than selectorSilence, the selector switches to that branch
 // and a keyframe is requested from it.
-func watchSelectorSink(self *gst.Bin, e *SipCompositor, sink *gst.Pad, label string, branch func(*SipCompositor) (*gst.Element, *selectorActivity)) {
+func watchSelectorSink(self *gst.Bin, e *SipCompositor, sink *gst.Pad, label string, branchName string, branch func(*SipCompositor) (*gst.Element, *selectorActivity)) {
 	wself := glib.WeakRefInit(self)
 	eweak := weak.Make(e)
 
@@ -91,6 +95,11 @@ func watchSelectorSink(self *gst.Bin, e *SipCompositor, sink *gst.Pad, label str
 		}
 		if self := gst.ToGstBin(wself.Get()); self != nil {
 			self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Switched %s input-selector to active branch\npad=%s", label, name))
+			st := gst.NewStructure(SelectorSwitchMessage)
+			_ = st.SetValue("kind", label)
+			_ = st.SetValue("branch", branchName)
+			_ = st.SetValue("pad", name)
+			self.PostMessage(gst.NewElementMessage(self, st.Transfer()))
 		}
 		keyframe.PushForceKeyUnit(pad)
 		return gst.PadProbeOK

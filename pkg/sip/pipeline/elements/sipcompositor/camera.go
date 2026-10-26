@@ -85,7 +85,7 @@ func (e *SipCompositor) requestNewCameraSinkPad(self *gst.Bin, templ *gst.PadTem
 		self.Log(CAT, gst.LevelError, "Failed to get request pad from input-selector for new camera sink")
 		return nil
 	}
-	watchSelectorSink(self, e, sink, "camera", cameraBranch)
+	watchSelectorSink(self, e, sink, "camera", name, cameraBranch)
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
 	if gpad == nil {

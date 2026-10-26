@@ -42,6 +42,7 @@ type SipTrack struct {
 	RtcpSink    *gst.Element
 	RtpFilter   *gst.Element
 	continuity  *rtpContinuity
+	rx          *rxCounter
 
 	deviceRtcpAddr  *net.UDPAddr
 	keyframeMu      sync.Mutex
@@ -179,6 +180,7 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 		RtcpSink:   rtcpSink,
 		RtpFilter:  rtpFilter,
 		continuity: &rtpContinuity{},
+		rx:         &rxCounter{},
 	}, nil
 }
 
@@ -269,6 +271,7 @@ func (t *SipTrack) Init(e *SipBin, self *gst.Bin, media *gstsdp.Media, session *
 	if ret := t.RtpSrc.GetStaticPad("src").Link(sendRtpSink); ret != gst.PadLinkOK {
 		return fmt.Errorf("failed to link RTP source to RTP sink: %v", ret)
 	}
+	t.watchRx(sendRtpSink)
 
 	sendRtcpSink := e.RtpBin.GetRequestPad(fmt.Sprintf("recv_rtcp_sink_%d", t.Kind))
 	if sendRtcpSink == nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/apperror"
+	"github.com/livekit/sip/pkg/sip/pipeline/elements/sipcompositor"
 )
 
 func (p *Pipeline) SetupBus() {
@@ -105,6 +106,14 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 			case p.dtmfCh <- DTMFEvent{Number: nb, Method: method, At: time.Now()}:
 			default:
 				pipeline.Log(CAT, gst.LevelWarning, fmt.Sprintf("DTMF queue full, dropping digit\nseq=%d", seq))
+			}
+			return true
+		case sipcompositor.SelectorSwitchMessage:
+			if p.SipIo != nil {
+				kind, _ := structure.GetValue("kind")
+				branch, _ := structure.GetValue("branch")
+				pad, _ := structure.GetValue("pad")
+				p.SipIo.log.Infow("Switched input-selector to another branch", "kind", kind, "branch", branch, "pad", pad)
 			}
 			return true
 		default:

@@ -85,7 +85,7 @@ func (e *SipCompositor) requestNewScreenshareSinkPad(self *gst.Bin, templ *gst.P
 		self.Log(CAT, gst.LevelError, "Failed to get request pad from input-selector for new screenshare sink")
 		return nil
 	}
-	watchSelectorSink(self, e, sink, "screenshare", screenshareBranch)
+	watchSelectorSink(self, e, sink, "screenshare", name, screenshareBranch)
 
 	gpad := gst.NewGhostPadFromTemplate(name, sink, templ)
 	if gpad == nil {

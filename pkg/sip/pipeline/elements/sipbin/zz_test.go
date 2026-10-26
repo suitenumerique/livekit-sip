@@ -2549,6 +2549,7 @@ func TestMediaFlow_AudioReceive(t *testing.T) {
 	time.Sleep(4 * time.Second)
 
 	dumpDot(t, f.pipeline, "audio_receive")
+	assertRxDiag(t, f.sipbin, livekit.TrackSource_MICROPHONE, 0)
 
 	if err := f.pipeline.SetState(gst.StateNull); err != nil {
 		t.Fatal("failed to set pipeline to NULL:", err)
@@ -2562,6 +2563,51 @@ func TestMediaFlow_AudioReceive(t *testing.T) {
 
 	f.pipeline = nil
 	f.sipbin = nil
+}
+
+// assertRxDiag checks that the RTP of kind reached the rtpbin with payload
+// type pt and that its udpsrc is running.
+func assertRxDiag(t *testing.T, sipbin *gst.Element, kind livekit.TrackSource, pt uint8) {
+	t.Helper()
+	v, err := sipbin.Emit("stats")
+	if err != nil {
+		t.Fatal("failed to emit stats:", err)
+	}
+	st, ok := v.(*gst.Structure)
+	if !ok {
+		t.Fatalf("stats is %T", v)
+	}
+	sv, err := st.GetValue(kind.String())
+	if err != nil {
+		t.Fatal("no stats for", kind, err)
+	}
+	stats, ok := sv.(glib.ArbitraryValue).Data.(*RTPSessionStats)
+	if !ok || stats.Rx == nil {
+		t.Fatalf("no receive diagnostics for %s", kind)
+	}
+	rx := stats.Rx
+	t.Logf("%s rx: %+v", kind, *rx)
+	if rx.InPackets == 0 || rx.InByPT[pt] == 0 || rx.LastPT != int(pt) {
+		t.Fatalf("RTP with payload type %d not counted: %+v", pt, *rx)
+	}
+	var received uint64
+	for _, src := range stats.Sources {
+		if !src.Internal {
+			received += src.PacketsReceived
+			if rx.InBySSRC[src.SSRC] < src.PacketsReceived {
+				t.Fatalf("ssrc %d: %d entered the rtpbin, %d counted by the session", src.SSRC, rx.InBySSRC[src.SSRC], src.PacketsReceived)
+			}
+		}
+	}
+	if received == 0 {
+		t.Fatal("no remote source received RTP")
+	}
+	if rx.UdpsrcFlow != "ok" || rx.UdpsrcTask != "started" {
+		t.Fatalf("udpsrc not running: flow=%s task=%s", rx.UdpsrcFlow, rx.UdpsrcTask)
+	}
+	if _, err := os.Stat("/proc/net/udp"); err == nil && (rx.SocketQueued < 0 || rx.SocketDrops < 0) {
+		t.Fatalf("socket queue unknown: queued=%d drops=%d", rx.SocketQueued, rx.SocketDrops)
+	}
 }
 
 func TestMediaFlow_AudioAndVideoReceive(t *testing.T) {

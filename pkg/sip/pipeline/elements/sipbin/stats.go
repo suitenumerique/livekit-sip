@@ -2,6 +2,7 @@ package sipbin
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
@@ -16,6 +17,7 @@ type RTPSessionStats struct {
 	RecvRtxReqCount uint32
 	SentRtxReqCount uint32
 	Sources         []RTPSourceStats
+	Rx              *RxDiag
 }
 
 type RTPSourceStats struct {
@@ -114,6 +116,7 @@ func (e *SipBin) DumpStats(self *gst.Bin) *gst.Structure {
 		if stats == nil {
 			continue
 		}
+		stats.Rx = e.Tracks[i].rxDiag(time.Now())
 		for _, src := range stats.Sources {
 			if !src.Internal {
 				totalRxBytes += src.BytesReceived

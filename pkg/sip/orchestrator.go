@@ -74,6 +74,7 @@ type MediaOrchestrator struct {
 
 	stats    atomic.Pointer[pipeline.CallStats]
 	activity rtpActivity
+	stall    rtpStall
 
 	state MediaState
 	wg    sync.WaitGroup
@@ -180,9 +181,44 @@ func (o *MediaOrchestrator) UpdateStats() {
 		if stats == nil {
 			return
 		}
-		o.activity.observe(stats, time.Now())
+		now := time.Now()
+		o.activity.observe(stats, now)
+		for _, ev := range o.stall.observe(stats, now) {
+			o.logRtpStall(ev)
+		}
 		o.stats.Store(stats)
 	}
+}
+
+func (o *MediaOrchestrator) logRtpStall(ev rtpStallEvent) {
+	if ev.Resumed {
+		o.log.Infow("device RTP resumed", "kind", ev.Kind, "ssrc", ev.Source.SSRC, "stalledFor", ev.Duration, "packetsReceived", ev.Source.PacketsReceived)
+		return
+	}
+	entered, notCounted := int64(-1), int64(-1)
+	if ev.Rx != nil {
+		if n, ok := ev.Rx.InBySSRC[ev.Source.SSRC]; ok {
+			entered = int64(n)
+			notCounted = entered - int64(ev.Source.PacketsReceived)
+		}
+	}
+	var branches []pipeline.RecvBranch
+	if o.pipeline != nil && !o.pipeline.Closed() {
+		branches = o.pipeline.RecvBranches(uint(ev.Session), ev.Source.SSRC)
+	}
+	o.log.Errorw("device RTP stopped while its RTCP sender reports continue", nil,
+		"kind", ev.Kind,
+		"ssrc", ev.Source.SSRC,
+		"rtpFrom", ev.Source.RTPFrom,
+		"rtcpFrom", ev.Source.RTCPFrom,
+		"packetsReceived", ev.Source.PacketsReceived,
+		"srPacketCount", ev.Source.SRPacketCount,
+		"srPacketsSinceLastCheck", ev.SRDelta,
+		"enteredRtpbin", entered,
+		"notCountedByRtpSession", notCounted,
+		"rx", ev.Rx,
+		"branches", branches,
+	)
 }
 
 func (o *MediaOrchestrator) Stats() *pipeline.CallStats {
@@ -388,7 +424,7 @@ func (o *MediaOrchestrator) handleSendOffer(offer string) error {
 		// 491 Request Pending = glare: the device sent its own re-INVITE
 		// concurrently with ours. Expected — our offer is rolled back and the
 		// device's re-INVITE is handled on the inbound path. Not an error.
-		if resp.StatusCode == 491 {
+		if resp.StatusCode == statusRequestPending {
 			o.log.Infow("re-INVITE superseded by concurrent device re-INVITE (glare); rolled back", "status", resp.StatusCode)
 			return nil
 		}

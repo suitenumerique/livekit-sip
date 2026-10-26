@@ -220,9 +220,11 @@ func (sio *SipIo) binPadAddedRecvRtpSrc(_ *gst.Element, pad *gst.Pad) {
 
 	// A second pad for the same (session, SSRC) is a payload type switch.
 	prefix := fmt.Sprintf("%d_%d_", session, ssrc)
+	switched := false
 	for key := range sio.hops {
 		if strings.HasPrefix(key, prefix) && key != fmt.Sprintf("%d_%d_%d", session, ssrc, pt) {
 			sio.log.Infow("Payload type switch detected on receive stream", "session", session, "ssrc", ssrc, "newPt", pt, "existingHop", key)
+			switched = true
 		}
 	}
 
@@ -270,6 +272,9 @@ func (sio *SipIo) binPadAddedRecvRtpSrc(_ *gst.Element, pad *gst.Pad) {
 	}
 
 	sio.log.Infow("Linked new recv RTP src pad from rtpbin to sipbin sink pad", "session", session, "ssrc", ssrc, "pt", pt)
+	if switched {
+		sio.logRecvBranchesLater(session, uint32(ssrc), pt)
+	}
 }
 
 func (sio *SipIo) binPadRemoved(_ *gst.Element, pad *gst.Pad) {
