@@ -50,6 +50,13 @@ var sinkTrackProperties = []*glib.ParamSpec{
 		glib.TYPE_ARBITRARY_DATA,
 		glib.ParameterWritable|glib.ParameterConstructOnly,
 	),
+	glib.NewBoxedParam(
+		"track-factory",
+		"Track Factory",
+		"Creates the primary and backup webrtc tracks for a new publication",
+		glib.TYPE_ARBITRARY_DATA,
+		glib.ParameterWritable|glib.ParameterConstructOnly,
+	),
 	glib.NewBoolParam(
 		"use-backup",
 		"Use Backup Track",
@@ -59,9 +66,14 @@ var sinkTrackProperties = []*glib.ParamSpec{
 	),
 }
 
+// TrackFactory creates the primary and the optional backup track of a publication.
+type TrackFactory func() (*lksdk.LocalTrack, *lksdk.LocalTrack, error)
+
 type SinkTrack struct {
-	track       *lksdk.LocalTrack
-	backupTrack *lksdk.LocalTrack
+	track       atomic.Pointer[lksdk.LocalTrack]
+	backupTrack atomic.Pointer[lksdk.LocalTrack]
+	factory     TrackFactory
+	stale       atomic.Bool
 	pub         atomic.Pointer[lksdk.LocalTrackPublication]
 	lp          *lksdk.LocalParticipant
 	opts        *lksdk.TrackPublicationOptions
@@ -105,7 +117,7 @@ func (s *SinkTrack) InstanceInit(instance *glib.Object) {
 
 func (s *SinkTrack) Constructed(instance *glib.Object) {
 	self := base.ToGstBaseSink(instance)
-	if s.track == nil || s.lp == nil {
+	if s.track.Load() == nil || s.lp == nil {
 		self.Log(CAT, gst.LevelError, "Track, publication, or participant is not set in sink_track")
 		self.Error("Track, publication, or participant is not set", errors.New("one or more required fields are nil"))
 		return
@@ -127,7 +139,7 @@ func (s *SinkTrack) GetCaps(self *base.GstBaseSink, filter *gst.Caps) *gst.Caps 
 }
 
 func (s *SinkTrack) Start(self *base.GstBaseSink) bool {
-	if s.track == nil {
+	if s.track.Load() == nil {
 		self.Log(CAT, gst.LevelError, "Track is not set in sink_track")
 		self.Error("Track is not set", errors.New("track is nil"))
 		return false
@@ -147,7 +159,8 @@ func (s *SinkTrack) Stop(self *base.GstBaseSink) bool {
 }
 
 func (s *SinkTrack) Render(self *base.GstBaseSink, buffer *gst.Buffer) gst.FlowReturn {
-	if s.track == nil {
+	track := s.track.Load()
+	if track == nil {
 		self.Log(CAT, gst.LevelError, "Track is not set in sink_track")
 		self.Error("Track is not set", errors.New("track is nil"))
 		return gst.FlowError
@@ -166,11 +179,10 @@ func (s *SinkTrack) Render(self *base.GstBaseSink, buffer *gst.Buffer) gst.FlowR
 		return gst.FlowError
 	}
 
-	var track *lksdk.LocalTrack
-	if s.useBackup.Load() && s.backupTrack != nil {
-		track = s.backupTrack
-	} else {
-		track = s.track
+	if s.useBackup.Load() {
+		if backup := s.backupTrack.Load(); backup != nil {
+			track = backup
+		}
 	}
 
 	if err := track.WriteRTP(&s.rtp, nil); err != nil {
@@ -188,9 +200,40 @@ func (s *SinkTrack) unPublish(self *base.GstBaseSink) {
 		return
 	}
 
+	s.stale.Store(true)
 	if err := s.lp.UnpublishTrack(pub.SID()); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to unpublish track\nerr=%v", err))
 	}
+}
+
+// renewTracks replaces the tracks with new ones, which carry new track ids.
+func (s *SinkTrack) renewTracks() (oldID, newID string, err error) {
+	if s.factory == nil {
+		return "", "", errors.New("no track factory")
+	}
+	track, backup, err := s.factory()
+	if err != nil {
+		return "", "", err
+	}
+	if track == nil {
+		return "", "", errors.New("track factory returned no track")
+	}
+	if old := s.track.Swap(track); old != nil {
+		oldID = old.ID()
+	}
+	s.backupTrack.Store(backup)
+	s.stale.Store(false)
+	return oldID, track.ID(), nil
+}
+
+func (s *SinkTrack) renewTracksLogged(self *base.GstBaseSink, reason string) bool {
+	oldID, newID, err := s.renewTracks()
+	if err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to create new tracks\nreason=%s\nerr=%v", reason, err))
+		return false
+	}
+	self.Log(CAT, gst.LevelInfo, fmt.Sprintf("Renewed tracks before publishing\nreason=%s\nold_track=%s\nnew_track=%s", reason, oldID, newID))
+	return true
 }
 
 // publishAsync publishes the track from a goroutine.
@@ -218,11 +261,14 @@ func (s *SinkTrack) publish(self *base.GstBaseSink) {
 	}
 	defer s.publishing.Store(false)
 
-	var pubOpts []lksdk.LocalTrackPublishOption
-	if s.backupTrack != nil {
-		pubOpts = append(pubOpts, lksdk.WithBackupCodec(s.backupTrack))
+	if s.stale.Load() && s.factory != nil {
+		s.renewTracksLogged(self, "republish")
 	}
-	pub, err := s.lp.PublishTrack(s.track, s.opts, pubOpts...)
+	pub, err := s.publishTracks()
+	if errors.Is(err, lksdk.ErrTrackPublishTimeout) && !s.stopped.Load() && !s.off.Load() && s.factory != nil && s.renewTracksLogged(self, "publish timeout") {
+		self.Log(CAT, gst.LevelWarning, "Track publish timed out, retrying with new tracks")
+		pub, err = s.publishTracks()
+	}
 	if err != nil {
 		if s.stopped.Load() || s.off.Load() {
 			self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to publish track no longer wanted\nerr=%v", err))
@@ -240,8 +286,8 @@ func (s *SinkTrack) publish(self *base.GstBaseSink) {
 	}
 
 	// Warn when neither the primary nor the backup track binds within 10s.
-	track := s.track
-	backupTrack := s.backupTrack
+	track := s.track.Load()
+	backupTrack := s.backupTrack.Load()
 	name := s.opts.Name
 	time.AfterFunc(10*time.Second, func() {
 		if s.pub.Load() == nil {
@@ -278,8 +324,18 @@ func (s *SinkTrack) Event(self *base.GstBaseSink, event *gst.Event) bool {
 	return self.ParentEvent(event)
 }
 
+func (s *SinkTrack) publishTracks() (*lksdk.LocalTrackPublication, error) {
+	var pubOpts []lksdk.LocalTrackPublishOption
+	if backup := s.backupTrack.Load(); backup != nil {
+		pubOpts = append(pubOpts, lksdk.WithBackupCodec(backup))
+	}
+	return s.lp.PublishTrack(s.track.Load(), s.opts, pubOpts...)
+}
+
 func (s *SinkTrack) Finalize(instance *glib.Object) {
-	s.track = nil
+	s.track.Store(nil)
+	s.backupTrack.Store(nil)
+	s.factory = nil
 	s.pub.Store(nil)
 	s.lp = nil
 }
@@ -310,7 +366,7 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			self.Error("Invalid data type for track property", fmt.Errorf("expected *lksdk.LocalTrack, got %T", data.Data))
 			return
 		}
-		s.track = track
+		s.track.Store(track)
 	case "backupTrack":
 		gv, err := value.GoValue()
 		if err != nil {
@@ -333,7 +389,23 @@ func (s *SinkTrack) SetProperty(instance *glib.Object, id uint, value *glib.Valu
 			self.Error("Invalid data type for track property", fmt.Errorf("expected *lksdk.LocalTrack, got %T", data.Data))
 			return
 		}
-		s.backupTrack = track
+		s.backupTrack.Store(track)
+	case "track-factory":
+		gv, err := value.GoValue()
+		if err != nil {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to get Go value for track-factory property\nerr=%v", err))
+			return
+		}
+		data, ok := gv.(glib.ArbitraryValue)
+		if !ok || data.Data == nil {
+			return
+		}
+		factory, ok := data.Data.(TrackFactory)
+		if !ok {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Invalid data type for track-factory property\ntype=%T", data.Data))
+			return
+		}
+		s.factory = factory
 	case "pub":
 		gv, err := value.GoValue()
 		if err != nil {

@@ -71,55 +71,64 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 		}))
 	}
 
-	track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
-		MimeType: mimeType,
-	}, trackOpts...)
-	if err != nil {
-		return fmt.Errorf("failed to create new local track: %w", err)
-	}
-
-	track.OnBind(func() {
-		p := pweak.Value()
-		self := gst.ToGstBin(wself.Get())
-		caps := mimeTypeToCaps(mimeType)
-		if p == nil || self == nil {
-			return
-		}
-		if p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
-			if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter\nsource=%s\nerr=%v", kind.String(), err))
-			}
-			if err := p.TrackSink.SetProperty("use-backup", false); err != nil {
-				self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set use-backup on track sink\nsource=%s\nerr=%v", kind.String(), err))
-			}
-		}
-	})
-
-	var backupTrack *lksdk.LocalTrack
-	if mimeType != backupMimeType {
-		backupTrack, err = lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
-			MimeType: backupMimeType,
+	newTracks := func() (*lksdk.LocalTrack, *lksdk.LocalTrack, error) {
+		track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
+			MimeType: mimeType,
 		}, trackOpts...)
 		if err != nil {
-			return fmt.Errorf("failed to create new backup local track: %w", err)
+			return nil, nil, fmt.Errorf("failed to create new local track: %w", err)
 		}
 
-		backupTrack.OnBind(func() {
+		track.OnBind(func() {
 			p := pweak.Value()
 			self := gst.ToGstBin(wself.Get())
+			caps := mimeTypeToCaps(mimeType)
 			if p == nil || self == nil {
 				return
 			}
-			caps := mimeTypeToCaps(backupMimeType)
 			if p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
 				if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
 					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter\nsource=%s\nerr=%v", kind.String(), err))
 				}
-				if err := p.TrackSink.SetProperty("use-backup", true); err != nil {
+				if err := p.TrackSink.SetProperty("use-backup", false); err != nil {
 					self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set use-backup on track sink\nsource=%s\nerr=%v", kind.String(), err))
 				}
 			}
 		})
+
+		var backupTrack *lksdk.LocalTrack
+		if mimeType != backupMimeType {
+			backupTrack, err = lksdk.NewLocalTrack(webrtc.RTPCodecCapability{
+				MimeType: backupMimeType,
+			}, trackOpts...)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create new backup local track: %w", err)
+			}
+
+			backupTrack.OnBind(func() {
+				p := pweak.Value()
+				self := gst.ToGstBin(wself.Get())
+				if p == nil || self == nil {
+					return
+				}
+				caps := mimeTypeToCaps(backupMimeType)
+				if p.TrackSink != nil && p.FormatFilter != nil && caps != nil {
+					if err := p.FormatFilter.SetProperty("caps", caps); err != nil {
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set caps on format filter\nsource=%s\nerr=%v", kind.String(), err))
+					}
+					if err := p.TrackSink.SetProperty("use-backup", true); err != nil {
+						self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set use-backup on track sink\nsource=%s\nerr=%v", kind.String(), err))
+					}
+				}
+			})
+		}
+
+		return track, backupTrack, nil
+	}
+
+	track, backupTrack, err := newTracks()
+	if err != nil {
+		return err
 	}
 
 	queue, err := gst.NewElementWithProperties("queue", map[string]interface{}{})
@@ -142,8 +151,9 @@ func (p *LivekitBinPublication) Init(e *LivekitBin, self *gst.Bin, kind livekit.
 	}
 
 	element, err := gst.NewElementWithProperties("livekitbin_sinktrack", map[string]interface{}{
-		"track":       glib.ArbitraryValue{Data: track},
-		"backupTrack": glib.ArbitraryValue{Data: backupTrack},
+		"track":         glib.ArbitraryValue{Data: track},
+		"backupTrack":   glib.ArbitraryValue{Data: backupTrack},
+		"track-factory": glib.ArbitraryValue{Data: livekittracks.TrackFactory(newTracks)},
 		// "pub":   glib.ArbitraryValue{Data: pub},
 		"opts": glib.ArbitraryValue{Data: pubOpts},
 		"lp":   glib.ArbitraryValue{Data: e.room.LocalParticipant},
