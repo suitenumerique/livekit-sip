@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,25 +37,25 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/sipbin"
 )
 
-// TestT023PayloadTypeSwitchSoak replays the Cisco sequence of T-023 on the
+// TestPayloadTypeSwitchSoak replays the Cisco payload type renumbering on the
 // production receive path (sipbin, hop, iosip): H264 on PT 96, re-INVITE, PT
 // 98 for 70 ms then PT 126 on the same SSRC, with packet loss. It fails when
 // the RTP session stops counting packets while the sender keeps sending, or
 // when the pipeline does not reach NULL.
-// LKSIP_T023_MINUTES sets the duration; the test is skipped without it.
-func TestT023PayloadTypeSwitchSoak(t *testing.T) {
-	minutes, _ := strconv.Atoi(os.Getenv("LKSIP_T023_MINUTES"))
+// LKSIP_PT_SWITCH_MINUTES sets the duration; the test is skipped without it.
+func TestPayloadTypeSwitchSoak(t *testing.T) {
+	minutes, _ := strconv.Atoi(os.Getenv("LKSIP_PT_SWITCH_MINUTES"))
 	if minutes <= 0 {
-		t.Skip("LKSIP_T023_MINUTES not set")
+		t.Skip("LKSIP_PT_SWITCH_MINUTES not set")
 	}
-	lossPermille, _ := strconv.Atoi(os.Getenv("LKSIP_T023_LOSS_PERMILLE"))
-	withAudio := os.Getenv("LKSIP_T023_AUDIO") != ""
+	lossPermille, _ := strconv.Atoi(os.Getenv("LKSIP_PT_SWITCH_LOSS_PERMILLE"))
+	withAudio := os.Getenv("LKSIP_PT_SWITCH_AUDIO") != ""
 
 	loop := glib.NewMainLoop(glib.MainContextDefault(), false)
 	go loop.Run()
 	defer loop.Quit()
 
-	pl, err := gst.NewPipeline("t023")
+	pl, err := gst.NewPipeline("pt-switch")
 	require.NoError(t, err)
 
 	formats, err := glib.NewArray([]interface{}{
@@ -83,6 +84,8 @@ func TestT023PayloadTypeSwitchSoak(t *testing.T) {
 	require.NoError(t, pl.AddMany(sb, io))
 
 	var branches atomic.Int32
+	var hopMu sync.Mutex
+	hopSrcs := map[string]*gst.Element{}
 	sb.Connect("pad-added", func(_ *gst.Element, pad *gst.Pad) {
 		name := pad.GetName()
 		var session, ssrc, pt uint
@@ -105,6 +108,9 @@ func TestT023PayloadTypeSwitchSoak(t *testing.T) {
 		hsrc.SyncStateWithParent()
 		hs.SyncStateWithParent()
 		branches.Add(1)
+		hopMu.Lock()
+		hopSrcs[fmt.Sprintf("%d_%d", session, pt)] = hsrc
+		hopMu.Unlock()
 		t.Logf("%s linked recv branch session=%d ssrc=%d pt=%d", time.Now().Format("15:04:05.000"), session, ssrc, pt)
 	})
 	io.Connect("pad-added", func(_ *gst.Element, pad *gst.Pad) {
@@ -197,7 +203,7 @@ func TestT023PayloadTypeSwitchSoak(t *testing.T) {
 	})
 	require.NoError(t, err)
 	enc, err := gst.NewElementWithProperties("x264enc", map[string]interface{}{
-		"tune": 0x4, "speed-preset": 1, "key-int-max": 150, "bframes": 0, "bitrate": 300,
+		"tune": 0x4, "speed-preset": 1, "key-int-max": 8, "bframes": 0, "bitrate": 300,
 	})
 	require.NoError(t, err)
 	pay, err := gst.NewElementWithProperties("rtph264pay", map[string]interface{}{
@@ -277,6 +283,22 @@ func TestT023PayloadTypeSwitchSoak(t *testing.T) {
 	time.Sleep(70 * time.Millisecond)
 	require.NoError(t, pay.SetProperty("pt", uint(126)))
 
+	time.Sleep(10 * time.Second)
+	hopMu.Lock()
+	newestActive := false
+	for key, hsrc := range hopSrcs {
+		path, sel, active := walkDownstream(hsrc.GetStaticPad("src"), recvWalkDepth)
+		t.Logf("branch %s selector=%s active=%t path=%v", key, sel, active, path)
+		if key == "1_126" {
+			newestActive = active
+		}
+	}
+	hopMu.Unlock()
+	if !newestActive {
+		closeSoak(t, pl)
+		t.Fatal("the camera selector stayed on a branch that no longer receives RTP")
+	}
+
 	deadline := time.Now().Add(time.Duration(minutes) * time.Minute)
 	var lastRecv, lastSent uint64
 	flat := 0
@@ -295,9 +317,9 @@ func TestT023PayloadTypeSwitchSoak(t *testing.T) {
 				t.Logf("rx: %+v", *rx)
 			}
 			t.Logf("threads:\n%s", threadSummary())
-			dumpSoakDot(t, pl, "t023-frozen")
+			dumpSoakDot(t, pl, "pt-switch-frozen")
 			closeSoak(t, pl)
-			t.Fatal("T-023 reproduced: the RTP session stopped counting packets")
+			t.Fatal("the RTP session stopped counting packets")
 		}
 		if tick%30 == 0 {
 			t.Logf("%s received=%d sent=%d dropped=%d branches=%d", time.Now().Format("15:04:05"), recv, s, dropped.Load(), branches.Load())
@@ -320,7 +342,7 @@ func closeSoak(t *testing.T, pl *gst.Pipeline) {
 }
 
 func dumpSoakDot(t *testing.T, pl *gst.Pipeline, name string) {
-	dir := os.Getenv("LKSIP_T023_DOT_DIR")
+	dir := os.Getenv("LKSIP_PT_SWITCH_DOT_DIR")
 	if dir == "" {
 		return
 	}

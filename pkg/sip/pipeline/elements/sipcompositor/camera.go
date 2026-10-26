@@ -31,7 +31,9 @@ func (e *SipCompositor) initCamera(self *gst.Bin) error {
 	e.SipCompositorCamera = &SipCompositorCamera{}
 
 	var err error
-	e.SipCompositorCamera.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{})
+	e.SipCompositorCamera.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{
+		"sync-streams": false,
+	})
 	if err != nil {
 		return err
 	}

@@ -31,7 +31,9 @@ func (e *SipCompositor) initScreenshare(self *gst.Bin) error {
 	e.SipCompositorScreenshare = &SipCompositorScreenshare{}
 
 	var err error
-	e.SipCompositorScreenshare.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{})
+	e.SipCompositorScreenshare.InputSelector, err = gst.NewElementWithProperties("input-selector", map[string]interface{}{
+		"sync-streams": false,
+	})
 	if err != nil {
 		return err
 	}
