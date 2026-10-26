@@ -92,12 +92,74 @@ func TestStuckElements(t *testing.T) {
 
 	report := stuckElements(pipeline)
 	require.Contains(t, report, "\npipeline=PLAYING:")
-	require.Contains(t, report, "fakesrc/src:PLAYING:")
-	require.Contains(t, report, "fakesink/sink:PLAYING:")
+	require.Contains(t, report, "\nunsettled=none")
+	require.Contains(t, report, "\nplaying=2")
 	require.Contains(t, report, "\nblocked_pads=none")
+	require.Regexp(t, `\ntasks=fakesrc/src\.src:started:ok:[RS]`, report)
 
 	require.NoError(t, pipeline.SetState(gst.StateNull))
 	report = stuckElements(pipeline)
 	require.True(t, strings.HasPrefix(report, "\npipeline=NULL:SUCCESS"), report)
-	require.Contains(t, report, "\nnot_null=none")
+	require.Contains(t, report, "\nunsettled=none")
+	require.Contains(t, report, "\nplaying=0")
+	require.Contains(t, report, "\ntasks=none")
+}
+
+func TestStuckElementsListsUnsettledFirst(t *testing.T) {
+	gst.Init(nil)
+	pipeline, err := gst.NewPipelineFromString("fakesrc is-live=true name=src ! fakesink sync=false name=sink")
+	require.NoError(t, err)
+	defer pipeline.SetState(gst.StateNull)
+	sink, err := pipeline.GetElementByName("sink")
+	require.NoError(t, err)
+	require.NoError(t, sink.SetLockedState(true))
+	require.NoError(t, sink.SetState(gst.StateReady))
+	require.NoError(t, pipeline.SetState(gst.StatePlaying))
+	time.Sleep(200 * time.Millisecond)
+
+	report := stuckElements(pipeline)
+	require.Contains(t, report, "\nunsettled=fakesink/sink:READY:")
+	require.Contains(t, report, "\nplaying=1")
+	require.Contains(t, report, "\ntasks=fakesrc/src.src:paused:flushing:")
+}
+
+func TestQuiesceElements(t *testing.T) {
+	gst.Init(nil)
+	pipeline, err := gst.NewPipelineFromString("audiotestsrc is-live=true name=src ! audiomixer name=mix ! fakesink sync=true name=sink")
+	require.NoError(t, err)
+	require.NoError(t, pipeline.SetState(gst.StatePlaying))
+	require.Eventually(t, func() bool { return pipeline.GetCurrentState() == gst.StatePlaying }, 5*time.Second, 10*time.Millisecond)
+
+	elems, err := pipeline.GetElementsRecursive()
+	require.NoError(t, err)
+	ordered := orderForQuiesce(append(elems, elems...))
+	require.Len(t, ordered, 3)
+	require.Equal(t, "src", ordered[0].GetName())
+
+	quiesceElements(pipeline, elems)
+	for _, e := range elems {
+		require.Equal(t, gst.StateNull, e.GetCurrentState(), e.GetName())
+	}
+
+	require.NoError(t, pipeline.SetState(gst.StatePlaying))
+	for _, e := range elems {
+		require.Equal(t, gst.StateNull, e.GetCurrentState(), e.GetName())
+	}
+	require.NoError(t, pipeline.SetState(gst.StateNull))
+}
+
+func TestParkedPipelinesCount(t *testing.T) {
+	parkedMu.Lock()
+	saved := parked
+	parked = nil
+	parkedMu.Unlock()
+	defer func() {
+		parkedMu.Lock()
+		parked = saved
+		parkedMu.Unlock()
+	}()
+
+	require.Equal(t, 0, ParkedPipelines())
+	require.Equal(t, 0, parkElements(nil))
+	require.Equal(t, 1, ParkedPipelines())
 }

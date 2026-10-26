@@ -349,6 +349,7 @@ func (p *Pipeline) Close() error {
 
 	if !closed {
 		total := parkElements(keep)
+		go quiesceElements(pipeline, keep)
 		pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to set pipeline to null state after breaking clock: timeout waiting for null state\nstep=%s\nparked_elements=%d\nparked_total=%d", step.Load().(string), len(keep), total))
 		return fmt.Errorf("failed to set pipeline to null state")
 	}

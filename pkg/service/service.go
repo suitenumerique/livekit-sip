@@ -38,6 +38,7 @@ import (
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/sip"
+	"github.com/livekit/sip/pkg/sip/pipeline"
 	"github.com/livekit/sip/version"
 )
 
@@ -182,6 +183,8 @@ func (s *Service) Run() error {
 
 	s.log.Debugw("service ready")
 
+	go s.restartWhenIdleWithParkedPipelines()
+
 	<-s.shutdown.Watch()
 	s.log.Infow("shutting down")
 	s.DeregisterCreateSIPParticipantTopic()
@@ -207,6 +210,43 @@ func (s *Service) Run() error {
 
 	s.sipServiceStop()
 	return nil
+}
+
+const (
+	parkedCheckInterval    = 30 * time.Second
+	parkedIdleRestartDelay = 5 * time.Minute
+)
+
+func (s *Service) restartWhenIdleWithParkedPipelines() {
+	ticker := time.NewTicker(parkedCheckInterval)
+	defer ticker.Stop()
+	var idleSince time.Time
+	for {
+		select {
+		case <-s.shutdown.Watch():
+			return
+		case now := <-ticker.C:
+			parked := pipeline.ParkedPipelines()
+			active := s.sipServiceActiveCalls().Total()
+			var restart bool
+			idleSince, restart = parkedIdleRestart(parked, active, idleSince, now)
+			if restart {
+				s.log.Warnw("restarting to release pipelines that failed to close", nil, "parkedPipelines", parked)
+				s.Stop(false)
+				return
+			}
+		}
+	}
+}
+
+func parkedIdleRestart(parked, active int, idleSince, now time.Time) (time.Time, bool) {
+	if parked == 0 || active > 0 {
+		return time.Time{}, false
+	}
+	if idleSince.IsZero() {
+		return now, false
+	}
+	return idleSince, now.Sub(idleSince) >= parkedIdleRestartDelay
 }
 
 func (s *Service) GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (sip.AuthInfo, error) {

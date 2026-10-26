@@ -40,6 +40,13 @@ var (
 		Help:      "Screenshare presenter switches by outcome: frames resumed (ok), resumed after a forced keyframe (reconciled), or not at all (lost)",
 	}, []string{"result"})
 
+	parkedPipelines = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "parked_pipelines",
+		Help:      "Pipelines that failed to close and are kept referenced until the process restarts",
+	})
+
 	tracksSubscribed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "livekit",
 		Subsystem: "sip",
@@ -49,7 +56,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed)
+	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed, parkedPipelines)
 }
 
 // TrackPadError counts an rtpbin pad event that did not match a subscribed track.
@@ -70,4 +77,8 @@ func ScreenshareTransition(result string) {
 // TrackSubscribed adjusts the number of wired tracks for a source by delta.
 func TrackSubscribed(source string, delta float64) {
 	tracksSubscribed.WithLabelValues(source).Add(delta)
+}
+
+func ParkedPipelines(n int) {
+	parkedPipelines.Set(float64(n))
 }

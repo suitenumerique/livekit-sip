@@ -12,13 +12,18 @@ import (
 	"github.com/go-gst/go-gst/gst"
 
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/livekitbin"
+	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
+	"github.com/livekit/sip/pkg/sip/pipeline/threadinfo"
 )
 
 const (
 	stuckReportTimeout   = 3 * time.Second
 	stuckReportMaxItems  = 30
+	stuckReportMaxTasks  = 80
+	stuckThreadSample    = 500 * time.Millisecond
 	stuckReportMaxGroups = 15
 	stuckReportMaxStack  = 16 << 20
+	quiesceStepTimeout   = time.Second
 )
 
 var (
@@ -104,6 +109,7 @@ func parkElements(elems []*gst.Element) int {
 	parkedMu.Lock()
 	defer parkedMu.Unlock()
 	parked = append(parked, elems)
+	metrics.ParkedPipelines(len(parked))
 	total := 0
 	for _, e := range parked {
 		total += len(e)
@@ -111,23 +117,76 @@ func parkElements(elems []*gst.Element) int {
 	return total
 }
 
+func ParkedPipelines() int {
+	parkedMu.Lock()
+	defer parkedMu.Unlock()
+	return len(parked)
+}
+
+func quiesceElements(pipeline *gst.Pipeline, elems []*gst.Element) {
+	ordered := orderForQuiesce(elems)
+	stuck := 0
+	for _, e := range ordered {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = e.SetLockedState(true)
+			_ = e.SetState(gst.StateNull)
+		}()
+		select {
+		case <-done:
+		case <-time.After(quiesceStepTimeout):
+			stuck++
+		}
+	}
+	pipeline.Log(CAT, gst.LevelError, fmt.Sprintf("Parked pipeline stopped\nelements=%d\nstuck=%d", len(ordered), stuck))
+}
+
+func orderForQuiesce(elems []*gst.Element) []*gst.Element {
+	seen := make(map[uintptr]bool, len(elems))
+	var sources, others []*gst.Element
+	for _, e := range elems {
+		k := uintptr(e.Unsafe())
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if e.Has(gst.ElementFlagSource) {
+			sources = append(sources, e)
+		} else {
+			others = append(others, e)
+		}
+	}
+	return append(sources, others...)
+}
+
 func stuckElements(pipeline *gst.Pipeline) string {
 	ret, _ := pipeline.GetState(gst.VoidPending, 0)
 	head := fmt.Sprintf("\npipeline=%s:%s", pipeline.GetCurrentState(), ret)
 	elems, err := pipeline.GetElementsRecursive()
 	if err != nil {
-		return fmt.Sprintf("%s\nnot_null=error %v", head, err)
+		return fmt.Sprintf("%s\nunsettled=error %v", head, err)
 	}
-	var states, pads []string
+	before, _ := threadinfo.Take()
+	time.Sleep(stuckThreadSample)
+	after, _ := threadinfo.Take()
+
+	var unsettled, pads []string
+	var tasks []stuckTask
+	playing := 0
 	for _, e := range elems {
 		name := e.GetName()
+		label := name
 		if f := e.GetFactory(); f != nil {
-			name = f.GetName() + "/" + name
+			label = f.GetName() + "/" + name
 		}
 		cur := e.GetCurrentState()
 		ret, _ := e.GetState(gst.VoidPending, 0)
-		if cur != gst.StateNull || ret == gst.StateChangeAsync || ret == gst.StateChangeFailure {
-			states = append(states, fmt.Sprintf("%s:%s:%s", name, cur, ret))
+		switch {
+		case cur == gst.StatePlaying && ret == gst.StateChangeSuccess:
+			playing++
+		case cur != gst.StateNull || ret == gst.StateChangeAsync || ret == gst.StateChangeFailure:
+			unsettled = append(unsettled, fmt.Sprintf("%s:%s:%s", label, cur, ret))
 		}
 		elemPads, err := e.GetPads()
 		if err != nil {
@@ -142,11 +201,57 @@ func stuckElements(pipeline *gst.Pipeline) string {
 				flags = append(flags, "blocking")
 			}
 			if len(flags) > 0 {
-				pads = append(pads, fmt.Sprintf("%s.%s:%s", name, pad.GetName(), strings.Join(flags, "+")))
+				pads = append(pads, fmt.Sprintf("%s.%s:%s", label, pad.GetName(), strings.Join(flags, "+")))
+			}
+			if state := pad.GetTaskState(); state != gst.TaskStopped {
+				flow := pad.GetLastFlowReturn()
+				tasks = append(tasks, stuckTask{
+					text: fmt.Sprintf("%s.%s:%s:%s:%s", label, pad.GetName(), taskName(state), flow,
+						after.Describe(threadinfo.PadTaskName(name, pad.GetName()), before)),
+					first: state != gst.TaskStarted || flow != gst.FlowOK,
+				})
 			}
 		}
 	}
-	return fmt.Sprintf("%s\nnot_null=%s\nblocked_pads=%s", head, limitJoin(states), limitJoin(pads))
+	return fmt.Sprintf("%s\nunsettled=%s\nplaying=%d\nblocked_pads=%s\ntasks=%s", head, limitJoin(unsettled), playing, limitJoin(pads), joinTasks(tasks))
+}
+
+type stuckTask struct {
+	text  string
+	first bool
+}
+
+// joinTasks lists the pad tasks that stopped or failed first, then the others.
+func joinTasks(tasks []stuckTask) string {
+	if len(tasks) == 0 {
+		return "none"
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].first != tasks[j].first {
+			return tasks[i].first
+		}
+		return tasks[i].text < tasks[j].text
+	})
+	out := make([]string, 0, min(len(tasks), stuckReportMaxTasks)+1)
+	for i, t := range tasks {
+		if i == stuckReportMaxTasks {
+			out = append(out, fmt.Sprintf("+%d", len(tasks)-stuckReportMaxTasks))
+			break
+		}
+		out = append(out, t.text)
+	}
+	return strings.Join(out, ",")
+}
+
+func taskName(s gst.TaskState) string {
+	switch s {
+	case gst.TaskStarted:
+		return "started"
+	case gst.TaskPaused:
+		return "paused"
+	default:
+		return "stopped"
+	}
 }
 
 func limitJoin(items []string) string {
