@@ -23,7 +23,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReinviteGlareAnswers491(t *testing.T) {
+// Poly devices send a re-INVITE right after their ACK, which crosses the
+// re-INVITE we send at the same time, and they do not retry after a 491: the
+// device re-INVITE is answered and ours is rolled back when the device
+// rejects it.
+func TestReinviteGlareAcceptsDeviceOffer(t *testing.T) {
 	st := NewServiceTest(t, nil)
 	pinDispatch(st)
 	call, ic := st.CreateInboundCall(t)
@@ -49,27 +53,18 @@ func TestReinviteGlareAnswers491(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("our re-INVITE never reached the device")
 	}
-	require.True(t, ic.cc.reinviteInFlight.Load())
 
 	req, _, err := call.Invite(call.localSDP)
 	require.NoError(t, err)
 	resp := st.TestUA.TransactionRequest(t, req, true)
-	require.Equal(t, statusRequestPending, resp.StatusCode, "the device re-INVITE crossing ours gets 491")
+	require.Equal(t, sip.StatusCode(200), resp.StatusCode, "the device re-INVITE crossing ours is answered")
 
-	answer := sip.NewResponseFromRequest(pending.req, 200, "OK", call.localSDP)
-	answer.AppendHeader(&contentTypeHeaderSDP)
-	require.NoError(t, pending.tx.Respond(answer))
+	require.NoError(t, pending.tx.Respond(sip.NewResponseFromRequest(pending.req, statusRequestPending, "Request Pending", nil)))
 	select {
 	case resp := <-ours:
 		require.NotNil(t, resp)
-		require.Equal(t, sip.StatusCode(200), resp.StatusCode)
+		require.Equal(t, statusRequestPending, resp.StatusCode)
 	case <-ctx.Done():
 		t.Fatal("our re-INVITE never completed")
 	}
-	require.False(t, ic.cc.reinviteInFlight.Load())
-
-	req, _, err = call.Invite(call.localSDP)
-	require.NoError(t, err)
-	resp = st.TestUA.TransactionRequest(t, req, true)
-	require.Equal(t, sip.StatusCode(200), resp.StatusCode, "the device retry after the glare is accepted")
 }
