@@ -6,11 +6,12 @@ import (
 
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
+	"github.com/livekit/psrpc"
 
 	"github.com/livekit/sip/pkg/sip"
 )
 
-func GetAuthCredentials(ctx context.Context, psrpcClient rpc.IOInfoClient, call *rpc.SIPCall) (sip.AuthInfo, error) {
+func GetAuthCredentials(ctx context.Context, psrpcClient rpc.IOInfoSIPClient, call *rpc.SIPCall) (sip.AuthInfo, error) {
 	ctx, span := sip.Tracer.Start(ctx, "service.GetAuthCredentials")
 	defer span.End()
 	resp, err := psrpcClient.GetSIPTrunkAuthentication(ctx, &rpc.GetSIPTrunkAuthenticationRequest{
@@ -25,30 +26,40 @@ func GetAuthCredentials(ctx context.Context, psrpcClient rpc.IOInfoClient, call 
 	})
 
 	if err != nil {
+		if code, ok := psrpc.GetErrorCode(err); ok && isAuthRejectionCode(code) {
+			logger.GetLogger().Warnw("auth service returned a rejection as an error", err,
+				"callID", call.LkCallId, "code", code)
+			return sip.AuthInfo{Result: sip.AuthRejectedAsError}, nil
+		}
 		return sip.AuthInfo{}, err
 	}
 
-	// Handle specific authentication error codes
-	switch resp.ErrorCode {
-	case rpc.SIPTrunkAuthenticationError_SIP_TRUNK_AUTH_ERROR_QUOTA_EXCEEDED:
+	if resp.ErrorCode != rpc.SIPTrunkAuthenticationError_SIP_TRUNK_AUTH_ERROR_NONE {
+		var authResult sip.AuthResult
+		switch resp.ErrorCode {
+		case rpc.SIPTrunkAuthenticationError_SIP_TRUNK_AUTH_ERROR_QUOTA_EXCEEDED:
+			authResult = sip.AuthQuotaExceeded
+		case rpc.SIPTrunkAuthenticationError_SIP_TRUNK_AUTH_ERROR_NO_TRUNK_FOUND:
+			authResult = sip.AuthNoTrunkFound
+		case rpc.SIPTrunkAuthenticationError_SIP_TRUNK_AUTH_ERROR_ROUTE_NOT_ALLOWED:
+			authResult = sip.AuthRouteNotAllowed
+		default:
+			authResult = sip.AuthFailureOther
+		}
 		return sip.AuthInfo{
-			ProjectID:    resp.ProjectId,
-			Result:       sip.AuthQuotaExceeded,
-			ProviderInfo: resp.ProviderInfo,
-		}, nil
-	case rpc.SIPTrunkAuthenticationError_SIP_TRUNK_AUTH_ERROR_NO_TRUNK_FOUND:
-		return sip.AuthInfo{
-			ProjectID:    resp.ProjectId,
-			Result:       sip.AuthNoTrunkFound,
-			ProviderInfo: resp.ProviderInfo,
+			ProjectID:     resp.ProjectId,
+			Result:        authResult,
+			ProviderInfo:  resp.ProviderInfo,
+			Observability: resp.Observability,
 		}, nil
 	}
 
 	if resp.Drop {
 		return sip.AuthInfo{
-			ProjectID:    resp.ProjectId,
-			Result:       sip.AuthDrop,
-			ProviderInfo: resp.ProviderInfo,
+			ProjectID:     resp.ProjectId,
+			Result:        sip.AuthDrop,
+			ProviderInfo:  resp.ProviderInfo,
+			Observability: resp.Observability,
 		}, nil
 	}
 	if resp.Username != "" && resp.Password != "" {
@@ -61,18 +72,31 @@ func GetAuthCredentials(ctx context.Context, psrpcClient rpc.IOInfoClient, call 
 				Password: resp.Password,
 				Realm:    resp.Realm,
 			},
-			ProviderInfo: resp.ProviderInfo,
+			ProviderInfo:  resp.ProviderInfo,
+			Observability: resp.Observability,
 		}, nil
 	}
 	return sip.AuthInfo{
-		ProjectID:    resp.ProjectId,
-		TrunkID:      resp.SipTrunkId,
-		Result:       sip.AuthAccept,
-		ProviderInfo: resp.ProviderInfo,
+		ProjectID:     resp.ProjectId,
+		TrunkID:       resp.SipTrunkId,
+		Result:        sip.AuthAccept,
+		ProviderInfo:  resp.ProviderInfo,
+		Observability: resp.Observability,
 	}, nil
 }
 
-func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.Logger, info *sip.CallInfo) sip.CallDispatch {
+// isAuthRejectionCode reports whether a psrpc code describes a decision about the request rather
+// than an auth service availability issue.
+func isAuthRejectionCode(code psrpc.ErrorCode) bool {
+	switch code {
+	case psrpc.InvalidArgument, psrpc.FailedPrecondition, psrpc.PermissionDenied,
+		psrpc.Unauthenticated, psrpc.NotFound:
+		return true
+	}
+	return false
+}
+
+func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoSIPClient, log logger.Logger, info *sip.CallInfo) sip.CallDispatch {
 	ctx, span := sip.Tracer.Start(ctx, "service.DispatchCall")
 	defer span.End()
 	resp, err := psrpcClient.EvaluateSIPDispatchRules(ctx, &rpc.EvaluateSIPDispatchRulesRequest{
@@ -87,6 +111,8 @@ func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.
 		CalledNumber:  info.Call.To.User,
 		CalledHost:    info.Call.To.Host,
 		SrcAddress:    info.Call.SourceIp,
+
+		ExtraAttributes: info.ExtraAttributes,
 	})
 
 	if err != nil {
@@ -129,16 +155,17 @@ func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.
 				RoomPreset: resp.RoomPreset,
 				RoomConfig: resp.RoomConfig,
 			},
-			TrunkID:             resp.SipTrunkId,
-			DispatchRuleID:      resp.SipDispatchRuleId,
-			Headers:             resp.Headers,
-			IncludeHeaders:      resp.IncludeHeaders,
-			HeadersToAttributes: resp.HeadersToAttributes,
-			AttributesToHeaders: resp.AttributesToHeaders,
-			EnabledFeatures:     resp.EnabledFeatures,
-			RingingTimeout:      resp.RingingTimeout.AsDuration(),
-			MaxCallDuration:     resp.MaxCallDuration.AsDuration(),
-			MediaConfig:         resp.Media,
+			TrunkID:              resp.SipTrunkId,
+			DispatchRuleID:       resp.SipDispatchRuleId,
+			Headers:              resp.Headers,
+			IncludeHeaders:       resp.IncludeHeaders,
+			HeadersToAttributes:  resp.HeadersToAttributes,
+			AttributesToHeaders:  resp.AttributesToHeaders,
+			EnabledFeatures:      resp.EnabledFeatures,
+			RingingTimeout:       resp.RingingTimeout.AsDuration(),
+			RingingTimeoutStatus: resp.RingingTimeoutStatus,
+			MaxCallDuration:      resp.MaxCallDuration.AsDuration(),
+			MediaConfig:          resp.Media,
 		}
 	case rpc.SIPDispatchResult_ACCEPT:
 		return sip.CallDispatch{
@@ -157,17 +184,18 @@ func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.
 				RoomPreset: resp.RoomPreset,
 				RoomConfig: resp.RoomConfig,
 			},
-			TrunkID:             resp.SipTrunkId,
-			DispatchRuleID:      resp.SipDispatchRuleId,
-			Headers:             resp.Headers,
-			IncludeHeaders:      resp.IncludeHeaders,
-			HeadersToAttributes: resp.HeadersToAttributes,
-			AttributesToHeaders: resp.AttributesToHeaders,
-			EnabledFeatures:     resp.EnabledFeatures,
-			FeatureFlags:        resp.FeatureFlags,
-			RingingTimeout:      resp.RingingTimeout.AsDuration(),
-			MaxCallDuration:     resp.MaxCallDuration.AsDuration(),
-			MediaConfig:         resp.Media,
+			TrunkID:              resp.SipTrunkId,
+			DispatchRuleID:       resp.SipDispatchRuleId,
+			Headers:              resp.Headers,
+			IncludeHeaders:       resp.IncludeHeaders,
+			HeadersToAttributes:  resp.HeadersToAttributes,
+			AttributesToHeaders:  resp.AttributesToHeaders,
+			EnabledFeatures:      resp.EnabledFeatures,
+			FeatureFlags:         resp.FeatureFlags,
+			RingingTimeout:       resp.RingingTimeout.AsDuration(),
+			RingingTimeoutStatus: resp.RingingTimeoutStatus,
+			MaxCallDuration:      resp.MaxCallDuration.AsDuration(),
+			MediaConfig:          resp.Media,
 		}
 	case rpc.SIPDispatchResult_REQUEST_PIN:
 		return sip.CallDispatch{

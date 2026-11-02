@@ -24,7 +24,6 @@ import (
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/sip/pkg/config"
-	"github.com/pkg/errors"
 )
 
 func GetServiceConfig(conf *config.Config) (*ServiceConfig, error) {
@@ -70,15 +69,16 @@ func getPublicIP() (netip.Addr, error) {
 	var err error
 	for i := 0; i < 3; i++ {
 		var ip string
-		ip, err = rtcconfig.GetExternalIP(context.Background(), rtcconfig.DefaultStunServers, nil)
+		ip, err = rtcconfig.GetExternalIPv4(context.Background(), rtcconfig.DefaultStunServers, nil)
 		if err == nil {
 			return netip.ParseAddr(ip)
 		} else {
+			logger.Warnw("external IP lookup failed", err, "attempt", i+1, "stunServers", rtcconfig.DefaultStunServers)
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
 	logger.Warnw("could not resolve external IP", err)
-	return netip.Addr{}, errors.Errorf("could not resolve external IP: %v", err)
+	return netip.Addr{}, fmt.Errorf("could not resolve external IP: %v", err)
 }
 
 func getLocalIP(localNet string) (netip.Addr, error) {
