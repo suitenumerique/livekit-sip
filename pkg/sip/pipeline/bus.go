@@ -63,9 +63,11 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 		default:
 		}
 		if gErr.Domain() == apperror.AppErrorDomain.ToDomainQuark() && gErr.Code() == apperror.AppFatalError {
-			// Leave the dump loop a moment to capture the failing graph before teardown.
-			time.Sleep(500 * time.Millisecond)
-			p.Close()
+			go func() {
+				// Leave the dump loop a moment to capture the failing graph before teardown.
+				time.Sleep(500 * time.Millisecond)
+				p.Close()
+			}()
 		}
 	case gst.MessageLatency:
 		pipeline.Log(CAT, gst.LevelDebug, "Pipeline latency changed")
