@@ -358,6 +358,7 @@ func (e *SipBin) handleAnswerSdp(self *gst.Bin, answerData []byte) error {
 	e.emitAvailableMedia(self)
 
 	e.clearTracks(self)
+	e.checkHold(self)
 
 	return nil
 }
@@ -523,12 +524,36 @@ func (e *SipBin) makeOfferSdp(self *gst.Bin) (*gstsdp.Message, error) {
 		if media == nil {
 			return nil, fmt.Errorf("media is nil at index %d", idx)
 		}
-		if ret := offer.AddMediaCopy(media); ret != gstsdp.SDPResultOk {
+		offerMedia, err := sendRecvMedia(media)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set direction of media at index %d: %w", idx, err)
+		}
+		if ret := offer.AddMediaCopy(offerMedia); ret != gstsdp.SDPResultOk {
 			return nil, fmt.Errorf("failed to add media at index %d to offer: %v", idx, ret)
 		}
 	}
 
 	return offer, nil
+}
+
+func sendRecvMedia(media *gstsdp.Media) (*gstsdp.Media, error) {
+	if media.GetPort() == 0 || !(media.HasAttribute("sendonly") || media.HasAttribute("recvonly") || media.HasAttribute("inactive")) {
+		return media, nil
+	}
+	out, err := media.Copy()
+	if err != nil {
+		return nil, err
+	}
+	for i := out.AttributesLen(); i > 0; {
+		i--
+		switch key := out.GetAttribute(i).Key(); key {
+		case "sendonly", "recvonly", "inactive":
+			if ret := out.RemoveAttribute(i); ret != gstsdp.SDPResultOk {
+				return nil, fmt.Errorf("could not remove attribute %s: %v", key, ret)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (e *SipBin) makeSdpSession() (*gstsdp.Message, error) {
