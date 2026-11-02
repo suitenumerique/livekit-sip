@@ -127,8 +127,19 @@ func (o *MediaOrchestrator) SetAttributes(attributes map[string]string) error {
 	return setErr
 }
 
+func (o *MediaOrchestrator) livekitBin() *gst.Element {
+	if o.pipeline == nil || o.pipeline.WebrtcIo == nil {
+		return nil
+	}
+	return o.pipeline.WebrtcIo.LivekitBin
+}
+
 func (o *MediaOrchestrator) SID() string {
-	sidVal, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("sid")
+	lkBin := o.livekitBin()
+	if lkBin == nil {
+		return ""
+	}
+	sidVal, err := lkBin.GetProperty("sid")
 	if err != nil {
 		o.log.Warnw("failed to get sid property", err)
 		return ""
@@ -142,7 +153,11 @@ func (o *MediaOrchestrator) SID() string {
 }
 
 func (o *MediaOrchestrator) RoomName() string {
-	roomNameVal, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("room-name")
+	lkBin := o.livekitBin()
+	if lkBin == nil {
+		return ""
+	}
+	roomNameVal, err := lkBin.GetProperty("room-name")
 	if err != nil {
 		o.log.Warnw("failed to get room-name property", err)
 		return ""
@@ -156,7 +171,11 @@ func (o *MediaOrchestrator) RoomName() string {
 }
 
 func (o *MediaOrchestrator) ParticipantIdentity() string {
-	identityVal, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("participant-identity")
+	lkBin := o.livekitBin()
+	if lkBin == nil {
+		return ""
+	}
+	identityVal, err := lkBin.GetProperty("participant-identity")
 	if err != nil {
 		o.log.Warnw("failed to get participant-identity property", err)
 		return ""
@@ -170,7 +189,11 @@ func (o *MediaOrchestrator) ParticipantIdentity() string {
 }
 
 func (o *MediaOrchestrator) ParticipantName() string {
-	nameVal, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("participant-name")
+	lkBin := o.livekitBin()
+	if lkBin == nil {
+		return ""
+	}
+	nameVal, err := lkBin.GetProperty("participant-name")
 	if err != nil {
 		o.log.Warnw("failed to get participant-name property", err)
 		return ""

@@ -172,7 +172,7 @@ func (o *MediaOrchestrator) rtpTimeout() {
 }
 
 func (o *MediaOrchestrator) UpdateStats() {
-	if o.pipeline != nil {
+	if o != nil && o.pipeline != nil {
 		stats, err := o.pipeline.GetStats()
 		if errors.Is(err, pipeline.ErrStatsBusy) {
 			return
@@ -225,6 +225,9 @@ func (o *MediaOrchestrator) logRtpStall(ev rtpStallEvent) {
 }
 
 func (o *MediaOrchestrator) Stats() *pipeline.CallStats {
+	if o == nil {
+		return nil
+	}
 	stats := o.stats.Load()
 	if stats == nil {
 		o.UpdateStats()
@@ -507,13 +510,13 @@ func (o *MediaOrchestrator) DtmfHandler(h func(ev dtmf.Event)) {
 }
 
 func (o *MediaOrchestrator) ShowMessage(message string, level gst.DebugLevel) {
-	if o.pipeline != nil {
+	if o != nil && o.pipeline != nil {
 		o.pipeline.SetContext(livekitcompositor.NewContextOverlayMessage(message, level, true))
 	}
 }
 
 func (o *MediaOrchestrator) HideMessage() {
-	if o.pipeline != nil {
+	if o != nil && o.pipeline != nil {
 		o.pipeline.SetContext(livekitcompositor.NewContextOverlayMessage("", 0, false))
 	}
 }
