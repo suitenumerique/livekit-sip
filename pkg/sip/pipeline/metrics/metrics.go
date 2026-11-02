@@ -53,10 +53,21 @@ var (
 		Name:      "tracks_subscribed",
 		Help:      "LiveKit remote tracks currently wired into a bridge pipeline, by track source",
 	}, []string{"source"})
+
+	pipelineCallTimeouts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "pipeline_call_timeouts_total",
+		Help:      "Pipeline calls abandoned after their time bound, by call",
+	}, []string{"call"})
 )
 
 func init() {
-	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed, parkedPipelines)
+	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed, parkedPipelines, pipelineCallTimeouts)
+}
+
+func PipelineCallTimeout(call string) {
+	pipelineCallTimeouts.WithLabelValues(call).Inc()
 }
 
 // TrackPadError counts an rtpbin pad event that did not match a subscribed track.

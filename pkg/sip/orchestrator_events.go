@@ -3,12 +3,16 @@ package sip
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/sip"
 	"github.com/livekit/sip/pkg/config"
+	"github.com/livekit/sip/pkg/sip/pipeline"
 )
+
+const attributesTimeout = 5 * time.Second
 
 func (o *MediaOrchestrator) Connect(conf *config.Config, rconf RoomConfig) error {
 	if rconf.WsUrl == "" {
@@ -65,7 +69,22 @@ func (o *MediaOrchestrator) Subscribed() <-chan struct{} {
 
 func (o *MediaOrchestrator) Attributes() map[string]string {
 	attr := make(map[string]string)
-	attrStruct, err := o.pipeline.WebrtcIo.LivekitBin.GetProperty("participant-attributes")
+	if o.pipeline.WebrtcIo == nil || o.pipeline.WebrtcIo.LivekitBin == nil {
+		return attr
+	}
+	lkBin := o.pipeline.WebrtcIo.LivekitBin
+	type property struct {
+		value any
+		err   error
+	}
+	res, err := pipeline.Bounded("get-attributes", attributesTimeout, func() property {
+		v, err := lkBin.GetProperty("participant-attributes")
+		return property{value: v, err: err}
+	})
+	if err == nil {
+		err = res.err
+	}
+	attrStruct := res.value
 	if err != nil {
 		o.log.Warnw("failed to get participant attributes", err)
 		return attr
@@ -98,10 +117,14 @@ func (o *MediaOrchestrator) SetAttributes(attributes map[string]string) error {
 	if o.pipeline.WebrtcIo == nil || o.pipeline.WebrtcIo.LivekitBin == nil {
 		return fmt.Errorf("livekit bin is not initialized")
 	}
-	if err := o.pipeline.WebrtcIo.LivekitBin.SetProperty("participant-attributes", attr); err != nil {
+	lkBin := o.pipeline.WebrtcIo.LivekitBin
+	setErr, err := pipeline.Bounded("set-attributes", attributesTimeout, func() error {
+		return lkBin.SetProperty("participant-attributes", attr)
+	})
+	if err != nil {
 		return err
 	}
-	return nil
+	return setErr
 }
 
 func (o *MediaOrchestrator) SID() string {

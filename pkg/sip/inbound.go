@@ -1426,12 +1426,8 @@ func (c *inboundCall) close(ctx context.Context, status CallStatus, t stats.Term
 	defer c.mon.StageDurTimer("close")
 	sipCode, sipStatus := status.SIPStatus()
 	log := c.log().WithValues("status", sipCode, "result", string(t.Result), "reason", t.Reason)
-	if c.medias != nil {
-		c.medias.UpdateStats()
-	}
 	defer c.printStats(log, c.medias)
 	defer c.sigTs.Log(log)
-	c.setStatus(status)
 	c.mon.CallTerminate(t)
 	isWarn := t.Result == stats.ResultServerError || status == callHangupMedia
 	if isWarn {
@@ -1448,6 +1444,10 @@ func (c *inboundCall) close(ctx context.Context, status CallStatus, t stats.Term
 	// attributes_to_headers mapping in the setHeaders callback.
 	// See: https://github.com/livekit/sip/issues/404
 	c.cc.CloseWithStatus(ctx, sipCode, sipStatus)
+	c.setStatus(status)
+	if c.medias != nil {
+		c.medias.UpdateStats()
+	}
 	log.Debugw("Closing media orchestrator")
 	c.closeMedia()
 	log.Debugw("Media orchestrator closed")
@@ -2550,6 +2550,8 @@ func (c *sipInbound) sendBye(ctx context.Context) {
 	}
 	ctx, span := Tracer.Start(ctx, "sip.inbound.sendBye")
 	defer span.End()
+	ctx, cancel := context.WithTimeout(ctx, 32*time.Second)
+	defer cancel()
 	// This function is for clients, so we need to swap src and dest
 	r := sip.NewByeRequest(c.invite, c.inviteOk, nil)
 	for k, v := range c.fillHeaders(nil) {

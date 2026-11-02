@@ -70,7 +70,8 @@ type Pipeline struct {
 	dumpDir               string
 	publishCoders         config.PublishCodecConfig
 
-	stats atomic.Pointer[CallStats]
+	stats     atomic.Pointer[CallStats]
+	statsBusy atomic.Bool
 
 	*SipIo
 	*WebrtcIo
@@ -132,11 +133,7 @@ func (p *Pipeline) GetStats() (*CallStats, error) {
 	if p.Closed() {
 		return p.stats.Load(), nil
 	}
-	stats, err := p.getStats()
-	if err != nil {
-		return nil, err
-	}
-	return stats, nil
+	return p.readStats()
 }
 
 func (p *Pipeline) getStats() (*CallStats, error) {
@@ -226,16 +223,7 @@ func (p *Pipeline) Close() error {
 	pipeline := p.pipeline
 	pipeline.Log(CAT, gst.LevelDebug, "Closing pipeline")
 
-	// The final stats go through the rtpbin; a stuck rtpbin must not keep the
-	// call from closing.
-	statsDone := make(chan struct{})
-	go func() {
-		defer close(statsDone)
-		p.getStats()
-	}()
-	select {
-	case <-statsDone:
-	case <-time.After(2 * time.Second):
+	if _, err := p.readStats(); errors.Is(err, ErrCallTimeout) || errors.Is(err, ErrStatsBusy) {
 		pipeline.Log(CAT, gst.LevelWarning, "Timeout collecting the final call stats, closing without them")
 	}
 

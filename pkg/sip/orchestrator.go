@@ -174,6 +174,9 @@ func (o *MediaOrchestrator) rtpTimeout() {
 func (o *MediaOrchestrator) UpdateStats() {
 	if o.pipeline != nil {
 		stats, err := o.pipeline.GetStats()
+		if errors.Is(err, pipeline.ErrStatsBusy) {
+			return
+		}
 		if err != nil {
 			o.log.Errorw("failed to get pipeline stats", err)
 			return
