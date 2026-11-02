@@ -139,7 +139,9 @@ type Config struct {
 
 	MediaTimeout         time.Duration      `yaml:"media_timeout"`
 	MediaTimeoutInitial  time.Duration      `yaml:"media_timeout_initial"`
-	PinTimeout           time.Duration      `yaml:"pin_timeout"` // max inactivity on the PIN entry screen
+	PinTimeout           time.Duration      `yaml:"pin_timeout"`  // max inactivity on the PIN entry screen
+	PinLength            int                `yaml:"pin_length"`   // digits shown on the code entry screen
+	PinAttempts          int                `yaml:"pin_attempts"` // wrong codes accepted before hanging up
 	SymmetricRTP         bool               `yaml:"symmetric_rtp"`
 	IgnoreLocalAddrInSDP bool               `yaml:"ignore_local_addr_in_sdp"` // enable symmetric RTP if local IP is specified in SDP
 	Codecs               map[string]bool    `yaml:"codecs"`
@@ -258,6 +260,12 @@ func (c *Config) Init() error {
 
 	if c.PinTimeout <= 0 {
 		c.PinTimeout = 60 * time.Second
+	}
+	if c.PinLength <= 0 {
+		c.PinLength = 10
+	}
+	if c.PinAttempts <= 0 {
+		c.PinAttempts = 3
 	}
 
 	if c.SIPKeepaliveInterval == 0 {

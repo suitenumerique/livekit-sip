@@ -10,12 +10,10 @@ import (
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/livekit/protocol/livekit"
-	"github.com/livekit/sip/pkg/i18n"
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/transcode/keyframe"
 	"github.com/livekit/sip/pkg/sip/pipeline/metrics"
 	"github.com/samber/lo"
 	"github.com/vopenia-io/go-pangocairo/cairo"
-	"github.com/vopenia-io/go-pangocairo/pango"
 )
 
 const (
@@ -34,8 +32,6 @@ const (
 	screenshareMessageDelay = 500 * time.Millisecond
 	// screenshareMessageFramerate is the frame rate of the end of screenshare message source.
 	screenshareMessageFramerate = 5
-	// screenshareMessageRefWidth is the frame width the message text is rendered for.
-	screenshareMessageRefWidth = 1920
 	// screenshareBlankMaxSize is the largest width and height of the black
 	// keyframes the SFU sends when a published track stops.
 	screenshareBlankMaxSize = 16
@@ -485,10 +481,9 @@ func (e *LivekitCompositor) showScreenshareMessage(self *gst.Bin) {
 	if width == 0 || height == 0 {
 		width, height = int(e.screenshareWidth), int(e.screenshareHeight)
 	}
-	if e.screenshareMessageText == nil {
-		e.screenshareMessageText = renderScreenshareMessageText(e.lang)
-	}
-	text := e.screenshareMessageText
+	raster := newScreenRaster(width, height)
+	raster.render(endOfShareScreen(e.lang))
+	raster.releaseFonts()
 
 	m := &screenshareMessage{}
 	var err error
@@ -520,7 +515,7 @@ func (e *LivekitCompositor) showScreenshareMessage(self *gst.Bin) {
 		return
 	}
 	m.Overlay.Connect("draw", func(_ *gst.Element, cr *cairo.Context, _ gst.ClockTime) {
-		drawScreenshareMessage(cr, width, height, text)
+		raster.paintOn(cr)
 	})
 
 	chain := m.elements()
@@ -599,41 +594,4 @@ func (e *LivekitCompositor) hideScreenshareMessage(self *gst.Bin) {
 	}
 	ss.state.message.Store(false)
 	self.Log(CAT, gst.LevelInfo, "Removed end of screenshare message")
-}
-
-// renderScreenshareMessageText renders the end of screenshare message in white
-// for a screenshareMessageRefWidth wide frame.
-func renderScreenshareMessageText(lang string) *cairo.Surface {
-	probe := cairo.Create(cairo.CreateImageSurface(cairo.FORMAT_ARGB32, 1, 1))
-	layout := pango.CairoCreateLayout(probe)
-	desc := pango.FontDescriptionFromString("Sans Bold")
-	desc.SetSize(int(float64(screenshareMessageRefWidth) / 1280 * 14 * float64(pango.SCALE)))
-	layout.SetFontDescription(desc)
-	layout.SetText(i18n.Printer(lang).Sprintf("Screen sharing has ended"), -1)
-	pw, ph := layout.GetSize()
-
-	surface := cairo.CreateImageSurface(cairo.FORMAT_ARGB32, pw/pango.SCALE+1, ph/pango.SCALE+1)
-	cr := cairo.Create(surface)
-	pango.CairoUpdateLayout(cr, layout)
-	cr.SetSourceRGBA(1, 1, 1, 1)
-	cr.MoveTo(0, 0)
-	pango.CairoShowLayout(cr, layout)
-	surface.Flush()
-	return surface
-}
-
-// drawScreenshareMessage paints the message background and the centered text.
-func drawScreenshareMessage(cr *cairo.Context, width, height int, text *cairo.Surface) {
-	cr.Save()
-	cr.SetSourceRGBA(bgColorR, bgColorG, bgColorB, 1.0)
-	cr.Rectangle(0, 0, float64(width), float64(height))
-	cr.Fill()
-	scale := float64(width) / screenshareMessageRefWidth
-	tw := float64(text.GetWidth()) * scale
-	th := float64(text.GetHeight()) * scale
-	cr.Translate(float64(width)/2-tw/2, float64(height)/2-th/2)
-	cr.Scale(scale, scale)
-	cr.SetSourceSurface(text, 0, 0)
-	cr.Paint()
-	cr.Restore()
 }

@@ -35,6 +35,10 @@ type LivekitCompositorCamera struct {
 	pangoLayout *pango.Layout
 	pangoBold   *pango.FontDescription
 	pangoSans   *pango.FontDescription
+
+	screenRaster *screenRaster
+	screenShown  *Screen
+	screenAlone  *Screen
 }
 
 func (e *LivekitCompositor) initCamera(self *gst.Bin) error {
@@ -436,6 +440,8 @@ func (e *LivekitCompositor) cleanupCamera(self *gst.Bin) {
 	}
 
 	e.LivekitCompositorCamera.ticker.Stop()
+	e.LivekitCompositorCamera.releaseScreenRaster()
+	e.LivekitCompositorCamera.releasePango()
 
 	e.LivekitCompositorCamera = nil
 	self.Log(CAT, gst.LevelInfo, "Cleaned up camera compositor")

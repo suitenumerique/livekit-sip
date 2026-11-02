@@ -32,6 +32,7 @@ type mediaRes struct {
 	enterPinFd int
 	roomJoinFd int
 	wrongPinFd int
+	timeoutFd  int
 }
 
 func (s *Server) initMediaRes(conf *config.Config) {
@@ -49,14 +50,21 @@ func (s *Server) initMediaRes(conf *config.Config) {
 		{"enter_pin", res.EnterPin, &s.res.enterPinFd},
 		{"room_join", res.RoomJoin, &s.res.roomJoinFd},
 		{"wrong_pin", res.WrongPin, &s.res.wrongPinFd},
+		{"timeout", res.Lang, &s.res.timeoutFd},
 	}
 	for _, m := range medias {
 		data, err := m.fs.ReadFile(fmt.Sprintf("lang/%s/%s.flac", lang, m.name))
 		if err != nil {
 			data, err = m.fs.ReadFile(fmt.Sprintf("lang/en/%s.flac", m.name))
+		}
+		if err != nil && m.name == "timeout" {
+			data, err = res.WrongPin.ReadFile(fmt.Sprintf("lang/%s/wrong_pin.flac", lang))
 			if err != nil {
-				panic(fmt.Errorf("failed to read embedded %s audio file: %w", m.name, err))
+				data, err = res.WrongPin.ReadFile("lang/en/wrong_pin.flac")
 			}
+		}
+		if err != nil {
+			panic(fmt.Errorf("failed to read embedded %s audio file: %w", m.name, err))
 		}
 		*m.dstFD, err = res.MemfdFromBytes(m.name, data)
 		if err != nil {
