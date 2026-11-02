@@ -39,31 +39,52 @@ func init() {
 }
 
 var messageKeyToIndex = map[string]int{
-	"Invalid PIN":                       1,
-	"PIN accepted, joining the call...": 2,
-	"Please enter your PIN followed by # (use * to delete)\nEntered: %s": 0,
-	"Screen sharing has ended":        4,
-	"You are the only participant...": 3,
+	"Attempt: %d/%d. Check the code in the invitation, then try again.": 5,
+	"Attempt: %d/%d. The call will end.":                                4,
+	"Connecting to the meeting":                                         7,
+	"Delete":                                                            2,
+	"Enter the meeting code, then #":                                    1,
+	"Invalid code":                                                      3,
+	"Join a meeting":                                                    0,
+	"No key pressed for %d seconds, the call will end.":                 9,
+	"Participants will appear here as they arrive.":                     11,
+	"Participants will reappear in a moment.":                           13,
+	"Screen sharing has ended":                                          12,
+	"Start over":                                                        6,
+	"Time is up":                                                        8,
+	"Waiting for participants":                                          10,
 }
 
-var enIndex = []uint32{ // 6 elements
-	0x00000000, 0x00000045, 0x00000051, 0x00000073,
-	0x00000093, 0x000000ac,
-} // Size: 48 bytes
+var enIndex = []uint32{ // 15 elements
+	0x00000000, 0x0000000f, 0x0000002e, 0x00000035,
+	0x00000042, 0x0000006b, 0x000000b3, 0x000000be,
+	0x000000d8, 0x000000e3, 0x00000118, 0x00000131,
+	0x0000015f, 0x00000178, 0x000001a0,
+} // Size: 84 bytes
 
-const enData string = "" + // Size: 172 bytes
-	"\x02Please enter your PIN followed by # (use * to delete)\x0aEntered: %[" +
-	"1]s\x02Invalid PIN\x02PIN accepted, joining the call...\x02You are the o" +
-	"nly participant...\x02Screen sharing has ended"
+const enData string = "" + // Size: 416 bytes
+	"\x02Join a meeting\x02Enter the meeting code, then #\x02Delete\x02Invali" +
+	"d code\x02Attempt: %[1]d/%[2]d. The call will end.\x02Attempt: %[1]d/%[2" +
+	"]d. Check the code in the invitation, then try again.\x02Start over\x02C" +
+	"onnecting to the meeting\x02Time is up\x02No key pressed for %[1]d secon" +
+	"ds, the call will end.\x02Waiting for participants\x02Participants will " +
+	"appear here as they arrive.\x02Screen sharing has ended\x02Participants " +
+	"will reappear in a moment."
 
-var frIndex = []uint32{ // 6 elements
-	0x00000000, 0x00000052, 0x00000064, 0x0000008d,
-	0x000000af, 0x000000c7,
-} // Size: 48 bytes
+var frIndex = []uint32{ // 15 elements
+	0x00000000, 0x00000017, 0x0000003c, 0x00000044,
+	0x00000052, 0x00000081, 0x000000cf, 0x000000db,
+	0x000000f4, 0x00000105, 0x00000144, 0x0000015f,
+	0x00000196, 0x000001b0, 0x000001e2,
+} // Size: 84 bytes
 
-const frData string = "" + // Size: 199 bytes
-	"\x02Veuillez saisir votre code PIN suivi de # (utilisez * pour effacer)" +
-	"\x0aSaisi : %[1]s\x02Code PIN invalide\x02Code PIN accepté, connexion en" +
-	" cours...\x02Vous êtes le seul participant...\x02Fin du partage d'écran"
+const frData string = "" + // Size: 482 bytes
+	"\x02Rejoindre une réunion\x02Tapez le code de la réunion, puis #\x02Effa" +
+	"cer\x02Code invalide\x02Essai : %[1]d/%[2]d. L’appel va se terminer.\x02" +
+	"Essai : %[1]d/%[2]d. Vérifiez le code dans l’invitation, puis recommence" +
+	"z.\x02Recommencer\x02Connexion à la réunion\x02Délai dépassé\x02Aucune s" +
+	"aisie depuis %[1]d secondes, l’appel va se terminer.\x02En attente de pa" +
+	"rticipants\x02Les participants apparaîtront ici dès leur arrivée.\x02Fin" +
+	" du partage d’écran\x02Les participants réapparaissent dans un instant."
 
-	// Total table size 467 bytes (0KiB); checksum: 670064F7
+	// Total table size 1066 bytes (1KiB); checksum: AB95B058

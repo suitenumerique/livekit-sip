@@ -2,40 +2,132 @@
     "language": "en",
     "messages": [
         {
-            "id": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
-            "message": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
-            "translation": "Please enter your PIN followed by # (use * to delete)\nEntered: {Repeat_lenpin}",
+            "id": "Join a meeting",
+            "message": "Join a meeting",
+            "translation": "Join a meeting",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Enter the meeting code, then #",
+            "message": "Enter the meeting code, then #",
+            "translation": "Enter the meeting code, then #",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Delete",
+            "message": "Delete",
+            "translation": "Delete",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Invalid code",
+            "message": "Invalid code",
+            "translation": "Invalid code",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Attempt: {Attempt}/{Attempts}. The call will end.",
+            "message": "Attempt: {Attempt}/{Attempts}. The call will end.",
+            "translation": "Attempt: {Attempt}/{Attempts}. The call will end.",
             "translatorComment": "Copied from source.",
             "placeholders": [
                 {
-                    "id": "Repeat_lenpin",
-                    "string": "%[1]s",
-                    "type": "string",
-                    "underlyingType": "string",
+                    "id": "Attempt",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
                     "argNum": 1,
-                    "expr": "strings.Repeat(\"*\", len(pin))"
+                    "expr": "attempt"
+                },
+                {
+                    "id": "Attempts",
+                    "string": "%[2]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 2,
+                    "expr": "attempts"
                 }
             ],
             "fuzzy": true
         },
         {
-            "id": "Invalid PIN",
-            "message": "Invalid PIN",
-            "translation": "Invalid PIN",
+            "id": "Attempt: {Attempt}/{Attempts}. Check the code in the invitation, then try again.",
+            "message": "Attempt: {Attempt}/{Attempts}. Check the code in the invitation, then try again.",
+            "translation": "Attempt: {Attempt}/{Attempts}. Check the code in the invitation, then try again.",
+            "translatorComment": "Copied from source.",
+            "placeholders": [
+                {
+                    "id": "Attempt",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 1,
+                    "expr": "attempt"
+                },
+                {
+                    "id": "Attempts",
+                    "string": "%[2]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 2,
+                    "expr": "attempts"
+                }
+            ],
+            "fuzzy": true
+        },
+        {
+            "id": "Start over",
+            "message": "Start over",
+            "translation": "Start over",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         },
         {
-            "id": "PIN accepted, joining the call...",
-            "message": "PIN accepted, joining the call...",
-            "translation": "PIN accepted, joining the call...",
+            "id": "Connecting to the meeting",
+            "message": "Connecting to the meeting",
+            "translation": "Connecting to the meeting",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         },
         {
-            "id": "You are the only participant...",
-            "message": "You are the only participant...",
-            "translation": "You are the only participant...",
+            "id": "Time is up",
+            "message": "Time is up",
+            "translation": "Time is up",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "No key pressed for {Seconds} seconds, the call will end.",
+            "message": "No key pressed for {Seconds} seconds, the call will end.",
+            "translation": "No key pressed for {Seconds} seconds, the call will end.",
+            "translatorComment": "Copied from source.",
+            "placeholders": [
+                {
+                    "id": "Seconds",
+                    "string": "%[1]d",
+                    "type": "int",
+                    "underlyingType": "int",
+                    "argNum": 1,
+                    "expr": "seconds"
+                }
+            ],
+            "fuzzy": true
+        },
+        {
+            "id": "Waiting for participants",
+            "message": "Waiting for participants",
+            "translation": "Waiting for participants",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Participants will appear here as they arrive.",
+            "message": "Participants will appear here as they arrive.",
+            "translation": "Participants will appear here as they arrive.",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         },
@@ -43,6 +135,13 @@
             "id": "Screen sharing has ended",
             "message": "Screen sharing has ended",
             "translation": "Screen sharing has ended",
+            "translatorComment": "Copied from source.",
+            "fuzzy": true
+        },
+        {
+            "id": "Participants will reappear in a moment.",
+            "message": "Participants will reappear in a moment.",
+            "translation": "Participants will reappear in a moment.",
             "translatorComment": "Copied from source.",
             "fuzzy": true
         }
