@@ -123,18 +123,73 @@ func (r *screenRaster) paintSpinnerOnRaster(ts gst.ClockTime) {
 
 func TestScreen_BackgroundFollowsTheTone(t *testing.T) {
 	accent := renderTestScreen(t, entryScreen(""), 1280, 720).surface
-	if !colorIs(accent, 40, 680, 0x181B24, 2) {
+	if !colorIs(accent, 40, 680, 0x161B2E, 1) {
 		r, g, b := pixel(accent, 40, 680)
-		t.Errorf("bottom-left is %02x%02x%02x, want the plain background", r, g, b)
+		t.Errorf("bottom-left is %02x%02x%02x, want the darkest blue", r, g, b)
 	}
-	if !colorIs(accent, 1220, 60, 0x1D233B, 3) {
+	if !colorIs(accent, 1220, 60, 0x1E2336, 1) {
 		r, g, b := pixel(accent, 1220, 60)
-		t.Errorf("top-right is %02x%02x%02x, want the blue tint of the mockup", r, g, b)
+		t.Errorf("top-right is %02x%02x%02x, want a lighter blue", r, g, b)
 	}
 	failed := renderTestScreen(t, rejectedScreen("12"), 1280, 720).surface
-	if !colorIs(failed, 1220, 60, 0x2D1C25, 3) {
+	if !colorIs(failed, 1220, 60, 0x301D23, 1) {
 		r, g, b := pixel(failed, 1220, 60)
-		t.Errorf("top-right is %02x%02x%02x, want the red tint of the mockup", r, g, b)
+		t.Errorf("top-right is %02x%02x%02x, want a lighter red", r, g, b)
+	}
+}
+
+func TestScreen_BackgroundKeepsOneTint(t *testing.T) {
+	for _, s := range []*Screen{
+		allScreens()["etape-10"],
+		allScreens()["etape-5"],
+	} {
+		surf := renderTestScreen(t, s, 1280, 720).surface
+		tint := s.Tone.gradient().tint
+		wantRG := int(tint>>16&0xff) - int(tint>>8&0xff)
+		wantBG := int(tint&0xff) - int(tint>>8&0xff)
+		check := func(x, y int) {
+			r, g, b := pixel(surf, x, y)
+			if int(r)-int(g) != wantRG || int(b)-int(g) != wantBG {
+				t.Fatalf("tone %d at %d,%d is %02x%02x%02x, want the tint %06x shifted on all channels", s.Tone, x, y, r, g, b, tint)
+			}
+		}
+		for x := range 1280 {
+			check(x, 700)
+		}
+		for y := range 720 {
+			check(1270, y)
+		}
+	}
+}
+
+func TestScreen_BackgroundIsDithered(t *testing.T) {
+	for _, s := range []*Screen{
+		allScreens()["etape-10"],
+		allScreens()["etape-5"],
+	} {
+		surf := renderTestScreen(t, s, 1280, 720).surface
+		mixed, blocks, last := 0, 0, 0
+		for y := 718; y >= 0; y -= 2 {
+			lo, hi, sum := 255, 0, 0
+			for _, p := range [][2]int{{1270, y}, {1271, y}, {1270, y + 1}, {1271, y + 1}} {
+				_, g, _ := pixel(surf, p[0], p[1])
+				lo, hi, sum = min(lo, int(g)), max(hi, int(g)), sum+int(g)
+			}
+			if hi-lo > 1 {
+				t.Fatalf("tone %d: the pixels of the block at y=%d span %d levels", s.Tone, y, hi-lo)
+			}
+			if y < 718 && sum < last {
+				t.Fatalf("tone %d: the block at y=%d is darker than the one below", s.Tone, y)
+			}
+			last = sum
+			blocks++
+			if hi > lo {
+				mixed++
+			}
+		}
+		if mixed*2 < blocks {
+			t.Errorf("tone %d: only %d of %d blocks mix two levels", s.Tone, mixed, blocks)
+		}
 	}
 }
 

@@ -203,26 +203,26 @@ func (r *screenRaster) setColor(c rgb) {
 }
 
 func (r *screenRaster) background(tone ScreenTone) {
-	r.setColor(screenBg)
-	r.cr.Rectangle(0, 0, r.refW, r.refH)
-	r.cr.Fill()
-
 	g := tone.gradient()
 	rad := g.angle * math.Pi / 180
 	dx, dy := math.Sin(rad), -math.Cos(rad)
 	length := math.Abs(r.refW*dx) + math.Abs(r.refH*dy)
 	x0, y0 := r.refW/2-dx*length/2, r.refH/2-dy*length/2
-	pattern, err := cairo.NewPatternLinear(x0+dx*length*g.from, y0+dy*length*g.from, x0+dx*length*g.to, y0+dy*length*g.to)
-	if err != nil {
-		return
+
+	r.surface.Flush()
+	stride := cairo.FormatStrideForWidth(cairo.FORMAT_RGB24, r.w) / 4
+	pixels := unsafe.Slice((*uint32)(r.surface.GetData()), stride*r.h)
+	for y := range r.h {
+		rowPos := ((float64(y)+0.5)/r.scale - y0) * dy
+		row := pixels[y*stride : y*stride+r.w]
+		for x := range row {
+			pos := (((float64(x)+0.5)/r.scale-x0)*dx + rowPos) / length
+			ramp := max(0, min(1, (pos-g.from)/(g.to-g.from)))
+			step := math.Floor((ramp-0.5)*g.span + screenDither[y&1][x&1])
+			row[x] = uint32(int32(g.tint) + int32(step)*0x010101)
+		}
 	}
-	if pattern.AddColorStopRGBA(0, g.color.r, g.color.g, g.color.b, 0) != nil ||
-		pattern.AddColorStopRGBA(1, g.color.r, g.color.g, g.color.b, screenGradientAlpha) != nil {
-		return
-	}
-	r.cr.SetSource(pattern)
-	r.cr.Rectangle(0, 0, r.refW, r.refH)
-	r.cr.Fill()
+	r.surface.MarkDirty()
 }
 
 func (r *screenRaster) fillPaths(paths []string, rule cairo.FillRule, c rgb, x, y, scale float64) {

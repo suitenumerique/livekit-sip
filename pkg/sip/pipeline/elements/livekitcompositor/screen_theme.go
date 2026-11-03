@@ -27,7 +27,6 @@ func hexRGB(c uint32) rgb {
 }
 
 var (
-	screenBg           = hexRGB(0x181B24)
 	screenInk          = hexRGB(0xEEF1F4)
 	screenSecondary    = hexRGB(0xDFE2EA)
 	screenTertiary     = hexRGB(0xB2B9C7)
@@ -75,8 +74,6 @@ const (
 	screenSpinnerStart  = -0.75 * math.Pi
 	screenSpinnerSweep  = 0.7 * math.Pi
 
-	screenGradientAlpha = 0.15
-
 	screenTextScale   = 8.0
 	screenBalanceStep = 8.0
 )
@@ -96,16 +93,19 @@ var (
 	styleKey     = textStyle{16, 22, pango.WEIGHT_BOLD}
 )
 
+var screenDither = [2][2]float64{{0.875, 0.375}, {0.125, 0.625}}
+
 type screenGradient struct {
 	angle, from, to float64
-	color           rgb
+	tint            uint32
+	span            float64
 }
 
 func (t ScreenTone) gradient() screenGradient {
 	if t == ToneError {
-		return screenGradient{49.0573, 0.15616, 1.1174, hexRGB(0xCF202D)}
+		return screenGradient{49.0573, 0.15616, 1.1174, 0x2E1B21, 6.5}
 	}
-	return screenGradient{26.5757, 0.2159, 1.0984, hexRGB(0x3E5DE7)}
+	return screenGradient{26.5757, 0.2159, 1.0984, 0x1B2033, 10.4}
 }
 
 func (t ScreenTone) color() rgb {
