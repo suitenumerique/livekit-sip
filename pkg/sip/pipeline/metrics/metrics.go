@@ -16,7 +16,11 @@
 // pipeline elements, which have no access to the per-call stats monitor.
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 var (
 	trackPadErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -60,10 +64,32 @@ var (
 		Name:      "pipeline_call_timeouts_total",
 		Help:      "Pipeline calls abandoned after their time bound, by call",
 	}, []string{"call"})
+
+	mainLoopBeatDelay = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "main_loop_beat_delay_seconds",
+		Help:      "Delay of the GLib main loop heartbeat beyond its period",
+		Buckets:   []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 300},
+	})
+
+	mainLoopStalled = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "main_loop_stalled",
+		Help:      "1 while the GLib main loop has missed its heartbeat for too long",
+	})
+
+	mainLoopStalls = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "livekit",
+		Subsystem: "sip",
+		Name:      "main_loop_stalls_total",
+		Help:      "Times the GLib main loop has missed its heartbeat for too long",
+	})
 )
 
 func init() {
-	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed, parkedPipelines, pipelineCallTimeouts)
+	prometheus.MustRegister(trackPadErrors, trackPaused, screenshareTransitions, tracksSubscribed, parkedPipelines, pipelineCallTimeouts, mainLoopBeatDelay, mainLoopStalled, mainLoopStalls)
 }
 
 func PipelineCallTimeout(call string) {
@@ -92,4 +118,17 @@ func TrackSubscribed(source string, delta float64) {
 
 func ParkedPipelines(n int) {
 	parkedPipelines.Set(float64(n))
+}
+
+func MainLoopBeatDelay(delay time.Duration) {
+	mainLoopBeatDelay.Observe(delay.Seconds())
+}
+
+func MainLoopStalled(stalled bool) {
+	if stalled {
+		mainLoopStalled.Set(1)
+		mainLoopStalls.Inc()
+		return
+	}
+	mainLoopStalled.Set(0)
 }

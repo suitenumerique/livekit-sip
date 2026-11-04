@@ -247,6 +247,7 @@ func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats
 	s.infos.byLocalTag = expirable.NewLRU[LocalTag, *inboundCallInfo](maxCallCache, nil, callCacheTTL)
 	s.initMediaRes(s.conf)
 	pipeline.SetupLogging(log, conf.Gst)
+	pipeline.WatchMainLoop(log, conf.Gst.DumpDir)
 	return s
 }
 
