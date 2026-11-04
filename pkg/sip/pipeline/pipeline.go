@@ -63,6 +63,7 @@ type Pipeline struct {
 	audioJitterMs         int
 	videoJitterMs         int
 	latencyWarned         atomic.Bool
+	latencyRun            coalescedRun
 	qosMu                 sync.Mutex
 	qosLast               map[string]time.Time
 	maxAudioParticipants  int

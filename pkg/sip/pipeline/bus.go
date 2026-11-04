@@ -10,6 +10,8 @@ import (
 	"github.com/livekit/sip/pkg/sip/pipeline/elements/sipcompositor"
 )
 
+const latencyStuckAfter = 10 * time.Second
+
 func (p *Pipeline) SetupBus() {
 	if p.bus != nil {
 		p.pipeline.Log(CAT, gst.LevelError, "Bus already set up")
@@ -71,13 +73,7 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 		}
 	case gst.MessageLatency:
 		pipeline.Log(CAT, gst.LevelDebug, "Pipeline latency changed")
-		if !p.Pipeline().RecalculateLatency() {
-			level := gst.LevelWarning
-			if p.latencyWarned.Swap(true) {
-				level = gst.LevelDebug
-			}
-			pipeline.Log(CAT, level, "Failed to recalculate pipeline latency")
-		}
+		p.latencyRun.trigger(func() { p.recalculateLatency(pipeline) })
 	case gst.MessageElement:
 		structure := msg.GetStructure()
 		if structure == nil {
@@ -133,6 +129,23 @@ func (p *Pipeline) onMessage(msg *gst.Message) bool {
 		pipeline.Log(CAT, gst.LevelTrace, fmt.Sprintf("Unhandled bus message\ntype=%v", msg.Type()))
 	}
 	return true
+}
+
+func (p *Pipeline) recalculateLatency(pipeline *gst.Pipeline) {
+	if p.Closed() {
+		return
+	}
+	stuck := time.AfterFunc(latencyStuckAfter, func() {
+		CAT.Log(gst.LevelError, fmt.Sprintf("Pipeline latency recalculation still blocked\ncallID=%s\nafter=%s", p.sipCallID, latencyStuckAfter))
+	})
+	defer stuck.Stop()
+	if !pipeline.RecalculateLatency() {
+		level := gst.LevelWarning
+		if p.latencyWarned.Swap(true) {
+			level = gst.LevelDebug
+		}
+		pipeline.Log(CAT, level, "Failed to recalculate pipeline latency")
+	}
 }
 
 // logQoS reports buffers dropped by an element that posts QoS messages, at
