@@ -286,6 +286,7 @@ func (o *MediaOrchestrator) NewOffer() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to emit create-offer-sdp: %w", err)
 	}
+	o.logLocalPorts("offer", offer)
 	return []byte(offer), nil
 }
 
@@ -308,6 +309,7 @@ func (o *MediaOrchestrator) answerSDP(offerData []byte) ([]byte, error) {
 	}
 
 	o.state = MediaStateReady
+	o.logLocalPorts("answer", answerStr)
 
 	return []byte(answerStr), nil
 }
@@ -414,6 +416,7 @@ func (o *MediaOrchestrator) abortOffer() {
 }
 
 func (o *MediaOrchestrator) handleSendOffer(offer string) error {
+	o.logLocalPorts("reoffer", offer)
 	resp, err := o.handler.SendReInvite(o.ctx, []byte(offer))
 	// Bail if the orchestrator was closed during SendReInvite.
 	if o.ctx.Err() != nil {
