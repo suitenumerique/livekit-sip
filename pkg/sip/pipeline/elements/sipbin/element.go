@@ -448,9 +448,21 @@ func (e *SipBin) ChangeState(instance *gst.Element, transition gst.StateChange) 
 		case <-time.After(5 * time.Second):
 			self.Log(CAT, gst.LevelWarning, "Timeout waiting for SipBin to finish pending operations during state change to NULL")
 		}
+		e.closeSockets()
 	}
 
 	return ret
+}
+
+func (e *SipBin) closeSockets() {
+	e.trackMu.RLock()
+	tracks := e.Tracks
+	e.trackMu.RUnlock()
+	for _, track := range tracks {
+		if track != nil {
+			track.closeSockets()
+		}
+	}
 }
 
 // stopTrackRoutines ends the per-track keyframe and link feedback goroutines,

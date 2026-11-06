@@ -36,6 +36,8 @@ type SipTrack struct {
 	Caps        *gst.Caps
 	rtpConn     *net.UDPConn
 	rtcpConn    *net.UDPConn
+	rtpSocket   *GSocketWrapper
+	rtcpSocket  *GSocketWrapper
 	RtpSrc      *gst.Element
 	RtcpSrc     *gst.Element
 	RtpSink     *gst.Element
@@ -174,6 +176,8 @@ func (e *SipBin) NewTrack(self *gst.Bin, idx int, kind livekit.TrackSource, prot
 		Proto:      proto,
 		rtpConn:    rtpConn,
 		rtcpConn:   rtcpConn,
+		rtpSocket:  grtpSocket,
+		rtcpSocket: grtcpSocket,
 		RtpSrc:     rtpSrc,
 		RtcpSrc:    rtcpSrc,
 		RtpSink:    rtpSink,
@@ -875,6 +879,17 @@ func (t *SipTrack) UpdateCaps(caps *gst.Caps) error {
 	return nil
 }
 
+func (t *SipTrack) closeSockets() {
+	t.rtpSocket.Close()
+	t.rtcpSocket.Close()
+	if t.rtpConn != nil {
+		_ = t.rtpConn.Close()
+	}
+	if t.rtcpConn != nil {
+		_ = t.rtcpConn.Close()
+	}
+}
+
 func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 	track.stopPeriodicKeyframe()
 	track.stopLinkFeedback()
@@ -912,6 +927,8 @@ func (e *SipBin) CleanupTrack(self *gst.Bin, track *SipTrack) error {
 		}
 		e.padMu.Unlock()
 	}
+	track.rtpSocket.Close()
+	track.rtcpSocket.Close()
 	if track.rtpConn != nil {
 		if err := track.rtpConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close RTP UDP connection: %w", err))
