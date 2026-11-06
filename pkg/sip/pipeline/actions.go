@@ -141,6 +141,8 @@ func (p *Pipeline) ConnectRoom(wsUrl, token string, attributes map[string]string
 	return nil
 }
 
+var ErrAudioNotPlayed = errors.New("audio prompt not played")
+
 func (p *Pipeline) PlayAudio(ctx context.Context, fd int) error {
 	pipeline := p.pipeline
 	if pipeline == nil {
@@ -176,8 +178,11 @@ func (p *Pipeline) PlayAudio(ctx context.Context, fd int) error {
 	var PlayErr error
 	done := make(chan struct{})
 	go func() {
-		if _, err := p.IOManager.LivekitController.Emit("play-audio-fd", pipeR); err != nil {
+		played, err := p.IOManager.LivekitController.Emit("play-audio-fd", pipeR)
+		if err != nil {
 			PlayErr = fmt.Errorf("failed to emit play-audio-fd: %w", err)
+		} else if ok, isBool := played.(bool); isBool && !ok {
+			PlayErr = ErrAudioNotPlayed
 		}
 		pipeline.Log(CAT, gst.LevelDebug, fmt.Sprintf("play-audio-fd ended\nfd=%d\nerr=%v", pipeR, PlayErr))
 		close(done)

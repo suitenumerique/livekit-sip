@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
@@ -1059,12 +1060,12 @@ func (e *IoManagerLivekit) playAudioFd(self *gst.Bin, fd int) bool {
 		return false
 	}
 
-	compositorPad := e.Compositor.GetRequestPad("raw_sink_%u")
-	if compositorPad == nil {
-		self.Log(CAT, gst.LevelError, "Failed to get raw_sink request pad from compositor")
+	compositor := e.Compositor
+	if compositor == nil {
+		self.Log(CAT, gst.LevelError, "No compositor to play the voice prompt")
+		removeVoicePrompt(self, flacSrc, filter)
 		return false
 	}
-	defer e.Compositor.ReleaseRequestPad(compositorPad)
 
 	srcPad := filter.GetStaticPad("src")
 
@@ -1081,10 +1082,11 @@ func (e *IoManagerLivekit) playAudioFd(self *gst.Bin, fd int) bool {
 		return gst.PadProbeOK
 	})
 
-	if ret := srcPad.Link(compositorPad); ret != gst.PadLinkOK {
-		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link flacsource src to compositor pad\nret=%v", ret))
+	compositorPad := linkVoicePrompt(self, compositor, srcPad, flacSrc, filter)
+	if compositorPad == nil {
 		return false
 	}
+	defer compositor.ReleaseRequestPad(compositorPad)
 
 	if !flacSrc.SyncStateWithParent() {
 		self.Log(CAT, gst.LevelWarning, "Failed to sync flacsource state with parent")
@@ -1102,17 +1104,79 @@ func (e *IoManagerLivekit) playAudioFd(self *gst.Bin, fd int) bool {
 		self.Log(CAT, gst.LevelWarning, "playFlacFd: timed out waiting for EOS, tearing down anyway")
 	}
 
+	removeVoicePrompt(self, flacSrc, filter)
+
+	self.Log(CAT, gst.LevelInfo, "Successfully played FLAC fd")
+	return true
+}
+
+const voicePromptLinkTimeout = 5 * time.Second
+
+type voicePromptLink struct {
+	pad *gst.Pad
+	err error
+}
+
+func linkVoicePrompt(self *gst.Bin, compositor *gst.Element, srcPad *gst.Pad, flacSrc, filter *gst.Element) *gst.Pad {
+	start := time.Now()
+	var settled atomic.Bool
+	done := make(chan voicePromptLink, 1)
+	go func() {
+		pad, err := requestVoicePromptPad(compositor, srcPad)
+		if settled.CompareAndSwap(false, true) {
+			done <- voicePromptLink{pad: pad, err: err}
+			return
+		}
+		if pad != nil {
+			srcPad.Unlink(pad)
+			compositor.ReleaseRequestPad(pad)
+		}
+		removeVoicePrompt(self, flacSrc, filter)
+		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Voice prompt pad request completed after the voice prompt was abandoned\nwaited=%s\nerr=%v", time.Since(start).Round(time.Millisecond), err))
+	}()
+
+	timer := time.NewTimer(voicePromptLinkTimeout)
+	defer timer.Stop()
+
+	var res voicePromptLink
+	select {
+	case res = <-done:
+	case <-timer.C:
+		if settled.CompareAndSwap(false, true) {
+			self.Log(CAT, gst.LevelError, fmt.Sprintf("Voice prompt pad request blocked, voice prompt abandoned\nwaited=%s", voicePromptLinkTimeout))
+			return nil
+		}
+		res = <-done
+	}
+
+	if res.err != nil {
+		self.Log(CAT, gst.LevelError, fmt.Sprintf("Failed to link the voice prompt to the compositor\nerr=%v", res.err))
+		removeVoicePrompt(self, flacSrc, filter)
+		return nil
+	}
+	return res.pad
+}
+
+func requestVoicePromptPad(compositor *gst.Element, srcPad *gst.Pad) (*gst.Pad, error) {
+	pad := compositor.GetRequestPad("raw_sink_%u")
+	if pad == nil {
+		return nil, errors.New("no raw_sink request pad on the compositor")
+	}
+	if ret := srcPad.Link(pad); ret != gst.PadLinkOK {
+		compositor.ReleaseRequestPad(pad)
+		return nil, fmt.Errorf("link failed: %v", ret)
+	}
+	return pad, nil
+}
+
+func removeVoicePrompt(self *gst.Bin, flacSrc, filter *gst.Element) {
 	if err := flacSrc.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set flacsource to NULL\nerr=%v", err))
 	}
 	if err := filter.SetState(gst.StateNull); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to set capsfilter to NULL\nerr=%v", err))
 	}
-
 	if err := self.RemoveMany(flacSrc, filter); err != nil {
 		self.Log(CAT, gst.LevelWarning, fmt.Sprintf("Failed to remove elements from io_manager_livekit\nerr=%v", err))
 	}
-
-	self.Log(CAT, gst.LevelInfo, "Successfully played FLAC fd")
-	return true
 }
