@@ -48,59 +48,38 @@ func NewUDPConnPair(portMin, portMax uint16, ip net.IP) (*net.UDPConn, *net.UDPC
 		return nil, nil, fmt.Errorf("only IPv4 addresses are supported")
 	}
 
-	if portMin == 0 && portMax == 0 {
-		portMin = 1024
-		portMax = 0xFFFF
+	lo, hi := int(portMin), int(portMax)
+	if lo == 0 && hi == 0 {
+		lo = 1024
+	}
+	if lo == 0 {
+		lo = 1
+	}
+	if hi == 0 {
+		hi = 0xFFFF
+	}
+	if lo%2 != 0 {
+		lo++
 	}
 
-	i := portMin
-	if i == 0 {
-		i = 1
-	}
-	if i%2 != 0 {
-		i++
-	}
-
-	j := portMax
-	if j == 0 {
-		j = 0xFFFF
-	}
-
-	if i > j {
+	pairs := (hi - lo + 1) / 2
+	if pairs <= 0 {
 		return nil, nil, ErrListenFailed
 	}
 
-	portRange := (j - i) / 2
-	if portRange <= 0 {
-		portRange = 1
-	}
-	portStart := uint16((rand.Intn(int(portRange)) * 2)) + i
-	if portStart%2 != 0 {
-		portStart++
-	}
-
-	portCurrent := portStart
-
-	for {
-		rtpConn, err := listenUDP(ip, int(portCurrent))
-		if err == nil {
-			rtcpConn, err := listenUDP(ip, int(portCurrent+1))
-			if err == nil {
-				return rtpConn, rtcpConn, nil
-			}
+	first := rand.Intn(pairs)
+	for k := range pairs {
+		port := lo + 2*((first+k)%pairs)
+		rtpConn, err := listenUDP(ip, port)
+		if err != nil {
+			continue
+		}
+		rtcpConn, err := listenUDP(ip, port+1)
+		if err != nil {
 			rtpConn.Close()
+			continue
 		}
-
-		portCurrent += 2
-		if portCurrent > j {
-			portCurrent = i
-			if portCurrent%2 != 0 {
-				portCurrent++
-			}
-		}
-		if portCurrent == portStart {
-			break
-		}
+		return rtpConn, rtcpConn, nil
 	}
 	return nil, nil, ErrListenFailed
 }
