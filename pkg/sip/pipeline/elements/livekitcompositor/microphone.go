@@ -47,13 +47,7 @@ func (e *LivekitCompositor) initMicrophone(self *gst.Bin) error {
 		return fmt.Errorf("failed to create microphone silence filter: %w", err)
 	}
 
-	compositorMicrophone.AudioMixer, err = gst.NewElementWithProperties("audiomixer", map[string]interface{}{
-		"force-live":           true,
-		"ignore-inactive-pads": true,
-		"start-time-selection": int(3), // now
-		"latency":              uint64(20 * time.Millisecond),
-		"min-upstream-latency": uint64(time.Duration(e.audioJitter) * time.Millisecond),
-	})
+	compositorMicrophone.AudioMixer, err = newMicrophoneMixer(time.Duration(e.audioJitter) * time.Millisecond)
 	if err != nil {
 		return err
 	}
@@ -244,4 +238,14 @@ func (e *LivekitCompositor) releaseScreenShareAudioSinkPad(self *gst.Bin, gpad *
 
 func (e *LivekitCompositor) applyMicrophoneLayout(self *gst.Bin, layout []string) {
 	return
+}
+
+func newMicrophoneMixer(minUpstreamLatency time.Duration) (*gst.Element, error) {
+	return gst.NewElementWithProperties("audiomixer", map[string]interface{}{
+		"force-live":           true,
+		"ignore-inactive-pads": true,
+		"start-time-selection": int(1), // first
+		"latency":              uint64(20 * time.Millisecond),
+		"min-upstream-latency": uint64(minUpstreamLatency),
+	})
 }
